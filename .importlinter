@@ -33,6 +33,10 @@ forbidden_modules =
     common
     cms
     lms
+# Only DIRECT imports are forbidden. tasks -> content_adapter -> xmodule is the
+# intended path: the adapter exists precisely so callers reach the store through
+# it. Without this, the contract would forbid the architecture it is defending.
+allow_indirect_imports = True
 
 
 # --- 2 -----------------------------------------------------------------------
@@ -70,6 +74,9 @@ source_modules =
     coursemate_service.agents
 forbidden_modules =
     coursemate_service.knowledge
+# agents -> boundary -> knowledge is correct and expected. The violation is a
+# node reaching the store directly and skipping authz/filter/audit.
+allow_indirect_imports = True
 
 
 # --- 4 -----------------------------------------------------------------------

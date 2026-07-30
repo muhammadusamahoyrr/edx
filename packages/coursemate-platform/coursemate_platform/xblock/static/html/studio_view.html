@@ -1,0 +1,17 @@
+<div class="coursemate-studio">
+  <label>Display name <input type="text" class="cm-cfg-name" value="{{ display_name }}" /></label>
+  <label>Enabled <input type="checkbox" class="cm-cfg-enabled" {% if enabled %}checked{% endif %} /></label>
+  <label>Default mode
+    <select class="cm-cfg-mode">
+      <option value="direct" {% if mode == 'direct' %}selected{% endif %}>Direct</option>
+      <option value="socratic" {% if mode == 'socratic' %}selected{% endif %}>Socratic</option>
+    </select>
+  </label>
+  <hr />
+  <!-- The normal bootstrap path (design 5.1): put the action in front of the
+       person who just added the block. Without an index, the tutor answers
+       "not covered in this course" for every question. -->
+  <button class="cm-index" type="button">Index this course for the tutor</button>
+  <p class="cm-index-status">Last indexed: <span class="cm-last-indexed">never</span>
+     &middot; <span class="cm-block-count">0</span> blocks</p>
+</div>

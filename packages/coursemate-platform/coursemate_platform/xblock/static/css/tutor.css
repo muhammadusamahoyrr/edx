@@ -1,0 +1,17 @@
+.coursemate-tutor { border: 1px solid #ccc; border-radius: 6px; padding: 12px; font-size: 14px; }
+.coursemate-tutor .cm-header { font-weight: 600; margin-bottom: 8px; }
+.coursemate-tutor .cm-log { max-height: 320px; overflow-y: auto; margin-bottom: 8px; }
+.coursemate-tutor .cm-turn { margin: 6px 0; }
+.coursemate-tutor .cm-turn.student { color: #333; }
+.coursemate-tutor .cm-turn.tutor { color: #111; background: #f6f6f6; padding: 6px; border-radius: 4px; }
+.coursemate-tutor .cm-citation { font-size: 12px; }
+/* Three distinct states, never one generic error (design 5.1). */
+.coursemate-tutor .cm-notice { padding: 6px; border-radius: 4px; font-size: 13px; }
+.coursemate-tutor .cm-notice.abstained { background: #eef3fa; }
+.coursemate-tutor .cm-notice.preparing { background: #fdf6e3; }
+.coursemate-tutor .cm-notice.unavailable { background: #fbeaea; }
+.coursemate-tutor .cm-degraded { font-size: 12px; color: #8a6d3b; }
+.coursemate-tutor .cm-unsupported { text-decoration: underline wavy #c0392b; }
+.coursemate-tutor .cm-form { display: flex; gap: 6px; }
+.coursemate-tutor .cm-input { flex: 1; padding: 6px; }
+.coursemate-tutor .cm-disclaimer { font-size: 12px; color: #666; margin: 6px 0 0; }
