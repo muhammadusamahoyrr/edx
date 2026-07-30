@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coursemate-contracts"
+version = "0.1.0"
+description = "Wire contracts shared by the CourseMate Open edX plugin and the CourseMate service."
+requires-python = ">=3.11"
+
+# The dependency ceiling for this package is one line long, and it is deliberate.
+# This package is imported into LMS and CMS processes; anything added here is
+# added to the customer's platform.
+dependencies = ["pydantic>=2.7"]
+
+[tool.setuptools.packages.find]
+include = ["coursemate_contracts*"]

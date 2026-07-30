@@ -1,0 +1,346 @@
+<mxfile host="app.diagrams.net" version="24.7.17" type="device">
+
+  <!-- SINGLE MASTER ARCHITECTURE DIAGRAM FILE (FULL XML SPEC WITH OPTIMIZED SECTION 2A & SECTION 4 SPACING) -->
+  <diagram id="master-architecture" name="1 · Master System Architecture">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="1300" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Header Title Banner -->
+        <mxCell id="hdr_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0F172A;strokeColor=#020617;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="30" y="15" width="1350" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="title" value="CourseMate — System Architecture Specification" style="text;html=1;fontSize=18;fontStyle=1;fontColor=#FFFFFF;align=left;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="45" y="18" width="800" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="In-Platform Open edX Extensions ➔ Security Boundary Gateway ➔ Out-of-Process Microservice Container" style="text;html=1;fontSize=11;fontColor=#94A3B8;align=left;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="45" y="38" width="800" height="16" as="geometry" />
+        </mxCell>
+
+        <!-- SECTION 1A: CONTENT INGESTION SURFACE -->
+        <mxCell id="sec1a_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#CBD5E1;" vertex="1" parent="1">
+          <mxGeometry x="30" y="85" width="640" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="sec1a_hdr" value="SECTION 1A: CONTENT INGESTION &amp;amp; AUTHORING SURFACE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E2E8F0;strokeColor=#94A3B8;fontSize=12;fontStyle=1;fontColor=#1E293B;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="30" y="85" width="640" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="instructor" value="Instructor" style="shape=umlActor;verticalLabelPosition=bottom;html=1;verticalAlign=top;fontSize=11;fontStyle=1;fillColor=#E2E8F0;strokeColor=#475569;" vertex="1" parent="1">
+          <mxGeometry x="45" y="135" width="30" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="studio_authoring" value="&lt;b style=&quot;font-size:13px&quot;&gt;Studio CMS Authoring UI&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#1E40AF&quot; style=&quot;font-size:11px&quot;&gt;Creates &amp;amp; edits course units &amp;amp; exercises&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;fontSize=12;fontColor=#1E40AF;" vertex="1" parent="1">
+          <mxGeometry x="90" y="130" width="260" height="65" as="geometry" />
+        </mxCell>
+
+        <mxCell id="studio_trigger" value="&lt;b style=&quot;font-size:13px&quot;&gt;Bootstrap Triggers (3)&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#78350F&quot; style=&quot;font-size:11px&quot;&gt;Studio &quot;Index Course&quot; button · coursemate_reindex command&lt;br&gt;Query-time backstop — in-flight lock · cooldown · cost ceiling&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;fontSize=12;fontColor=#78350F;" vertex="1" parent="1">
+          <mxGeometry x="370" y="130" width="285" height="65" as="geometry" />
+        </mxCell>
+
+        <!-- SECTION 1B: STUDENT TUTOR SURFACE -->
+        <mxCell id="sec1b_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#CBD5E1;" vertex="1" parent="1">
+          <mxGeometry x="720" y="85" width="640" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="sec1b_hdr" value="SECTION 1B: STUDENT TUTOR &amp;amp; QUERY SURFACE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E2E8F0;strokeColor=#94A3B8;fontSize=12;fontStyle=1;fontColor=#1E293B;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="720" y="85" width="640" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="student" value="Student" style="shape=umlActor;verticalLabelPosition=bottom;html=1;verticalAlign=top;fontSize=11;fontStyle=1;fillColor=#E2E8F0;strokeColor=#475569;" vertex="1" parent="1">
+          <mxGeometry x="735" y="135" width="30" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lms_courseware" value="&lt;b style=&quot;font-size:13px&quot;&gt;LMS Courseware Unit View&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#1E40AF&quot; style=&quot;font-size:11px&quot;&gt;Reads lesson &amp;amp; opens Tutor Widget&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;fontSize=12;fontColor=#1E40AF;" vertex="1" parent="1">
+          <mxGeometry x="800" y="130" width="250" height="65" as="geometry" />
+        </mxCell>
+
+        <mxCell id="xblock_widget" value="&lt;b style=&quot;font-size:13px&quot;&gt;CourseMate Tutor XBlock Widget&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#78350F&quot; style=&quot;font-size:11px&quot;&gt;&lt;b&gt;THIN PROXY:&lt;/b&gt; no model calls · no retrieval · no embedding&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;fontSize=12;strokeWidth=2;fontColor=#78350F;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="130" width="275" height="65" as="geometry" />
+        </mxCell>
+
+
+        <!-- SECTION 2A: OPEN edX IN-PLATFORM INGESTION ENGINE -->
+        <mxCell id="sec2a_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#64748B;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="30" y="270" width="640" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="sec2a_hdr" value="SECTION 2A: OPEN edX IN-PLATFORM INGESTION ENGINE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;fontSize=12;fontStyle=1;fontColor=#1E40AF;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="30" y="270" width="640" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="openedx_events" value="&lt;b style=&quot;font-size:13px&quot;&gt;openedx-events Receiver (CMS)&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#78350F&quot; style=&quot;font-size:11px&quot;&gt;XBLOCK_PUBLISHED · DELETED · DUPLICATED&lt;br&gt;Thin: validate ➔ enqueue ➔ return&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;fontSize=12;fontColor=#78350F;" vertex="1" parent="1">
+          <mxGeometry x="90" y="315" width="260" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="modulestore_db" value="&lt;b style=&quot;font-size:13px&quot;&gt;Split Mongo Modulestore&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#1E40AF&quot; style=&quot;font-size:11px&quot;&gt;published_only Branch Context&lt;/font&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=6;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;fontSize=12;fontColor=#1E40AF;" vertex="1" parent="1">
+          <mxGeometry x="90" y="405" width="260" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="celery_worker" value="&lt;b style=&quot;font-size:13px&quot;&gt;In-Platform Ingest Worker (Celery)&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#14532D&quot; style=&quot;font-size:11px&quot;&gt;&lt;b&gt;content_adapter.py:&lt;/b&gt; Reads Modulestore&lt;br&gt;Container-to-Leaf Resolution ➔ Chunk ➔ Embed&lt;br&gt;&lt;i&gt;embeddings via hosted provider (external)&lt;/i&gt;&lt;br&gt;&lt;br&gt;Retry w/ backoff ➔ DLQ ➔ failed_ingestions&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F0FDF4;strokeColor=#16A34A;fontSize=12;strokeWidth=2;fontColor=#14532D;" vertex="1" parent="1">
+          <mxGeometry x="370" y="315" width="285" height="155" as="geometry" />
+        </mxCell>
+
+        <!-- SECTION 2B: LMS-SIDE STATE, SESSION TOKEN & EVENT RECEIVERS -->
+        <mxCell id="sec2b_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#64748B;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="720" y="270" width="640" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="sec2b_hdr" value="SECTION 2B: LMS-SIDE STATE, SESSION TOKEN &amp;amp; EVENT RECEIVERS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;fontSize=12;fontStyle=1;fontColor=#1E40AF;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="720" y="270" width="640" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="scope_user_state" value="&lt;b style=&quot;font-size:13px&quot;&gt;Scope.user_state Storage&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#1E40AF&quot; style=&quot;font-size:11px&quot;&gt;Platform-owned conversation memory&lt;br&gt;The AI service holds no chat state&lt;/font&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=6;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;fontSize=12;fontColor=#1E40AF;" vertex="1" parent="1">
+          <mxGeometry x="800" y="315" width="250" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="lms_receivers" value="&lt;b style=&quot;font-size:13px&quot;&gt;openedx-events Receiver (LMS)&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#78350F&quot; style=&quot;font-size:11px&quot;&gt;COURSE_UNENROLLMENT_COMPLETED is a&lt;br&gt;&lt;i&gt;learning&lt;/i&gt; event — it fires here, not in Studio&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;fontSize=12;fontColor=#78350F;" vertex="1" parent="1">
+          <mxGeometry x="800" y="400" width="250" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="jwt_engine" value="&lt;b style=&quot;font-size:13px&quot;&gt;XBlock Session Handler (our code)&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#78350F&quot; style=&quot;font-size:11px&quot;&gt;&lt;b&gt;The XBlock itself mints&lt;/b&gt; the short-lived signed&lt;br&gt;JWT (user_id, offering_id, roles, seconds TTL)&lt;br&gt;Rate limit · hard timeout · circuit breaker&lt;br&gt;&lt;br&gt;&lt;i&gt;This is the one hop Open edX does not&lt;br&gt;secure for us — hence the boundary below.&lt;/i&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;fontSize=12;strokeWidth=2;fontColor=#78350F;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="315" width="275" height="155" as="geometry" />
+        </mxCell>
+
+
+        <!-- SECTION 3: SERVICE-CREDENTIAL WRITE PATH + READ-ONLY SECURITY GATEWAY -->
+        <mxCell id="api_write_path" value="&lt;b style=&quot;font-size:12px&quot;&gt;SERVICE-CREDENTIAL WRITE APIs&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#14532D&quot; style=&quot;font-size:11px&quot;&gt;③ Index Write · ② Cache Invalidation&lt;br&gt;&lt;i&gt;Separate credential from the student path, and&lt;br&gt;deliberately NOT through the read-only boundary&lt;/i&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F0FDF4;strokeColor=#16A34A;fontSize=12;fontStyle=1;strokeWidth=2;fontColor=#14532D;" vertex="1" parent="1">
+          <mxGeometry x="30" y="535" width="330" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="boundary" value="&lt;b style=&quot;font-size:13px&quot;&gt;SECTION 3: COURSE-INTELLIGENCE SECURITY BOUNDARY — READ-ONLY TOOLING GATEWAY&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#78350F&quot; style=&quot;font-size:11px&quot;&gt;Validates the short-lived JWT ➔ re-derives enrollment authz via Open edX APIs ➔ 4 read-only tools keyed on offering_id ➔ filters applied BEFORE ranking ➔ audit record on every call&lt;br&gt;&lt;i&gt;The agent tool surface is read-only: no prompt can change what students see.&lt;/i&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;fontSize=12;fontStyle=1;strokeWidth=2;fontColor=#78350F;" vertex="1" parent="1">
+          <mxGeometry x="380" y="535" width="980" height="60" as="geometry" />
+        </mxCell>
+
+
+        <!-- SECTION 4: OUT-OF-PROCESS COURSEMATE AI CONTAINER -->
+        <mxCell id="sec4_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F0FDF4;strokeColor=#16A34A;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="30" y="640" width="1330" height="615" as="geometry" />
+        </mxCell>
+        <mxCell id="sec4_hdr" value="SECTION 4: OUT-OF-PROCESS COURSEMATE AI SERVICE CONTAINER (STANDALONE MICROSERVICE ENVIRONMENT)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DCFCE7;strokeColor=#16A34A;fontSize=12;fontStyle=1;fontColor=#14532D;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="30" y="640" width="1330" height="35" as="geometry" />
+        </mxCell>
+
+        <!-- SUB-CONTAINER LEFT COLUMN: KNOWLEDGE LAYER & STORAGE -->
+        <mxCell id="grp_knowledge_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#94A3B8;dashed=1;dashPattern=6 4;" vertex="1" parent="1">
+          <mxGeometry x="45" y="700" width="610" height="535" as="geometry" />
+        </mxCell>
+        <mxCell id="grp_knowledge_hdr" value="KNOWLEDGE &amp;amp; VECTOR STORAGE SUBSYSTEM (REACHABLE ONLY VIA THE BOUNDARY)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E2E8F0;strokeColor=#94A3B8;fontSize=11;fontStyle=1;fontColor=#334155;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="45" y="700" width="610" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="writeswap_engine" value="&lt;b style=&quot;font-size:13px&quot;&gt;Atomic Write-Then-Swap Versioning Engine&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#14532D&quot; style=&quot;font-size:11px&quot;&gt;1. Write usage_key@new_version ➔ 2. Verify write ➔ 3. Flip active pointer ➔ 4. Async GC&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F0FDF4;strokeColor=#16A34A;fontSize=12;strokeWidth=2;fontColor=#14532D;" vertex="1" parent="1">
+          <mxGeometry x="65" y="745" width="570" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="vector_course" value="&lt;b style=&quot;font-size:13px&quot;&gt;Course Vector Index&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#14532D&quot; style=&quot;font-size:11px&quot;&gt;Keyed by UsageKey@Version&lt;/font&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=6;whiteSpace=wrap;html=1;fillColor=#F0FDF4;strokeColor=#16A34A;fontSize=12;fontColor=#14532D;" vertex="1" parent="1">
+          <mxGeometry x="65" y="810" width="275" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="vector_metadata" value="&lt;b style=&quot;font-size:13px&quot;&gt;Metadata Filter Store&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#14532D&quot; style=&quot;font-size:11px&quot;&gt;Pre-filters Identity &amp;amp; Scope&lt;/font&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=6;whiteSpace=wrap;html=1;fillColor=#F0FDF4;strokeColor=#16A34A;fontSize=12;fontColor=#14532D;" vertex="1" parent="1">
+          <mxGeometry x="355" y="810" width="280" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="vector_student" value="&lt;b style=&quot;font-size:13px&quot;&gt;Student Vector Index&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#991B1B&quot; style=&quot;font-size:11px&quot;&gt;Isolated Private Namespace&lt;/font&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=6;whiteSpace=wrap;html=1;fillColor=#FEF2F2;strokeColor=#DC2626;fontSize=12;fontColor=#991B1B;" vertex="1" parent="1">
+          <mxGeometry x="65" y="885" width="275" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="obj_storage" value="&lt;b style=&quot;font-size:13px&quot;&gt;CourseMate Object Storage&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#78350F&quot; style=&quot;font-size:11px&quot;&gt;S3 Past Papers (No OLX Leaks)&lt;/font&gt;" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=6;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;fontSize=12;fontColor=#78350F;" vertex="1" parent="1">
+          <mxGeometry x="355" y="885" width="280" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="reconciliation" value="&lt;b style=&quot;font-size:12px&quot;&gt;Nightly Reconciliation Sweep Engine — BUILT&lt;/b&gt; — Diffs active index against Modulestore tree&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;&lt;i&gt;No unpublish event exists — this is the only mitigation, so it ships&lt;/i&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#16A34A;dashed=1;fontSize=11;fontColor=#14532D;" vertex="1" parent="1">
+          <mxGeometry x="65" y="960" width="570" height="45" as="geometry" />
+        </mxCell>
+
+        <mxCell id="proposal_queue" value="&lt;b style=&quot;font-size:12px&quot;&gt;Proposal Queue Storage — DESIGNED, DORMANT IN MVP&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;Outside the Modulestore tree (publish is subtree semantics) · the MVP AI writes no course content, so nothing reaches it&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#CBD5E1;dashed=1;fontSize=11;fontColor=#94A3B8;" vertex="1" parent="1">
+          <mxGeometry x="65" y="1020" width="570" height="45" as="geometry" />
+        </mxCell>
+
+        <mxCell id="eval_harness" value="&lt;b style=&quot;font-size:12px&quot;&gt;Offline Evaluation Harness — BUILT&lt;/b&gt; — Ragas · Abstention Audit · Feature B Rubric&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;&lt;i&gt;Sits beside the pipeline, never in it — deliberately unconnected: it never runs while a student waits&lt;/i&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#16A34A;dashed=1;fontSize=11;fontColor=#14532D;" vertex="1" parent="1">
+          <mxGeometry x="65" y="1080" width="570" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- SUB-CONTAINER RIGHT COLUMN: AGENT REASONING ENGINE -->
+        <mxCell id="grp_reasoning_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#94A3B8;dashed=1;dashPattern=6 4;" vertex="1" parent="1">
+          <mxGeometry x="720" y="700" width="640" height="535" as="geometry" />
+        </mxCell>
+        <mxCell id="grp_reasoning_hdr" value="LANGGRAPH AGENT REASONING PIPELINE (SEQUENTIAL STEP EXECUTION)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E2E8F0;strokeColor=#94A3B8;fontSize=11;fontStyle=1;fontColor=#334155;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="720" y="700" width="640" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="node_rewrite" value="&lt;b style=&quot;font-size:13px&quot;&gt;Step 1: Query Rewrite Node&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#14532D&quot; style=&quot;font-size:11px&quot;&gt;Cheap Hosted Model (~$0.0002)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F0FDF4;strokeColor=#16A34A;fontSize=12;fontColor=#14532D;" vertex="1" parent="1">
+          <mxGeometry x="740" y="745" width="290" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="node_retrieve" value="&lt;b style=&quot;font-size:13px&quot;&gt;Step 2: Candidate Retrieval Node&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#14532D&quot; style=&quot;font-size:11px&quot;&gt;retrieve_course_context() ➔ Top K=20&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F0FDF4;strokeColor=#16A34A;fontSize=12;fontColor=#14532D;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="745" width="295" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="node_rerank" value="&lt;b style=&quot;font-size:13px&quot;&gt;Step 3: Cross-Encoder Reranker&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#14532D&quot; style=&quot;font-size:11px&quot;&gt;Local CPU Model (Selects Top 3–5)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F0FDF4;strokeColor=#16A34A;fontSize=12;fontColor=#14532D;" vertex="1" parent="1">
+          <mxGeometry x="740" y="810" width="290" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="node_gate" value="&lt;b style=&quot;font-size:13px&quot;&gt;Step 4: Confidence Abstention Gate&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#991B1B&quot; style=&quot;font-size:11px&quot;&gt;&lt;b&gt;Score &amp;lt; τ?&lt;/b&gt; Abstains Immediately&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF2F2;strokeColor=#DC2626;fontSize=12;strokeWidth=2;fontColor=#991B1B;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="810" width="295" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="node_generate" value="&lt;b style=&quot;font-size:13px&quot;&gt;Step 5: Streaming Generator &amp;amp; Parallel Verification Node&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#14532D&quot; style=&quot;font-size:11px&quot;&gt;Strong Model Generation via LiteLLM Router · Streams SSE Tokens + Citation&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F0FDF4;strokeColor=#16A34A;fontSize=12;strokeWidth=2;fontColor=#14532D;" vertex="1" parent="1">
+          <mxGeometry x="740" y="885" width="605" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="litellm_router" value="&lt;b style=&quot;font-size:12px&quot;&gt;LiteLLM Router Tier&lt;/b&gt; — Native Provider Fallbacks · Retry Policies · Cooldown" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E8FF;strokeColor=#9333EA;fontSize=11;fontColor=#581C87;" vertex="1" parent="1">
+          <mxGeometry x="740" y="960" width="605" height="45" as="geometry" />
+        </mxCell>
+
+        <mxCell id="exam_prep_module" value="&lt;b style=&quot;font-size:13px&quot;&gt;Feature B Final Exam Prep Subsystem&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#78350F&quot; style=&quot;font-size:11px&quot;&gt;CLO Planner Agent ➔ Past Paper Quiz Generator ➔ Personal Student Delivery&lt;br&gt;&lt;br&gt;&lt;i style=&quot;font-size:10px;color:#92400E&quot;&gt;MVP: ONE pre-loaded pack (self-serve upload UIs deferred)&lt;br&gt;Personal output — no instructor gate — so the SINGLE-RATER human rubric&lt;br&gt;in the offline harness is the control, not an automated score&lt;/i&gt;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;fontSize=12;fontColor=#78350F;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="740" y="1020" width="605" height="105" as="geometry" />
+        </mxCell>
+
+
+        <!-- EDGES - LEFT COLUMN PIPELINE -->
+        <mxCell id="e_author" value="authors course" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#2563EB;strokeWidth=1.5;fontSize=10;fontColor=#1E40AF;" edge="1" parent="1" source="instructor" target="studio_authoring">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_trigger" value="clicks index" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D97706;strokeWidth=1.5;fontSize=10;fontColor=#78350F;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="instructor" target="studio_trigger">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="60" y="210" /><mxPoint x="512" y="210" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_bootstrap" value="bootstrap: full pass over the published tree" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D97706;strokeWidth=2;fontSize=10;fontColor=#78350F;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="studio_trigger" target="celery_worker">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="690" y="162" /><mxPoint x="690" y="392" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_pub_event" value="XBLOCK_PUBLISHED" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D97706;strokeWidth=1.5;fontSize=10;fontColor=#78350F;" edge="1" parent="1" source="studio_authoring" target="openedx_events">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_celery_enqueue" value="enqueue task — Publish is never blocked" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#16A34A;strokeWidth=1.5;fontSize=10;fontColor=#14532D;" edge="1" parent="1" source="openedx_events" target="celery_worker">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_modulestore_read" value="published_only read" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#2563EB;strokeWidth=1.5;fontSize=10;fontColor=#1E40AF;" edge="1" parent="1" source="modulestore_db" target="celery_worker">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="350" y="437" /><mxPoint x="350" y="392" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_worker_write" value="③ index writes (service credential)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#16A34A;strokeWidth=2;fontSize=10;fontStyle=1;fontColor=#14532D;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.27;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="celery_worker" target="api_write_path">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="512" y="500" /><mxPoint x="120" y="500" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_lmsrecv_write" value="② cache invalidation + personal-data scoping" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#16A34A;strokeWidth=1.5;fontSize=10;fontColor=#14532D;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.76;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="lms_receivers" target="api_write_path">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="925" y="515" /><mxPoint x="280" y="515" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_write_knowledge" value="write path — bypasses the read-only gateway" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#16A34A;strokeWidth=2;fontSize=10;fontStyle=1;fontColor=#14532D;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.23;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="api_write_path" target="writeswap_engine">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="195" y="640" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_swap_vector" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#16A34A;strokeWidth=1.5;exitX=0.24;exitY=1;exitDx=0;exitDy=0;entryX=0.49;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="writeswap_engine" target="vector_course">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_vector_meta" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#16A34A;strokeWidth=1.5;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="vector_course" target="vector_metadata">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_obj_student" value="student uploads ➔ private namespace" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#DC2626;strokeWidth=1.5;fontSize=10;fontColor=#991B1B;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="obj_storage" target="vector_student">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_recon_index" value="removes orphans · re-queues gaps" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#16A34A;strokeWidth=1.5;dashed=1;fontSize=10;fontColor=#14532D;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.75;entryDx=0;entryDy=0;" edge="1" parent="1" source="reconciliation" target="vector_metadata">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="665" y="982" /><mxPoint x="665" y="855" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+
+        <!-- EDGES - RIGHT COLUMN PIPELINE -->
+        <mxCell id="e_student_ask" value="opens tutor" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D97706;strokeWidth=1.5;fontSize=10;fontColor=#78350F;" edge="1" parent="1" source="student" target="lms_courseware">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_cw_widget" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D97706;strokeWidth=1.5;" edge="1" parent="1" source="lms_courseware" target="xblock_widget">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_widget_state" value="attaches last N turns" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#2563EB;strokeWidth=1.5;dashed=1;fontSize=10;fontColor=#1E40AF;exitX=0.11;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="xblock_widget" target="scope_user_state">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1100" y="250" /><mxPoint x="925" y="250" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_widget_jwt" value="mints JWT" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D97706;strokeWidth=1.5;fontSize=10;fontColor=#78350F;" edge="1" parent="1" source="xblock_widget" target="jwt_engine">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_jwt_boundary" value="① Signed JWT (HTTPS/SSE)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D97706;strokeWidth=2;fontSize=10;fontStyle=1;fontColor=#78350F;" edge="1" parent="1" source="jwt_engine" target="boundary">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1207" y="510" /><mxPoint x="1207" y="535" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_boundary_reasoning" value="Invoke LangGraph" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#16A34A;strokeWidth=2;fontSize=10;fontStyle=1;fontColor=#14532D;" edge="1" parent="1" source="boundary" target="node_rewrite">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1000" y="595" /><mxPoint x="885" y="595" /><mxPoint x="885" y="745" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_boundary_read" value="read-only tools · filters before ranking · audited" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D97706;strokeWidth=2;fontSize=10;fontStyle=1;fontColor=#78350F;startArrow=classic;startFill=1;exitX=0.316;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.333;entryDx=0;entryDy=0;" edge="1" parent="1" source="boundary" target="vector_metadata">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="690" y="830" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_step1_2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#16A34A;strokeWidth=1.5;" edge="1" parent="1" source="node_rewrite" target="node_retrieve">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_step2_3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#16A34A;strokeWidth=1.5;" edge="1" parent="1" source="node_retrieve" target="node_rerank">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1197" y="800" /><mxPoint x="885" y="800" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_step3_4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#16A34A;strokeWidth=1.5;" edge="1" parent="1" source="node_rerank" target="node_gate">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_gate_pass" value="Passed Score ≥ τ" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#16A34A;strokeWidth=1.5;fontSize=10;fontColor=#14532D;" edge="1" parent="1" source="node_gate" target="node_generate">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1197" y="877" /><mxPoint x="1042" y="877" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_gate_fail" value="Abstain (&amp;lt; τ)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#DC2626;strokeWidth=1.5;fontSize=10;fontColor=#DC2626;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="node_gate" target="student">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1400" y="840" /><mxPoint x="1400" y="66" /><mxPoint x="700" y="66" /><mxPoint x="700" y="160" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_stream_answer" value="Streaming Tokens + Citation" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#16A34A;strokeWidth=2;fontSize=10;fontStyle=1;fontColor=#14532D;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.8;entryDx=0;entryDy=0;" edge="1" parent="1" source="node_generate" target="student">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1420" y="915" /><mxPoint x="1420" y="76" /><mxPoint x="690" y="76" /><mxPoint x="690" y="175" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_generate_router" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#9333EA;strokeWidth=1.5;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="node_generate" target="litellm_router">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_examprep_router" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#9333EA;strokeWidth=1.5;exitX=0.26;exitY=0;exitDx=0;exitDy=0;entryX=0.26;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="exam_prep_module" target="litellm_router">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_obj_examprep" value="get_exam_prep_pack() — past-paper bank, read-only" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#D97706;strokeWidth=1.5;fontSize=10;fontColor=#78350F;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.38;entryDx=0;entryDy=0;" edge="1" parent="1" source="obj_storage" target="exam_prep_module">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="690" y="915" /><mxPoint x="690" y="1060" /></Array>
+          </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+</mxfile>

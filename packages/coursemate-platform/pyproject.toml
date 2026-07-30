@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coursemate-platform"
+version = "0.1.0"
+description = "CourseMate Open edX plugin: XBlock, event receivers, ingest worker."
+# Open edX pins its own Python. Track the target release rather than the newest
+# interpreter available.
+requires-python = ">=3.11"
+
+# THE DEPENDENCY CEILING. This package is installed into LMS, CMS and Celery
+# images. Adding anything here adds it to the customer's platform, so additions
+# need an ADR. `.importlinter` contract 2 enforces the AI half of this.
+#
+# Deliberately absent, and it is the point: langgraph, litellm, any model client,
+# any vector store client, any embedding library.
+dependencies = [
+    "coursemate-contracts",
+    "XBlock>=3.0",
+    "httpx>=0.27",
+    "PyJWT>=2.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "import-linter>=2.0", "ruff>=0.4"]
+
+# Target platform release. Pinned because `master` moves: `reindex_studio` dropped
+# every flag it had between the release this design was written against and now
+# (see docs/CourseMate_Repository_Structure.md, V-A/V-E).
+[tool.coursemate]
+target_openedx_release = "ulmo"
+
+[project.entry-points."xblock.v1"]
+coursemate_tutor = "coursemate_platform.xblock.tutor_block:CourseMateTutorXBlock"
+
+# Registered in BOTH processes, because the events we depend on fire in both:
+# content_authoring in Studio, learning (unenrollment) in the LMS (design §3.4 r4).
+[project.entry-points."lms.djangoapp"]
+coursemate_platform = "coursemate_platform.apps:CourseMateConfig"
+
+[project.entry-points."cms.djangoapp"]
+coursemate_platform = "coursemate_platform.apps:CourseMateConfig"
+
+[tool.setuptools.packages.find]
+include = ["coursemate_platform*"]

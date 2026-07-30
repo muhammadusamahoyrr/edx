@@ -1,0 +1,56 @@
+"""The student hop's JWT — design §3.4, as changed in v8.
+
+The XBlock mints; the **browser** carries it and streams from the service directly.
+No LMS worker is held for the duration of an answer (§3.4 rule 3).
+
+Two properties this token deliberately does not have:
+
+* It is **not a grant of access.** It establishes *who is asking*. The service
+  re-derives enrollment and role at the boundary on every call (§6.5, §10.1), so
+  a forged or replayed claim of enrollment buys nothing. This mattered before v8
+  and matters more now that a browser handles the token.
+* It is **not long-lived.** Minutes, not the seconds of the old server-to-server
+  hop — it has to outlive a conversation turn — and refreshed by another handler
+  call when it expires.
+"""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+#: Minted with this expiry. Long enough for one turn, short enough that a leaked
+#: token is worth little.
+DEFAULT_TTL_SECONDS = 300
+
+#: Separate credential class for ingest/invalidation (§3.4) — a leaked
+#: student-path token must not be able to write to the index.
+AUDIENCE_STUDENT = "coursemate:student"
+AUDIENCE_SERVICE = "coursemate:service"
+
+
+class StudentClaims(BaseModel):
+    """Claims the XBlock mints into the student token."""
+
+    sub: str  # user_id
+    course_id: str
+    offering_id: str
+    #: Platform roles as the LMS reports them. Informational: the service checks
+    #: role against the platform itself before honouring anything staff-only.
+    roles: list[str] = Field(default_factory=list)
+    aud: str = AUDIENCE_STUDENT
+    iss: str = "coursemate-xblock"
+    exp: int
+    iat: int
+    #: Ties a token to one rendered block, so it cannot be replayed against a
+    #: different unit's tutor.
+    usage_key: str | None = None
+
+
+class TokenResponse(BaseModel):
+    """What `json_handler` returns to the browser. Note what is absent: no
+    answer, no retrieval, no model output — this handler returns in milliseconds."""
+
+    token: str
+    expires_in: int = DEFAULT_TTL_SECONDS
+    #: Same-origin path the browser streams from (§3.4). Never a second hostname.
+    stream_path: str = "/coursemate/api/chat"

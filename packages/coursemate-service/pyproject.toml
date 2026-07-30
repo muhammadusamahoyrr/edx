@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coursemate-service"
+version = "0.1.0"
+description = "CourseMate reasoning and knowledge service. Runs in its own container, outside Open edX."
+requires-python = ">=3.11"
+
+dependencies = [
+    "coursemate-contracts",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.2",
+    "httpx>=0.27",
+    "pyjwt[crypto]>=2.8",
+    "redis>=5.0",
+]
+
+[project.optional-dependencies]
+# The one self-hosted model: a CPU cross-encoder (~250ms for 20 pairs). Split out
+# so the reranker's weight is a deliberate install, not an accident of `pip install`.
+rerank = ["sentence-transformers>=3.0"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "import-linter>=2.0", "ruff>=0.4"]
+
+[tool.setuptools.packages.find]
+include = ["coursemate_service*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

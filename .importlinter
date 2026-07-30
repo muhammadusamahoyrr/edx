@@ -1,0 +1,120 @@
+# Architectural contracts, enforced in CI from the first commit.
+#
+# Each one defends a promise made in docs/CourseMate_Complete_Design.md. A promise
+# that only a code reviewer enforces is a promise that decays the first busy week;
+# these fail the build instead.
+#
+#   make lint-arch
+
+[importlinter]
+root_packages =
+    coursemate_contracts
+    coursemate_platform
+    coursemate_service
+include_external_packages = True
+
+
+# --- 1 -----------------------------------------------------------------------
+# Design §3.3: "Every content read goes through one module. If the store changes,
+# that module changes; nothing else does." Also §3.6/v7: the adapter owns the
+# published-branch context, so a caller cannot forget to open it.
+[importlinter:contract:adapter-is-the-only-modulestore-reader]
+name = Only content_adapter may touch the modulestore
+type = forbidden
+source_modules =
+    coursemate_platform.events
+    coursemate_platform.tasks
+    coursemate_platform.client
+    coursemate_platform.xblock
+    coursemate_platform.management
+forbidden_modules =
+    xmodule
+    openedx
+    common
+    cms
+    lms
+
+
+# --- 2 -----------------------------------------------------------------------
+# Design §3.4 + Principle 8. The highest-value contract in the repository: it is
+# what makes "CourseMate cannot degrade your LMS" structurally true rather than
+# aspirational, and it is the one most likely to be broken by a small convenient
+# import at 11pm in week 3.
+[importlinter:contract:no-ai-in-the-platform]
+name = The platform package must not import anything AI-shaped
+type = forbidden
+source_modules =
+    coursemate_platform
+forbidden_modules =
+    langgraph
+    litellm
+    openai
+    anthropic
+    sentence_transformers
+    transformers
+    torch
+    chromadb
+    qdrant_client
+    coursemate_service
+
+
+# --- 3 -----------------------------------------------------------------------
+# Design §6.5: four things must happen on *every* data access — resolve identity,
+# check enrollment/role, apply the tenant/student filter BEFORE ranking, write an
+# audit record. Scattered across agent nodes, a new node forgets one. This makes
+# forgetting a CI failure rather than a code-review catch.
+[importlinter:contract:agents-go-through-the-boundary]
+name = Agents reach knowledge only through the CourseIntelligence boundary
+type = forbidden
+source_modules =
+    coursemate_service.agents
+forbidden_modules =
+    coursemate_service.knowledge
+
+
+# --- 4 -----------------------------------------------------------------------
+# Design §1.2/§9.1: the proposal queue is designed and DORMANT. The MVP generates
+# no course content, so nothing may wire this up by accident. Deleting this
+# contract is the deliberate act that switches the instructor loop on.
+[importlinter:contract:proposals-stay-dormant]
+name = Nothing imports the dormant proposal queue
+type = forbidden
+source_modules =
+    coursemate_service.api
+    coursemate_service.agents
+    coursemate_service.knowledge
+    coursemate_service.ingestion
+forbidden_modules =
+    coursemate_service.proposals
+
+
+# --- 5 -----------------------------------------------------------------------
+# Design §4: evaluation "sits beside the pipeline, not at the end of it" and
+# never runs while a student waits. Packaging makes that a fact rather than a
+# discipline — eval/ has its own requirements and is not importable from either
+# shipped package.
+[importlinter:contract:eval-is-offline]
+name = Runtime packages never import the evaluation harness
+type = forbidden
+source_modules =
+    coursemate_platform
+    coursemate_service
+forbidden_modules =
+    eval
+    ragas
+    datasets
+
+
+# --- 6 -----------------------------------------------------------------------
+# The contracts package is imported into LMS processes. It stays pure.
+[importlinter:contract:contracts-stay-pure]
+name = Contracts import nothing but pydantic
+type = forbidden
+source_modules =
+    coursemate_contracts
+forbidden_modules =
+    coursemate_platform
+    coursemate_service
+    django
+    fastapi
+    httpx
