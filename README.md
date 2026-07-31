@@ -44,6 +44,26 @@ Browser ──1── XBlock.mint()  →  JWT          (0.115 ms; LMS released)
 
 ---
 
+## Screenshots
+
+*Real Open edX lesson, real course content, `qwen2.5:7b` via Ollama. No mock.*
+
+**Grounded answer with a citation back to the source lesson**
+
+![Grounded answer citing the Cohorts lesson](docs/screenshots/02-grounded-answer-with-citation.jpg)
+
+**Abstention — the behaviour that matters most**
+
+![Tutor declining an off-topic question](docs/screenshots/03-abstention.jpg)
+
+Asked *"What were the main causes of the French Revolution?"*, the tutor replies
+**"That doesn't appear to be covered in this course."** — instantly, with no model
+call. The confidence gate fires before generation, so refusing costs 3 ms and
+nothing in spend. A tutor that answers this question is worse than no tutor: a
+student cannot tell a fabricated answer from a real one.
+
+---
+
 ## Results
 
 Measured on the Open edX demo course (231 indexed chunks, `qwen2.5:7b` via Ollama).
