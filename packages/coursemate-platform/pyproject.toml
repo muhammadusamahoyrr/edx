@@ -33,6 +33,10 @@ dev = ["pytest>=8", "import-linter>=2.0", "ruff>=0.4"]
 target_openedx_release = "ulmo"
 
 [project.entry-points."xblock.v1"]
+# Smallest thing that proves the integration path. Kept permanently as an
+# environment smoke test: when a new release or rebuilt image breaks block
+# loading, this says whether the fault is the platform or CourseMate.
+coursemate_smoke = "coursemate_platform.xblock.smoke_block:CourseMateSmokeXBlock"
 coursemate_tutor = "coursemate_platform.xblock.tutor_block:CourseMateTutorXBlock"
 
 # Registered in BOTH processes, because the events we depend on fire in both:
