@@ -147,3 +147,43 @@ def test_empty_run_is_refused_rather_than_swapped(store):
     store.swap("CS101", "good")
     assert store.verify_run("CS101", "empty-run") is False
     assert store.search("existing", tenant="default", offering_id="CS101")
+
+
+def test_scores_are_absolute_not_relative_to_the_result_set(store):
+    """Regression: the confidence gate must be able to fire.
+
+    Scores were normalised against the best row of the SAME query, so the top hit
+    was 1.0 for every query however weak, and the threshold never fired. The
+    tutor answered 'explain quantum chromodynamics' from an unrelated lesson
+    while groundedness read 1.0 — the model faithfully grounded its answer in an
+    irrelevant chunk.
+    """
+    store.write_chunks(_rows("CS101", "v1", [
+        ("Transcripts", "video transcripts help learners with hearing impairments"),
+    ]))
+    store.swap("CS101", "v1")
+
+    on_topic = store.search("video transcripts", tenant="default", offering_id="CS101")
+    assert on_topic, "expected the on-topic query to retrieve something"
+    assert on_topic[0].score >= 0.5, f"on-topic score too low: {on_topic[0].score}"
+
+    # A query sharing ONE incidental word must not score like a real match.
+    off_topic = store.search(
+        "quantum chromodynamics colour confinement video", tenant="default", offering_id="CS101"
+    )
+    if off_topic:
+        assert off_topic[0].score < 0.35, (
+            f"off-topic query scored {off_topic[0].score} — the gate cannot fire"
+        )
+
+
+def test_score_does_not_depend_on_how_many_rows_come_back(store):
+    """The bug's mechanism: a single weak row normalised to 1.0 because it was
+    the best row present. Score must be a property of the match, not the set."""
+    store.write_chunks(_rows("CS101", "v1", [
+        ("Only", "an isolated lesson about typography and layout"),
+    ]))
+    store.swap("CS101", "v1")
+    hits = store.search("typography deadlock concurrency scheduling", tenant="default", offering_id="CS101")
+    if hits:
+        assert hits[0].score < 1.0, "sole result was scored as a perfect match"

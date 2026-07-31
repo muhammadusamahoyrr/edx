@@ -75,6 +75,38 @@ CREATE TABLE IF NOT EXISTS offering_state (
 #: so it is stripped to bare terms rather than passed through as a query language.
 _FTS_UNSAFE = re.compile(r"""[^\w\s]""", re.UNICODE)
 
+#: Words too common to signal that a chunk is about the question. Kept small: an
+#: aggressive stoplist inflates coverage by discarding the very words a weak
+#: match fails to share.
+_STOP = frozenset({
+    "the", "a", "an", "and", "or", "but", "if", "then", "of", "to", "in", "on",
+    "for", "with", "as", "is", "are", "was", "were", "be", "been", "it", "this",
+    "that", "these", "those", "you", "your", "can", "will", "may", "at", "by",
+    "from", "not", "no", "do", "does", "did", "have", "has", "had", "which",
+    "when", "what", "how", "why", "who", "where", "i", "my", "me", "we", "us",
+    "about", "into", "used", "use", "there", "their", "them", "they",
+})
+
+_WORD = re.compile(r"[a-z0-9]+")
+
+
+def _stem(word: str) -> str:
+    """Crude suffix trimming, to match FTS5's `porter` tokenizer approximately.
+
+    Exact word comparison would understate coverage badly: FTS5 matches
+    "transcripts" against a chunk containing "transcript", and a gate that
+    disagreed with the retriever about what matched would abstain on questions
+    the retriever answered correctly.
+    """
+    for suffix in ("ing", "ies", "es", "ed", "s"):
+        if len(word) > len(suffix) + 3 and word.endswith(suffix):
+            return word[: -len(suffix)]
+    return word
+
+
+def _content_terms(text: str) -> set[str]:
+    return {_stem(w) for w in _WORD.findall(text.lower()) if w not in _STOP and len(w) > 2}
+
 
 @dataclass(frozen=True)
 class StoredChunk:
@@ -239,22 +271,51 @@ class ChunkStore:
         if not rows:
             return []
 
-        # SQLite's bm25() returns negative values, better = more negative. Map to
-        # 0..1 so the confidence gate compares against a stable threshold rather
-        # than a corpus-dependent magnitude.
-        best = min(r["raw"] for r in rows)
-        return [
-            StoredChunk(
-                usage_key=r["usage_key"],
-                block_id=r["block_id"],
-                display_name=r["display_name"],
-                content_type=r["content_type"],
-                text=r["text"],
-                ordinal=r["ordinal"],
-                score=round(min(1.0, r["raw"] / best) if best else 0.0, 4),
+        # --- scoring: BM25 ORDERS, query-term coverage GATES -----------------
+        #
+        # An earlier version normalised BM25 against the best row of the same
+        # result set:
+        #
+        #     best = min(r["raw"] for r in rows); score = raw / best
+        #
+        # which made the top hit exactly 1.0 for EVERY query, however weak. The
+        # confidence gate could then never fire while any row came back, so the
+        # tutor answered "explain quantum chromodynamics" from an unrelated
+        # lesson. The evaluation harness caught it: false_answer_rate 1.0 with
+        # groundedness 1.0 — the model faithfully grounded its answer in an
+        # irrelevant chunk, which is exactly the failure §11.1 predicts when only
+        # the final answer is measured.
+        #
+        # The defect was using a RELATIVE quantity as an ABSOLUTE threshold.
+        # BM25's magnitude is corpus- and query-dependent and is not comparable
+        # across questions; it is excellent at ordering and useless as a
+        # confidence value. Coverage — what fraction of the question's content
+        # words the chunk actually contains — is bounded 0..1, comparable across
+        # queries, and directly interpretable: 0.5 means "half the question's
+        # substantive words appear here".
+        query_terms = _content_terms(query)
+        results: list[StoredChunk] = []
+        for r in rows:
+            if query_terms:
+                overlap = len(query_terms & _content_terms(r["text"]))
+                coverage = overlap / len(query_terms)
+            else:
+                coverage = 0.0
+            results.append(
+                StoredChunk(
+                    usage_key=r["usage_key"],
+                    block_id=r["block_id"],
+                    display_name=r["display_name"],
+                    content_type=r["content_type"],
+                    text=r["text"],
+                    ordinal=r["ordinal"],
+                    score=round(coverage, 4),
+                )
             )
-            for r in rows
-        ]
+        # Rows arrive in BM25 order and stay in it: BM25 ranks better than raw
+        # coverage does (it weights rare terms), so ordering and gating use the
+        # signal each is good at.
+        return results
 
     def stats(self, offering_id: str) -> dict:
         with self._lock:
