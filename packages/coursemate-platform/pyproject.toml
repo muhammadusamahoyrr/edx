@@ -49,3 +49,15 @@ coursemate_platform = "coursemate_platform.apps:CourseMateConfig"
 
 [tool.setuptools.packages.find]
 include = ["coursemate_platform*"]
+
+# Without this, setuptools ships only .py files and the XBlock's templates, JS
+# and CSS are silently absent from the install. The block then imports fine,
+# registers fine, and fails at render — the most expensive place to find out.
+# (The smoke block survives it only because its markup is inline Python strings.)
+[tool.setuptools.package-data]
+coursemate_platform = [
+    "xblock/static/html/*.html",
+    "xblock/static/css/*.css",
+    "xblock/static/js/src/*.js",
+    "xblock/templates/*.html",
+]
