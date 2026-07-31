@@ -74,7 +74,13 @@ async def ingest_blocks(request: IngestRequest) -> IngestAccepted:
     # run has landed — which is the entire point of write-then-swap: a failure
     # halfway through leaves the last good index intact rather than a hole.
     ok = True
-    if request.is_final:
+    if request.topup:
+        # Sweep repair (§5.4): activate just these blocks. No swap — see
+        # activate_usage_keys for why re-swapping here would be a race.
+        store.activate_usage_keys(
+            request.offering_id, version, [b.usage_key for b in request.blocks]
+        )
+    elif request.is_final:
         ok = store.verify_run(request.offering_id, version)
         if ok:
             store.swap(request.offering_id, version)
@@ -113,6 +119,48 @@ async def delete_blocks(request: DeleteRequest) -> dict:
             store._conn.execute(f"DELETE FROM chunks WHERE id IN ({marks})", ids)  # noqa: SLF001
             store._conn.commit()  # noqa: SLF001
     return {"deleted_chunks": len(ids)}
+
+
+@router.get("/manifest/{offering_id:path}")
+async def manifest(offering_id: str) -> dict:
+    """Every block currently served for this offering.
+
+    The reconciliation sweep (§5.4) needs this because **no unpublish event
+    exists in openedx-events.** Nothing tells us when an instructor unpublishes a
+    unit, so the only way to detect it is to periodically compare what we serve
+    against what the platform actually publishes. Without this the tutor keeps
+    answering from — and citing — content students can no longer see, which is a
+    direct Principle 3 violation that no event can catch.
+    """
+    keys = get_store().indexed_usage_keys(offering_id)
+    return {"offering_id": offering_id, "usage_keys": keys, "count": len(keys)}
+
+
+@router.post("/prune")
+async def prune(request: dict) -> dict:
+    """Remove blocks the sweep found to be orphaned.
+
+    Separate from /delete, which drops a subtree on XBLOCK_DELETED. This takes an
+    explicit list the sweep computed, so a bug in tree-walking cannot cascade
+    into removing more than was asked for.
+    """
+    offering_id = str(request.get("offering_id") or "")
+    usage_keys = [str(k) for k in (request.get("usage_keys") or [])]
+    if not offering_id or not usage_keys:
+        return {"deleted_chunks": 0, "blocks": 0}
+    removed = get_store().delete_usage_keys(offering_id, usage_keys)
+    return {"deleted_chunks": removed, "blocks": len(usage_keys)}
+
+
+@router.get("/offerings")
+async def offerings() -> dict:
+    """Courses the nightly sweep should visit.
+
+    Declared before /stats/{offering_id:path} would otherwise be reachable — a
+    path-converter route is greedy, so ordering here is load-bearing.
+    """
+    ids = get_store().indexed_offerings()
+    return {"offerings": ids, "count": len(ids)}
 
 
 @router.get("/stats/{offering_id:path}")

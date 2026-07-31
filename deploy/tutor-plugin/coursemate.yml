@@ -92,6 +92,35 @@ patches:
         # notices and re-runs the bootstrap.
         - ../../data/coursemate:/data
 
+    # --- the nightly sweep needs something to schedule it ---------------------
+    # Tutor runs no beat process. A CELERY_BEAT_SCHEDULE entry with no scheduler
+    # reading it is not a nightly job, it is a comment — and the sweep is the only
+    # mitigation for unpublished content, so "scheduled" has to mean scheduled.
+    #
+    # One beat container, CMS variant: the sweep reads the modulestore through
+    # content_adapter, which is Studio-side.
+    coursemate-beat:
+      image: docker.io/overhangio/openedx:{{ OPENEDX_COMMON_VERSION_TAG | default("21.0.8-indigo") }}
+      environment:
+        SERVICE_VARIANT: cms
+        DJANGO_SETTINGS_MODULE: cms.envs.tutor.production
+      command:
+        - "celery"
+        - "--app=cms.celery"
+        - "beat"
+        - "--loglevel=info"
+        # Schedule state on a writable path; the default lands in a read-only
+        # working directory and beat exits on start.
+        - "--schedule=/openedx/data/coursemate-beat-schedule"
+      restart: unless-stopped
+      volumes:
+        - ../apps/openedx/settings/lms:/openedx/edx-platform/lms/envs/tutor:ro
+        - ../apps/openedx/settings/cms:/openedx/edx-platform/cms/envs/tutor:ro
+        - ../apps/openedx/config:/openedx/config:ro
+        - ../../data/cms:/openedx/data
+      depends_on:
+        - cms-worker
+
   # --- same-origin route on the LMS host ------------------------------------
   # `handle` is terminal for matched requests and is evaluated before the bare
   # `reverse_proxy` that Tutor imports for the LMS, so /coursemate/* is served by
@@ -119,3 +148,21 @@ patches:
     COURSEMATE_STREAM_PATH = "/coursemate/api/chat"
     COURSEMATE_SERVICE_URL = "http://coursemate:8000"
     COURSEMATE_TENANT = "default"
+
+  # --- the package must be IN the image, not copied into containers ---------
+  # Learned the hard way. `docker cp` puts the code on sys.path but installs no
+  # dist-info, so pip's `cms.djangoapp` / `lms.djangoapp` entry points are
+  # absent — and those entry points are exactly how Open edX discovers a plugin
+  # app. Without them the app never reaches INSTALLED_APPS, Django never loads
+  # it, Celery never autodiscovers `coursemate_platform.tasks`, and every
+  # enqueued task dies with "Received unregistered task". Publish still returns
+  # 200, so nothing surfaces outside the worker's log.
+  #
+  # Both worker containers were in exactly that state: receivers fired in the
+  # CMS web process (installed) and every task they enqueued was discarded by
+  # the worker (not installed).
+  openedx-dockerfile-post-python-requirements: |
+    COPY --chown=app:app ./coursemate /openedx/coursemate
+    RUN pip install --no-deps \
+        /openedx/coursemate/packages/coursemate-contracts \
+        /openedx/coursemate/packages/coursemate-platform

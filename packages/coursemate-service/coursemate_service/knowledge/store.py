@@ -317,6 +317,88 @@ class ChunkStore:
         # signal each is good at.
         return results
 
+    def indexed_usage_keys(self, offering_id: str) -> list[str]:
+        """Every distinct block currently *served* for this offering.
+
+        The reconciliation sweep compares this against the published tree. It
+        deliberately reads `active = 1` only: inactive rows belong to a
+        superseded version and are already unreachable by retrieval, so counting
+        them would report orphans that cannot be cited.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT usage_key FROM chunks WHERE offering_id=? AND active=1",
+                (offering_id,),
+            ).fetchall()
+        return [r["usage_key"] for r in rows]
+
+    def activate_usage_keys(self, offering_id: str, version: str,
+                            usage_keys: list[str]) -> int:
+        """Make specific blocks live WITHOUT moving the active pointer (§5.4).
+
+        Not `swap()`. Swap is version-scoped: it deactivates every row whose
+        version differs, so calling it from the sweep would revert the whole
+        course to whatever version the sweep had read a moment earlier — losing
+        a full reindex that landed in between. This touches only the named rows,
+        so it cannot race a concurrent reindex into serving stale content.
+
+        Rows are written at the CURRENT active version deliberately: a later
+        reindex must be able to retire them along with everything else it
+        replaces, which version-scoped deactivation does for free.
+        """
+        if not usage_keys:
+            return 0
+        with self._lock:
+            marks = ",".join("?" * len(usage_keys))
+            cur = self._conn.execute(
+                f"UPDATE chunks SET active=1 WHERE offering_id=? AND version=? "
+                f"AND usage_key IN ({marks})",
+                (offering_id, version, *usage_keys),
+            )
+            self._conn.execute(
+                "UPDATE offering_state SET chunk_count = "
+                "(SELECT COUNT(*) FROM chunks WHERE offering_id=? AND active=1), "
+                "updated_at = datetime('now') WHERE offering_id=?",
+                (offering_id, offering_id),
+            )
+            self._conn.commit()
+        log.info("sweep activated %d chunks across %d blocks in %s",
+                 cur.rowcount, len(usage_keys), offering_id)
+        return cur.rowcount
+
+    def delete_usage_keys(self, offering_id: str, usage_keys: list[str]) -> int:
+        """Remove specific blocks — the sweep's answer to unpublished content.
+
+        Exact-match rather than prefix-match, unlike the delete-subtree path: the
+        sweep computes an explicit orphan list, and a prefix here could take
+        siblings whose keys happen to share a stem.
+        """
+        if not usage_keys:
+            return 0
+        with self._lock:
+            marks = ",".join("?" * len(usage_keys))
+            ids = [
+                r["id"] for r in self._conn.execute(
+                    f"SELECT id FROM chunks WHERE offering_id=? AND usage_key IN ({marks})",
+                    (offering_id, *usage_keys),
+                )
+            ]
+            if not ids:
+                return 0
+            id_marks = ",".join("?" * len(ids))
+            self._conn.execute(f"DELETE FROM chunks_fts WHERE rowid IN ({id_marks})", ids)
+            self._conn.execute(f"DELETE FROM chunks WHERE id IN ({id_marks})", ids)
+            self._conn.execute(
+                "UPDATE offering_state SET chunk_count = "
+                "(SELECT COUNT(*) FROM chunks WHERE offering_id=? AND active=1), "
+                "updated_at = datetime('now') WHERE offering_id=?",
+                (offering_id, offering_id),
+            )
+            self._conn.commit()
+        log.info("sweep removed %d chunks across %d blocks from %s",
+                 len(ids), len(usage_keys), offering_id)
+        return len(ids)
+
     def stats(self, offering_id: str) -> dict:
         with self._lock:
             row = self._conn.execute(
@@ -324,6 +406,21 @@ class ChunkStore:
                 (offering_id,),
             ).fetchone()
         return dict(row) if row else {"active_version": None, "chunk_count": 0, "updated_at": None}
+
+    def indexed_offerings(self) -> list[str]:
+        """Every offering actually being served.
+
+        The nightly sweep's course list (§5.4). It comes from here rather than
+        from a platform-side table because the service is the only component
+        that knows what it serves: `coursemate_reindex` writes chunks without
+        recording any platform state, so a table-driven list swept nothing at
+        all — the sweep ran nightly across zero courses and reported success.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT offering_id FROM offering_state WHERE chunk_count > 0"
+            ).fetchall()
+        return [r["offering_id"] for r in rows]
 
     def has_index(self, offering_id: str) -> bool:
         return self.stats(offering_id)["chunk_count"] > 0

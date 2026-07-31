@@ -226,13 +226,11 @@ limitations document exists for the same reason.
 
 ## What I'd do next
 
-1. **Schedule the reconciliation sweep** — the tutor can currently cite
-   unpublished content; there is no unpublish event to catch it.
-2. **Redis for the rate limiter and authz cache** — both are per-process and fail
+1. **Redis for the rate limiter and authz cache** — both are per-process and fail
    silently on a second replica.
-3. **Paraphrase questions in the gold set** — recall@3 is 1.000, so the benchmark
+2. **Paraphrase questions in the gold set** — recall@3 is 1.000, so the benchmark
    is saturated and cannot justify embeddings yet.
-4. **Then** embeddings, merged with BM25 rather than replacing it.
+3. **Then** embeddings, merged with BM25 rather than replacing it.
 
 ---
 

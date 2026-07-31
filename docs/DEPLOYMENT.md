@@ -72,7 +72,32 @@ link, and frequently failing outright.
 
 ### 3.3 Platform package
 
-For development, install into the running containers:
+**Production: install it into the image.** The plugin's
+`openedx-dockerfile-post-python-requirements` patch does this, and it is not
+optional — it is what makes the asynchronous half of the system work at all:
+
+```bash
+rsync -a packages "$(tutor config printroot)/env/build/openedx/coursemate/"
+tutor config save && tutor images build openedx
+tutor local start -d
+```
+
+> **Why a file copy is not enough.** `docker cp` puts the code on `sys.path` but
+> installs no dist-info, so pip's `cms.djangoapp` / `lms.djangoapp` entry points
+> are absent — and those entry points are how Open edX discovers a plugin app.
+> Without them the app never reaches `INSTALLED_APPS`, Django never loads it,
+> Celery never autodiscovers `coursemate_platform.tasks`, and **every enqueued
+> task is discarded** with `Received unregistered task`. Studio's Publish button
+> still returns 200. The only symptom is in the worker log.
+
+Then apply the plugin's migrations — `CourseIndexState` and `FailedIngestion`
+live in MySQL:
+
+```bash
+tutor local run cms ./manage.py cms migrate coursemate_platform
+```
+
+For development iteration only, install into the running containers:
 
 ```bash
 for C in lms cms; do
@@ -92,7 +117,8 @@ docker restart tutor_local-lms-1 tutor_local-cms-1
 > when `/tmp/p` exists produces `/tmp/p/p`, and pip silently reinstalls the stale
 > copy. Remove the target first.
 
-For production, mount the package at image build time via `tutor mounts add`.
+This is a dev loop, not a deployment: it cannot help any container that starts
+later, including `coursemate-beat`. Install into the image for anything real.
 
 ---
 
@@ -156,6 +182,36 @@ Expected: `{'leaves_found': 226, 'blocks_written': 226, 'chunks_written': 231}`.
 Without this the tutor answers *"still being prepared"* for every question. There
 is no event for content published before installation, and nobody re-publishes an
 old course to wake up a plugin.
+
+---
+
+## 5.1 The reconciliation sweep
+
+Open edX emits **no unpublish event**. Publish, delete, duplicate, import and
+rerun all fire; unpublish does not. So nothing tells CourseMate when an
+instructor unpublishes a unit, and without a sweep the tutor keeps answering
+from — and citing — content students can no longer see.
+
+The `coursemate-beat` container runs the sweep nightly at 03:30, and every
+publish sweeps its own course. To run one by hand:
+
+```bash
+tutor local run cms ./manage.py cms coursemate_reconcile   --course course-v1:OpenedX+DemoX+DemoCourse --inline
+```
+
+```
+course-v1:OpenedX+DemoX+DemoCourse: live=216 indexed=221 orphans=5 repaired=0 unrepaired=0
+    removed (no longer published): block-v1:…+type@html+block@04be59e2…
+```
+
+`--all` sweeps every course CourseMate indexes (not every course on the
+instance — a never-indexed course reads as "entirely missing", and a nightly job
+must not silently enable the tutor for courses nobody opted into).
+
+**The sweep refuses to remove more than half a course in one run.** A failed
+course read yields zero live blocks, which is indistinguishable from a mass
+unpublish; without the cap, one bad modulestore read wipes the index and logs
+success. After checking the course by hand, `--force` lifts it.
 
 ---
 

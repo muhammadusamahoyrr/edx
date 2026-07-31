@@ -46,7 +46,17 @@ def on_xblock_published(signal, sender, xblock_info, **kwargs):  # noqa: ARG001
     ingest_published_block.delay(
         usage_key=usage_key, version=version, trace_id=str(uuid.uuid4())
     )
-    log.info("coursemate: enqueued ingest for %s", usage_key)
+
+    # Also sweep this course (§5.4). Publishing is the one moment we KNOW the
+    # course tree changed, and unpublishing a unit is frequently followed by
+    # publishing something else — so running the sweep here shortens the window
+    # during which unpublished content can still be cited, from "up to a night"
+    # to "until the next publish". It does not close it: without an unpublish
+    # event, nothing can.
+    from ..tasks.reconcile import reconcile_course
+
+    reconcile_course.delay(str(xblock_info.usage_key.course_key))
+    log.info("coursemate: enqueued ingest + sweep for %s", usage_key)
 
 
 def on_xblock_deleted(signal, sender, xblock_info, **kwargs):  # noqa: ARG001

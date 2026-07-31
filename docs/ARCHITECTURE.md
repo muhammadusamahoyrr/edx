@@ -198,6 +198,34 @@ itself in and deactivated its predecessors: a 226-block course served **26 block
 while reporting complete success**. Nothing failed; the content silently vanished.
 `run_id` + `is_final` make the whole run the unit.
 
+**Why there is a sweep at all.** Open edX emits **no unpublish event**. Publish,
+delete, duplicate, import and rerun all fire; unpublish does not. No event-driven
+design can therefore keep the index honest, so a periodic comparison is not a
+fallback — it is the only mechanism that exists:
+
+```mermaid
+flowchart LR
+    A["live = published leaves<br/>(content_adapter)"] --> C{"compare"}
+    B["indexed = served blocks<br/>(service manifest)"] --> C
+    C -- "indexed − live" --> D["orphans → prune"]
+    C -- "live − indexed" --> E["missing → re-ingest"]
+    D --> F{"> 50% of the course?"}
+    F -- yes --> G["refuse, report<br/>(a failed read looks<br/>identical to this)"]
+    F -- no --> H["remove"]
+    E --> I["write at the ACTIVE version,<br/>activate only those blocks"]
+```
+
+Two properties make it safe to run unattended. It **tops up rather than swaps**:
+a sweep repairing five blocks must not re-swap the course, which would revert it
+to whatever version the sweep read moments earlier and lose a reindex that landed
+in between. And it **refuses to delete more than half a course** without
+`--force`, because `iter_course_leaves` yields nothing when a course read fails —
+indistinguishable from a mass unpublish, and the difference between a stale block
+and a wiped index.
+
+It runs nightly and on every publish. The window between an unpublish and the
+next sweep is real and cannot be closed without a platform event.
+
 ---
 
 ## 5. Security model

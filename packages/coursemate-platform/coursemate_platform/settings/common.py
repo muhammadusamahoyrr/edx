@@ -48,5 +48,40 @@ def plugin_settings(settings):
     # isolation key later is expensive and carrying an unused one is free.
     settings.COURSEMATE_TENANT = "default"
 
+    # --- reconciliation sweep (§5.4) -----------------------------------------
+    # The ONLY mitigation for unpublished content: openedx-events has no unpublish
+    # event, so nothing tells us when an instructor unpublishes a unit. Without
+    # this the tutor keeps citing content students can no longer see.
+    #
+    # Nightly leaves a window of up to one interval. That window is real and is
+    # stated in the docs rather than hidden -- it cannot be closed without a
+    # platform event.
+    settings.COURSEMATE_RECONCILE_ENABLED = True
+    settings.COURSEMATE_RECONCILE_HOUR = 3       # local time, off-peak
+    settings.COURSEMATE_RECONCILE_MINUTE = 30
+
+    if settings.COURSEMATE_RECONCILE_ENABLED:
+        # Wrapped because of rule 2 above, which this function would otherwise
+        # be the first to break: this is the only import in the module, and an
+        # ImportError here takes down the LMS for every course on the instance.
+        # A missing scheduler must cost us a nightly sweep, not the platform.
+        try:
+            from celery.schedules import crontab
+
+            beat = getattr(settings, "CELERYBEAT_SCHEDULE", None)
+            if beat is None:
+                beat = getattr(settings, "CELERY_BEAT_SCHEDULE", {})
+            beat["coursemate-nightly-reconcile"] = {
+                "task": "coursemate_platform.tasks.reconcile.reconcile_all",
+                "schedule": crontab(
+                    hour=settings.COURSEMATE_RECONCILE_HOUR,
+                    minute=settings.COURSEMATE_RECONCILE_MINUTE,
+                ),
+            }
+            settings.CELERY_BEAT_SCHEDULE = beat
+            settings.CELERYBEAT_SCHEDULE = beat
+        except Exception:  # noqa: BLE001 — see above; never fatal at settings time
+            pass
+
     # --- designed but dormant -------------------------------------------------
     settings.COURSEMATE_ASIDE_ENABLED = False  # §3.1, vertical-scoped when it lands

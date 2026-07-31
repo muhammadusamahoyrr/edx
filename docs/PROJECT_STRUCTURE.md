@@ -70,14 +70,18 @@ coursemate_platform/
 ├── events/
 │   ├── cms_receivers.py         # content_authoring — fires in Studio
 │   └── lms_receivers.py         # learning — fires in the LMS
-├── tasks/                       # Celery: ingest, bootstrap, invalidate
+├── tasks/                       # Celery: ingest, bootstrap, reconcile
+│                                #   __init__ imports all three — autodiscovery
+│                                #   registers nothing from an empty package init
+├── drift.py                     # sweep decision logic, pure (no Django/Celery)
 ├── client/                      # server-to-server only; jwt, http, endpoints
 ├── xblock/
 │   ├── tutor_block.py           # mint + render. Never relays an answer
 │   ├── smoke_block.py           # permanent environment smoke test
 │   └── static/                  # templates, CSS, browser stream client
-├── management/commands/         # coursemate_reindex
+├── management/commands/         # coursemate_reindex, coursemate_reconcile
 ├── models.py                    # resumable index state, failed_ingestions
+├── migrations/                  # their tables (absent until the sweep read them back)
 └── settings/                    # common.py sets defaults and NEVER raises
 ```
 

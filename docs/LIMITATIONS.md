@@ -63,15 +63,41 @@ after every filter was correct.
 
 ## 5. Ingestion gaps
 
-- **Publish-triggered incremental indexing is wired but unverified end to end.**
-  The receiver enqueues, and the code path is exercised by unit tests, but a full
-  publish→index→retrieve cycle has not been demonstrated. Bootstrap indexing is
-  verified.
-- **No reconciliation sweep running.** There is **no unpublish event** in
-  `openedx-events`, so an unpublished unit remains indexed until a sweep removes
-  it. The sweep is designed (§5.4) and not scheduled. **Until it runs, the tutor
-  can cite content students can no longer see** — the one live correctness gap in
-  the system.
+- **Publish-triggered incremental indexing is verified end to end** — and was
+  broken until it was. The receiver enqueued correctly and the worker discarded
+  every message with `Received unregistered task`, because the platform package
+  was never pip-installed in the worker containers: `docker cp` puts code on the
+  path but installs no dist-info, so the `cms.djangoapp` entry point was missing
+  and the app never reached `INSTALLED_APPS`. Publish returned 200 throughout.
+  Fixed by installing the package **in the image** (Tutor plugin patch
+  `openedx-dockerfile-post-python-requirements`) and by importing every task
+  module from `tasks/__init__.py`, without which Celery's autodiscovery
+  registers nothing from a task *package*. Verified live: republishing a unit
+  restored 5 blocks to the served index in under 4 seconds.
+- **The reconciliation sweep runs** — nightly at 03:30, and again on every
+  publish. Verified: a real `celery beat` process loads the entry
+  (`<ScheduleEntry: coursemate-nightly-reconcile … <crontab: 30 3 * * *>>`),
+  `reconcile_all` queues the courses the service actually serves, and each
+  per-course sweep completes. The dedicated `coursemate-beat` **container** is
+  configured in the Tutor plugin but **UNVERIFIED**: it starts from the openedx
+  image, so it needs the image rebuild that installs the package, and that build
+  had not finished at time of writing. Until it has, run the sweep from cron or
+  by hand — the schedule itself is proven. There is still **no unpublish event** in
+  `openedx-events`, so the sweep remains the only mechanism that can detect
+  unpublished content, and a window therefore remains: between an unpublish and
+  the next sweep, the tutor can still cite content students can no longer see.
+  Publishing anything in the same course closes it immediately. **That window
+  cannot be eliminated without a platform event** — claiming otherwise would be
+  dishonest. Verified live on DemoX: unpublishing a unit removed nothing on its
+  own, and the sweep then took the served index from 221 blocks to 216.
+- **The nightly course list comes from the service, not the platform.**
+  `CourseIndexState` is written only by the bootstrap task, so a list built from
+  it was empty on a stack serving 231 chunks: the sweep ran across zero courses
+  and reported success. The service is asked what it serves instead.
+- **The sweep will not delete more than half a course in one run** without
+  `--force`. `iter_course_leaves` yields nothing when a course read fails, which
+  is indistinguishable from "everything was unpublished"; without the cap, one
+  bad modulestore read wipes the index and logs success.
 - **Import/rerun handlers deferred.** An imported course needs a manual reindex.
 - Video transcripts are recognised but transcript extraction is a stub.
 
@@ -107,17 +133,16 @@ after every filter was correct.
 
 ## 8. Future work, in the order I would do it
 
-1. **Schedule the reconciliation sweep.** The only live correctness gap: the tutor
-   can currently cite unpublished content.
-2. **Move the rate limiter and authz cache to Redis.** Cheap, and removes a silent
+1. **Move the rate limiter and authz cache to Redis.** Cheap, and removes a silent
    correctness failure the moment anyone scales out.
-3. **Extend the gold set with paraphrase questions.** Without this, embeddings
+2. **Extend the gold set with paraphrase questions.** Without this, embeddings
    cannot be justified by measurement — the benchmark is saturated.
-4. **Add embeddings as a second retriever, merged with BM25.**
-5. **Verify publish-triggered indexing end to end.**
-6. **Exercise a hosted provider**, including a forced outage to test fallback.
-7. **Cross-encoder reranking**, now measurable against the lexical baseline.
-8. **Feature B**, which is a project of its own.
+3. **Add embeddings as a second retriever, merged with BM25.**
+4. **Exercise a hosted provider**, including a forced outage to test fallback.
+5. **Cross-encoder reranking**, now measurable against the lexical baseline.
+6. **Shorten the unpublish window** by subscribing to a platform unpublish event
+   — which means proposing one upstream, since none exists.
+7. **Feature B**, which is a project of its own.
 
 ---
 
@@ -128,7 +153,7 @@ answers with citations, abstains correctly, and enforces enrollment. Every claim
 in the benchmark report is backed by an executable run.
 
 It is **not production-ready**. The nearest gaps are operational (single-replica
-assumptions, no reconciliation sweep) rather than architectural — the boundaries
+assumptions, a sweep interval rather than an event) rather than architectural — the boundaries
 have held under six phases of change, and the seams designed for retrieval and
 model swapping both absorbed real replacements without the API moving.
 

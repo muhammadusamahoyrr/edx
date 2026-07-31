@@ -50,6 +50,14 @@ class IngestRequest(BaseModel):
 
     blocks: list[LeafBlock]
 
+    #: Top-up: activate ONLY the blocks in this batch, leaving the active
+    #: pointer alone (§5.4). The reconciliation sweep sets it, because a sweep
+    #: repairing a handful of blocks must not re-swap the whole course — and
+    #: because `write_chunks` writes rows INACTIVE, a sweep that neither swapped
+    #: nor topped up would report "re-ingested N blocks" while serving none of
+    #: them. Mutually exclusive with is_final.
+    topup: bool = False
+
     #: Correlates a batch with the Celery task that produced it, so a partial
     #: ingest is traceable to its trigger (§11.4).
     trace_id: str

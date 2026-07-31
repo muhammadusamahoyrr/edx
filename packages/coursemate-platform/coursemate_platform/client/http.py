@@ -47,6 +47,28 @@ class _Breaker:
 _breaker = _Breaker()
 
 
+def get(path: str) -> dict:
+    """Read from the service. Same breaker as post(): a CourseMate outage must
+    not wedge a Celery worker mid-sweep."""
+    from django.conf import settings
+
+    _breaker.before()
+    url = settings.COURSEMATE_SERVICE_URL.rstrip("/") + path
+    try:
+        response = httpx.get(
+            url,
+            timeout=settings.COURSEMATE_HTTP_TIMEOUT_SECONDS,
+            headers={"Authorization": f"Bearer {settings.COURSEMATE_SERVICE_CREDENTIAL}"},
+        )
+        response.raise_for_status()
+        _breaker.record(True)
+        return response.json()
+    except Exception:
+        _breaker.record(False)
+        log.exception("coursemate: GET %s failed", path)
+        raise
+
+
 def post(path: str, payload: dict) -> dict:
     from django.conf import settings
 

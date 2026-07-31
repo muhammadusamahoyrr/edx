@@ -31,7 +31,7 @@ _CONTENT_TYPE = {
 
 
 def send_leaves(*, tenant, course_id, offering_id, course_version, leaves, trace_id,
-                run_id=None, is_final=False) -> IngestAccepted:
+                run_id=None, is_final=False, topup=False) -> IngestAccepted:
     """One record per leaf block.
 
     That shape is deliberate: design §5.5 rule 1 says two blocks are never merged
@@ -47,6 +47,7 @@ def send_leaves(*, tenant, course_id, offering_id, course_version, leaves, trace
         trace_id=trace_id,
         run_id=run_id or trace_id,
         is_final=is_final,
+        topup=topup,
         blocks=[
             LeafBlock(
                 usage_key=leaf.usage_key,
