@@ -1,0 +1,115 @@
+# Retrieval gold set — questions whose answer lives in a KNOWN block.
+#
+# Built by sampling the actual index (231 chunks from DemoX), not invented. A
+# gold set written without looking at the corpus measures the question-writer's
+# imagination rather than the retriever.
+#
+# `expect` lists display names any of which is a correct top hit. Several
+# questions legitimately have more than one right answer — the course covers
+# cohorts in both "Setting up Cohorts" and "Content groups" — and marking one
+# arbitrarily correct would penalise a retriever that found the other.
+#
+# LIMITATION, stated up front: 18 questions is a small sample. Per design §11.2
+# this yields indicative numbers with wide intervals, not a settled measurement.
+# It is reported with n, never as a bare percentage.
+
+offering_id: "course-v1:OpenedX+DemoX+DemoCourse"
+
+questions:
+  - id: q01
+    question: "What are video transcripts used for?"
+    expect: ["Transcripts", "Best Practices & Generating SRT Files"]
+    covered: true
+
+  - id: q02
+    question: "How do I set up cohorts in my course?"
+    expect: ["Setting up Cohorts", "Content groups"]
+    covered: true
+
+  - id: q03
+    question: "What is an Open Response Assessment?"
+    expect: ["ORA", "Assessments Summary"]
+    covered: true
+
+  - id: q04
+    question: "What are XBlocks?"
+    expect: ["XBlocks"]
+    covered: true
+
+  - id: q05
+    question: "How can learners work together in small groups?"
+    expect: ["Teams"]
+    covered: true
+
+  - id: q06
+    question: "What does the Poll component do?"
+    expect: ["Polls"]
+    covered: true
+
+  - id: q07
+    question: "How do I contribute to the open source community?"
+    expect: ["Contribute"]
+    covered: true
+
+  - id: q08
+    question: "What are content libraries used for?"
+    expect: ["Content Libraries"]
+    covered: true
+
+  - id: q09
+    question: "Where do I find the course outline?"
+    expect: ["Course Outline"]
+    covered: true
+
+  - id: q10
+    question: "What is conditional content?"
+    expect: ["Conditional Content", "Content groups"]
+    covered: true
+
+  - id: q11
+    question: "What assessment types does the platform offer?"
+    expect: ["Assessments Summary", "ORA"]
+    covered: true
+
+  - id: q12
+    question: "How do I configure advanced video settings?"
+    expect: ["Advanced Video Settings", "Transcripts"]
+    covered: true
+
+  # --- NOT covered: the tutor must abstain, not improvise -------------------
+  # These matter more than the covered ones. A tutor that answers everything
+  # looks better in a demo and is worse in a course: a confidently wrong answer
+  # costs a student more than an unnecessary "not covered" (§8.5).
+  - id: q13
+    question: "Explain quantum chromodynamics and colour confinement"
+    expect: []
+    covered: false
+
+  - id: q14
+    question: "What were the main causes of the French Revolution?"
+    expect: []
+    covered: false
+
+  - id: q15
+    question: "How do I file my income tax return in Germany?"
+    expect: []
+    covered: false
+
+  - id: q16
+    question: "What is the treatment protocol for myocardial infarction?"
+    expect: []
+    covered: false
+
+  # --- adversarial: plausible-sounding but absent from THIS course ----------
+  # Harder than random off-topic questions, because the vocabulary overlaps the
+  # course domain. This is where a lexical retriever is most likely to return
+  # something irrelevant with a high score.
+  - id: q17
+    question: "How do I configure single sign-on with SAML for my institution?"
+    expect: []
+    covered: false
+
+  - id: q18
+    question: "What is the pricing model for enterprise course licensing?"
+    expect: []
+    covered: false
