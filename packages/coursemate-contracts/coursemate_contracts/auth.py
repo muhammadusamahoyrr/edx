@@ -36,7 +36,10 @@ class StudentClaims(BaseModel):
     request, so a forged claim buys nothing (§6.5, §10.1).
     """
 
-    sub: str  # user_id
+    sub: str  # user_id (numeric, stable)
+    #: The platform's enrollment API keys on USERNAME, not numeric id, so it is
+    #: carried explicitly rather than looked up on every authorization check.
+    username: str | None = None
     course_id: str
     offering_id: str
     #: Platform roles as the LMS reports them. Informational only: anything

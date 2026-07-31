@@ -20,6 +20,7 @@ from coursemate_contracts.auth import StudentClaims
 
 from ..config import settings
 from ..knowledge import get_store
+from .authz import NotEnrolled, PlatformUnreachable, verifier
 from ..knowledge.store import StoredChunk
 
 log = logging.getLogger(__name__)
@@ -34,17 +35,35 @@ class CourseIntelligenceImpl:
     students see, so no prompt can either."""
 
     def _authorize(self, claims: StudentClaims, offering_id: str) -> None:
-        # Step 2. The token establishes WHO is asking; it is not a grant. In the
-        # MVP the offering is checked against the token's own claim.
-        #
-        # LIMITATION, stated rather than hidden (§10.1): enrollment is not yet
-        # re-derived from the platform on each call. A forged token cannot be
-        # minted without the signing key, so this is not currently exploitable —
-        # but it is weaker than the design requires and is tracked as such.
+        """Step 2, in two parts — and both are needed.
+
+        The token scopes the request; the PLATFORM decides entitlement. Checking
+        only the token would mean a signed token outlives the enrollment it was
+        minted under: unenroll a student and their unexpired token keeps working.
+        The signature proves the token was issued, not that access still holds.
+        """
         if offering_id != claims.offering_id:
             raise AuthorizationError(
                 f"token scoped to {claims.offering_id}, requested {offering_id}"
             )
+
+        if not settings.enforce_enrollment:
+            log.warning("enrollment enforcement DISABLED — development only")
+            return
+
+        try:
+            # The enrollment API keys on username; sub is the numeric id.
+            # Falling back to sub makes the failure a clean 'not enrolled'
+            # rather than a confusing 404 against a numeric username.
+            verifier.require_enrolled(claims.username or claims.sub, offering_id)
+        except NotEnrolled as exc:
+            raise AuthorizationError(str(exc)) from exc
+        except PlatformUnreachable as exc:
+            # Fail CLOSED. An availability problem must never become an
+            # authorization bypass: a tutor that is down is recoverable, one
+            # serving another cohort's content is not.
+            log.error("enrollment unverifiable, denying: %s", exc)
+            raise AuthorizationError("enrollment could not be verified") from exc
 
     def _audit(self, claims: StudentClaims, tool: str, offering_id: str, n: int) -> None:
         # Step 4. Deliberately not the student's question: §3.1 keeps chat text

@@ -49,7 +49,8 @@ def mint_student_token(
     *,
     signing_key: str,
     user_id: str,
-    course_id: str,
+    username: str | None = None,
+    course_id: str = "",
     offering_id: str,
     roles: list[str],
     usage_key: str | None = None,
@@ -68,6 +69,7 @@ def mint_student_token(
     now = int(time.time())
     claims = StudentClaims(
         sub=user_id,
+        username=username,
         course_id=course_id,
         offering_id=offering_id,
         roles=roles,

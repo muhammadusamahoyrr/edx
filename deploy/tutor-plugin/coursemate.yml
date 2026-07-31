@@ -44,6 +44,20 @@ config:
     # Flip to true once retrieval lands (Phase 6). Until then the tutor would
     # correctly abstain on every question, since it cannot yet read the course.
     REQUIRE_GROUNDING: false
+    # Open edX owns enrollment; the boundary re-derives it per call (§10.1).
+    LMS_URL: "http://lms:8000"
+    ENFORCE_ENROLLMENT: true
+    LMS_CLIENT_ID: ""
+    LMS_CLIENT_SECRET: ""
+    # Base URL for a local Ollama, reached via the docker bridge. Empty for
+    # hosted providers, which need no base URL.
+    OLLAMA_API_BASE: ""
+    # A 7B model on CPU takes tens of seconds to first token -- the design (§8.2)
+    # predicted exactly this and is why the local model was deferred rather than
+    # made the primary. Raised so a local model is usable for development.
+    MODEL_TIMEOUT_SECONDS: 300
+    RERANK_TOP_K: 3
+    MAX_OUTPUT_TOKENS: 250
 
 patches:
   # --- the service container ------------------------------------------------
@@ -63,6 +77,14 @@ patches:
         COURSEMATE_MOCK_RESPONSE: "{{ COURSEMATE_MOCK_RESPONSE }}"
         COURSEMATE_REQUIRE_GROUNDING: "{{ COURSEMATE_REQUIRE_GROUNDING }}"
         COURSEMATE_INDEX_PATH: "/data/coursemate-index.db"
+        COURSEMATE_LMS_URL: "{{ COURSEMATE_LMS_URL }}"
+        COURSEMATE_ENFORCE_ENROLLMENT: "{{ COURSEMATE_ENFORCE_ENROLLMENT }}"
+        COURSEMATE_LMS_CLIENT_ID: "{{ COURSEMATE_LMS_CLIENT_ID }}"
+        COURSEMATE_LMS_CLIENT_SECRET: "{{ COURSEMATE_LMS_CLIENT_SECRET }}"
+        OLLAMA_API_BASE: "{{ COURSEMATE_OLLAMA_API_BASE }}"
+        COURSEMATE_MODEL_TIMEOUT_SECONDS: "{{ COURSEMATE_MODEL_TIMEOUT_SECONDS }}"
+        COURSEMATE_RERANK_TOP_K: "{{ COURSEMATE_RERANK_TOP_K }}"
+        COURSEMATE_MAX_OUTPUT_TOKENS: "{{ COURSEMATE_MAX_OUTPUT_TOKENS }}"
       volumes:
         # The index must outlive the container. Losing it is not data loss --
         # it can be rebuilt from the modulestore -- but an empty index makes the

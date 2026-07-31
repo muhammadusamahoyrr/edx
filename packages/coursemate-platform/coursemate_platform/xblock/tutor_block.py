@@ -151,6 +151,7 @@ class CourseMateTutorXBlock(XBlock):
             return {"error": "unauthenticated"}
 
         user_id = str(user.opt_attrs.get("edx-platform.user_id", ""))
+        username = user.opt_attrs.get("edx-platform.username", "") or None
         roles = list(user.opt_attrs.get("edx-platform.user_role", "") or "")
 
         if not settings.COURSEMATE_JWT_SIGNING_KEY:
@@ -161,6 +162,7 @@ class CourseMateTutorXBlock(XBlock):
         token = mint_student_token(
             signing_key=settings.COURSEMATE_JWT_SIGNING_KEY,
             user_id=user_id,
+            username=username,
             course_id=self._course_id(),
             offering_id=self._offering_id(),
             roles=roles if isinstance(roles, list) else [str(roles)],

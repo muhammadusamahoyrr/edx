@@ -16,6 +16,7 @@ from fastapi import FastAPI
 
 from .api.chat import router as chat_router
 from .api.ingest import router as ingest_router
+from .api.invalidation import router as invalidation_router
 from .config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -40,6 +41,7 @@ app.include_router(chat_router, prefix="/coursemate/api", tags=["student"])
 # Service-credential routes. Kept on a separate router precisely so a leaked
 # student token cannot reach them (§3.4).
 app.include_router(ingest_router, prefix="/coursemate/api/ingest", tags=["ingest"])
+app.include_router(invalidation_router, prefix="/coursemate/api/invalidate", tags=["ingest"])
 
 
 @app.get("/coursemate/health")

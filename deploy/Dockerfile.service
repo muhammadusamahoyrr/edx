@@ -16,7 +16,19 @@ WORKDIR /app
 COPY packages/coursemate-contracts /app/coursemate-contracts
 COPY packages/coursemate-service   /app/coursemate-service
 
-RUN pip install --no-cache-dir -q \
+# Two flags, both earned the hard way on a slow link:
+#
+#  --no-build-isolation  uses the setuptools already in the image rather than
+#      downloading one into a throwaway build env. Without it a momentary PyPI
+#      failure surfaces as "Could not find a version that satisfies
+#      setuptools>=68 (from versions: none)", which reads like a version
+#      conflict and is actually a network error.
+#  --timeout/--retries   the real failure here was
+#      "ReadTimeoutError: files.pythonhosted.org: Read timed out". pip's default
+#      15s timeout is optimistic on a constrained connection.
+ENV PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=10
+RUN pip install --no-cache-dir -q --no-build-isolation \
       /app/coursemate-contracts \
       /app/coursemate-service
 

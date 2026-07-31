@@ -76,6 +76,22 @@ class Settings(BaseSettings):
     #: faster than a network hop to a vector database would be.
     index_path: str = "/data/coursemate-index.db"
 
+    # --- authorization re-derivation (§10.1) ---------------------------------
+    #: Open edX owns enrollment; we never keep our own list.
+    lms_url: str = "http://lms:8000"
+    #: OAuth2 client-credentials for the CourseMate service account. The legacy
+    #: X-Edx-Api-Key header is gone in current Open edX and returns 401.
+    lms_client_id: str = ""
+    lms_client_secret: str = ""
+    #: Short by design (§6.4): a REVOKED enrollment must stop working quickly.
+    #: Long enough that the common case costs nothing.
+    authz_cache_ttl_seconds: int = 60
+    authz_timeout_seconds: float = 5.0
+    #: Fails closed when the platform is unreachable. Set False only for local
+    #: development against a stubbed LMS -- never in a deployment serving real
+    #: course content.
+    enforce_enrollment: bool = True
+
     # --- abuse and cost (§10.8) ----------------------------------------------
     #: These live at the boundary alongside authorization so a new agent node
     #: cannot bypass them. Since v8 they also cover student traffic, which used
