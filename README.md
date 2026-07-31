@@ -48,7 +48,7 @@ Browser ──1── XBlock.mint()  →  JWT          (0.115 ms; LMS released)
 
 *Real Open edX lesson, real course content, `qwen2.5:7b` via Ollama. No mock.*
 
-**Grounded answer with a citation back to the source lesson**
+**Grounded answer with citations back to the source lessons** — these persist across a page reload
 
 ![Grounded answer citing the Cohorts lesson](docs/screenshots/02-grounded-answer-with-citation.jpg)
 

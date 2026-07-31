@@ -64,12 +64,39 @@ function CourseMateTutor(runtime, element, initArgs) {
     }
   }
 
+  /* One place that builds a citation line, used by both the live stream and the
+   * reloaded history — so a persisted answer looks identical to a fresh one. */
+  function citationNode(citation) {
+    var wrap = el("div", "cm-citation");
+    var link = el("a", null, citation.display_name || citation.usage_key);
+    link.href = safeHref(citation.url);
+    wrap.appendChild(document.createTextNode("Source: "));
+    wrap.appendChild(link);
+    return wrap;
+  }
+
   function renderHistory() {
     while (log.firstChild) { log.removeChild(log.firstChild); }
     history.forEach(function (turn) {
-      log.appendChild(el("div", "cm-turn " + turn.role, turn.content));
+      var node = el("div", "cm-turn " + turn.role, turn.content);
+      /* Citations are persisted with the turn, so a reloaded answer keeps its
+       * sources. Before this they existed only during the live stream, and a
+       * refresh silently stripped them — which undercuts the whole point of a
+       * tutor that cites. */
+      (turn.citations || []).forEach(function (c) { node.appendChild(citationNode(c)); });
+      log.appendChild(node);
     });
     log.scrollTop = log.scrollHeight;
+  }
+
+  /* The model needs role and content; it has no use for citations, and Turn in
+   * the shared contract carries only those two fields. Stripping here keeps the
+   * request payload matching the contract rather than relying on the server to
+   * ignore extra keys. */
+  function historyForRequest() {
+    return history.slice(-10).map(function (t) {
+      return { role: t.role, content: t.content };
+    });
   }
 
   function busy(state) {
@@ -153,7 +180,7 @@ function CourseMateTutor(runtime, element, initArgs) {
         },
         body: JSON.stringify({
           question: question,
-          history: history.slice(-10),
+          history: historyForRequest(),
           mode: mode
         })
       }).then(function (response) {
@@ -171,12 +198,7 @@ function CourseMateTutor(runtime, element, initArgs) {
               break;
             case "citation":
               citations.push(frame.citation);
-              var cite = el("div", "cm-citation");
-              var link = el("a", null, frame.citation.display_name || frame.citation.usage_key);
-              link.href = safeHref(frame.citation.url);
-              cite.appendChild(document.createTextNode("Source: "));
-              cite.appendChild(link);
-              answerNode.appendChild(cite);
+              answerNode.appendChild(citationNode(frame.citation));
               break;
             case "unsupported_claim":
               // Mark it; never silently rewrite text the student already read.
@@ -197,7 +219,7 @@ function CourseMateTutor(runtime, element, initArgs) {
         }).then(function () {
           busy(false);
           if (!answer) { return; }
-          history.push({ role: "tutor", content: answer });
+          history.push({ role: "tutor", content: answer, citations: citations });
           // Persist through the platform, which owns conversation state (§3.1).
           fetch(persistUrl, {
             method: "POST",

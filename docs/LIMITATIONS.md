@@ -61,24 +61,6 @@ after every filter was correct.
 
 ---
 
-## 4b. Citations do not survive a page reload
-
-Found while capturing screenshots. During a live answer, citations render as
-links under the response. After a reload they are gone.
-
-`persist_turn` saves the question and answer text to `Scope.user_state`;
-`Citation` objects are sent by the browser but not stored, and `student_view`
-re-renders history as plain turns. So the live answer is cited and the persisted
-one is not.
-
-**Not critical** — every answer is cited at the moment it is given, and the
-underlying retrieval is unaffected — but it undercuts the product's central claim
-for any student who refreshes. The fix is small: persist the citation list
-alongside each turn and render it in `student_view`. Recorded rather than fixed
-because handoff mode is for bugs that break behaviour, not for features.
-
----
-
 ## 5. Ingestion gaps
 
 - **Publish-triggered incremental indexing is wired but unverified end to end.**

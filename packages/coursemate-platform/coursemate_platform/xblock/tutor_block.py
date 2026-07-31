@@ -41,6 +41,7 @@ except ImportError:  # pragma: no cover
 from coursemate_contracts.chat import Mode
 
 from ..client.jwt import mint_student_token
+from .citations import clean_citations
 
 log = logging.getLogger(__name__)
 loader = ResourceLoader(__name__)
@@ -49,6 +50,7 @@ loader = ResourceLoader(__name__)
 #: KB, and the alternative — the service keeping its own conversation store —
 #: would duplicate PII into a system that platform retirement does not reach.
 HISTORY_WINDOW_TURNS = 10
+
 
 
 @XBlock.wants("user")
@@ -188,7 +190,14 @@ class CourseMateTutorXBlock(XBlock):
         self.history = [
             *self.history,
             {"role": "student", "content": question},
-            {"role": "tutor", "content": answer},
+            {
+                "role": "tutor",
+                "content": answer,
+                # Citations are stored WITH the turn. Without this the live answer
+                # is cited and the reloaded one is not — which quietly breaks the
+                # product's central claim for any student who refreshes.
+                "citations": clean_citations((data or {}).get("citations")),
+            },
         ][-(HISTORY_WINDOW_TURNS * 2):]
         return {"saved": True, "turns": len(self.history)}
 
