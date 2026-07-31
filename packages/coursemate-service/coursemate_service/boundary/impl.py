@@ -20,6 +20,7 @@ from coursemate_contracts.auth import StudentClaims
 
 from ..config import settings
 from ..knowledge import get_store
+from ..knowledge.rerank import get_reranker
 from .authz import NotEnrolled, PlatformUnreachable, verifier
 from ..knowledge.store import StoredChunk
 
@@ -78,11 +79,22 @@ class CourseIntelligenceImpl:
         self, query: str, offering_id: str, claims: StudentClaims, limit: int = 5
     ) -> list[StoredChunk]:
         self._authorize(claims, offering_id)
+
         # Step 3: tenant + offering + active are part of the SQL, so filtering
         # happens before ranking rather than after it.
-        chunks = get_store().search(
-            query, tenant=settings.tenant, offering_id=offering_id, limit=limit
+        #
+        # Retrieve MANY, then rerank to few (§8.2). Retrieving only `limit`
+        # directly would leave the reranker nothing to choose between — it can
+        # reorder what BM25 returned but cannot recover a better chunk BM25
+        # ranked 8th. The candidate pool is where reranking earns its keep.
+        candidates = get_store().search(
+            query,
+            tenant=settings.tenant,
+            offering_id=offering_id,
+            limit=settings.retrieve_candidates,
         )
+        chunks = get_reranker().rerank(query, candidates, top_k=limit)
+
         self._audit(claims, "retrieve_course_context", offering_id, len(chunks))
         return chunks
 

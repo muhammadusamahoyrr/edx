@@ -187,3 +187,45 @@ def test_score_does_not_depend_on_how_many_rows_come_back(store):
     hits = store.search("typography deadlock concurrency scheduling", tenant="default", offering_id="CS101")
     if hits:
         assert hits[0].score < 1.0, "sole result was scored as a perfect match"
+
+
+def test_reranker_promotes_a_title_match_over_a_body_mention(store):
+    """The signal BM25 cannot see: an instructor named the block.
+
+    A lesson called "Transcripts" is strong evidence for a question about
+    transcripts, and display_name is metadata we never index into FTS.
+    """
+    from coursemate_service.knowledge.rerank import LexicalReranker
+
+    store.write_chunks(_rows("CS101", "v1", [
+        ("Video Settings", "many lessons mention transcripts in passing among other topics here"),
+        ("Transcripts", "transcripts help learners follow along with recorded material"),
+    ]))
+    store.swap("CS101", "v1")
+    candidates = store.search("transcripts", tenant="default", offering_id="CS101", limit=20)
+    ranked = LexicalReranker().rerank("transcripts", candidates, top_k=2)
+    assert ranked[0].display_name == "Transcripts"
+
+
+def test_reranker_updates_the_score_it_hands_to_the_gate(store):
+    """A reranker that reordered without rescoring would leave the confidence
+    gate reading a number that describes a different ranking."""
+    from coursemate_service.knowledge.rerank import LexicalReranker
+
+    store.write_chunks(_rows("CS101", "v1", [("Cohorts", "cohorts group learners for discussion")]))
+    store.swap("CS101", "v1")
+    candidates = store.search("cohorts", tenant="default", offering_id="CS101", limit=20)
+    ranked = LexicalReranker().rerank("cohorts", candidates, top_k=1)
+    assert 0.0 <= ranked[0].score <= 1.0
+
+
+def test_null_reranker_is_a_pure_passthrough(store):
+    """The control arm must not perturb the ordering it is measuring against."""
+    from coursemate_service.knowledge.rerank import NullReranker
+
+    store.write_chunks(_rows("CS101", "v1", [
+        ("A", "alpha content about cohorts"), ("B", "beta content about cohorts"),
+    ]))
+    store.swap("CS101", "v1")
+    candidates = store.search("cohorts", tenant="default", offering_id="CS101", limit=20)
+    assert NullReranker().rerank("cohorts", candidates, 2) == candidates[:2]

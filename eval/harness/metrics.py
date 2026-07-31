@@ -95,12 +95,62 @@ def reciprocal_rank(retrieved: list[str], expected: list[str]) -> float:
 # --- generation -----------------------------------------------------------
 
 
+#: Phrases that introduce or point rather than assert. A sentence built around
+#: one of these makes no checkable claim, so scoring it as "unsupported" measures
+#: prose style, not fidelity.
+_DISCOURSE = (
+    "as mentioned", "as highlighted", "as described", "as noted", "as stated",
+    "as outlined", "according to the course", "the course material",
+    "refer to", "see the", "for more information", "for detailed",
+    "in summary", "to summarise", "to summarize", "here are", "here is",
+    "the following", "these include", "in conclusion", "overall",
+)
+
+#: Below this many content words a sentence carries no assertion worth checking.
+_MIN_CLAIM_TERMS = 4
+
+
+def is_claim(sentence: str) -> bool:
+    """Does this sentence assert something checkable against the context?
+
+    Added after the first benchmark run flagged these as hallucinations:
+
+        "Video transcripts serve multiple purposes as highlighted in the course
+         material:"
+        "For detailed instructions on configuring these features, refer..."
+
+    Neither is a claim. The first is a lead-in, the second a pointer — and both
+    were counted as unsupported purely because their words do not appear in the
+    retrieved text. That is the metric measuring **discourse style rather than
+    fidelity**, and it inflates the hallucination rate with well-behaved prose.
+
+    Getting this wrong in the other direction would be worse, so the filter is
+    deliberately narrow: a sentence is excluded only when it is a lead-in
+    (trailing colon), too short to assert anything, or built around an explicit
+    discourse marker. Anything else is scored.
+    """
+    text = sentence.strip().lower()
+    if text.endswith(":"):
+        return False
+    if len(_terms(text)) < _MIN_CLAIM_TERMS:
+        return False
+    # A discourse marker only disqualifies a SHORT sentence. "As mentioned, the
+    # deadline is 5pm and late work loses 10%" is still a claim.
+    if any(marker in text for marker in _DISCOURSE) and len(_terms(text)) < 8:
+        return False
+    return True
+
+
 @dataclass
 class Groundedness:
     score: float
     supported: int
     total: int
     unsupported_sentences: list[str] = field(default_factory=list)
+    #: Reported, never hidden: a metric that silently discards input is a metric
+    #: nobody can audit. If this is large relative to `total`, the score rests on
+    #: a small sample and should be read that way.
+    skipped_non_claims: int = 0
 
 
 def groundedness(answer: str, context_chunks: list[str], threshold: float = 0.45) -> Groundedness:
@@ -125,10 +175,15 @@ def groundedness(answer: str, context_chunks: list[str], threshold: float = 0.45
         context_terms |= _terms(chunk)
 
     supported = 0
+    skipped = 0
     unsupported: list[str] = []
     for sentence in sentences:
         terms = _terms(sentence)
         if not terms:
+            continue
+        if not is_claim(sentence):
+            # Not scored, and counted so the exclusion is visible.
+            skipped += 1
             continue
         overlap = len(terms & context_terms) / len(terms)
         if overlap >= threshold:
@@ -142,6 +197,7 @@ def groundedness(answer: str, context_chunks: list[str], threshold: float = 0.45
         supported=supported,
         total=total,
         unsupported_sentences=unsupported,
+        skipped_non_claims=skipped,
     )
 
 
