@@ -98,18 +98,40 @@ function CourseMateSmoke(runtime, element) {
   var button = element.querySelector('.cm-ping');
   var result = element.querySelector('.cm-result');
   var count  = element.querySelector('.cm-count');
+
+  /* Django rejects an unauthenticated POST and returns an HTML error page, which
+   * response.json() then fails to parse -- surfacing as the misleading
+   * "Unexpected token '<'". The real cause is a missing CSRF token, so read it
+   * from the cookie the platform already set. */
+  function csrfToken() {
+    var match = document.cookie.match(/(^|;\\s*)csrftoken=([^;]*)/);
+    return match ? decodeURIComponent(match[2]) : '';
+  }
+
   button.addEventListener('click', function () {
+    result.textContent = '';
     fetch(url, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      /* Send the session cookie. Explicit rather than relying on the default,
+       * because the block renders inside an MFE iframe. */
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrfToken()
+      },
       body: JSON.stringify({message: 'hello from the browser'})
     })
-    .then(function (r) { return r.json(); })
+    .then(function (r) {
+      /* Report the status rather than blindly parsing: a 403 or a login
+       * redirect returns HTML, and "invalid JSON" hides which one happened. */
+      if (!r.ok) { throw new Error('HTTP ' + r.status + ' ' + r.statusText); }
+      return r.json();
+    })
     .then(function (data) {
       result.textContent = JSON.stringify(data);
       count.textContent = data.clicks;
     })
-    .catch(function (e) { result.textContent = 'handler failed: ' + e; });
+    .catch(function (e) { result.textContent = 'handler failed: ' + e.message; });
   });
 }
 """

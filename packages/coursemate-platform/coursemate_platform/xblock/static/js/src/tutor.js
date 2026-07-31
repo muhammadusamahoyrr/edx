@@ -77,12 +77,31 @@ function CourseMateTutor(runtime, element, initArgs) {
     sendButton.disabled = state;
   }
 
+  /* Django rejects a POST without a CSRF token and returns an HTML error page,
+   * which then fails to parse as JSON — surfacing as the misleading
+   * "Unexpected token '<'". Read the token the platform already set. */
+  function csrfToken() {
+    var match = document.cookie.match(/(^|;\s*)csrftoken=([^;]*)/);
+    return match ? decodeURIComponent(match[2]) : "";
+  }
+
+  function platformHeaders() {
+    return {
+      "Content-Type": "application/json",
+      "X-CSRFToken": csrfToken()
+    };
+  }
+
   function mintToken() {
     return fetch(mintUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      headers: platformHeaders(),
       body: JSON.stringify({})
-    }).then(function (r) { return r.json(); });
+    }).then(function (r) {
+      if (!r.ok) { throw new Error("mint failed: HTTP " + r.status); }
+      return r.json();
+    });
   }
 
   /* Parse an SSE byte stream into frames, invoking onFrame per event. */
@@ -182,7 +201,8 @@ function CourseMateTutor(runtime, element, initArgs) {
           // Persist through the platform, which owns conversation state (§3.1).
           fetch(persistUrl, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            headers: platformHeaders(),
             body: JSON.stringify({ question: question, answer: answer, citations: citations })
           });
         });
