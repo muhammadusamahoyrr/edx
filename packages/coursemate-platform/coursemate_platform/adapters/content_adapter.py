@@ -184,6 +184,17 @@ def _walk(block) -> Iterator[LeafContent]:
     )
 
 
+def list_course_keys() -> list[CourseKey]:
+    """Every course on the instance.
+
+    Lives here rather than in the management command because §3.3's promise is
+    that *all* content access goes through this module — including enumeration.
+    The command previously imported `modulestore` directly and the architecture
+    contract caught it, which is the contract working as intended.
+    """
+    return [summary.id for summary in modulestore().get_course_summaries()]
+
+
 def get_course_meta(course_key: CourseKey) -> dict[str, str | None]:
     with _published(course_key):
         course = modulestore().get_course(course_key)

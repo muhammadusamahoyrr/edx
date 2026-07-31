@@ -62,6 +62,13 @@ patches:
         COURSEMATE_FALLBACK_API_KEY: "{{ COURSEMATE_FALLBACK_API_KEY }}"
         COURSEMATE_MOCK_RESPONSE: "{{ COURSEMATE_MOCK_RESPONSE }}"
         COURSEMATE_REQUIRE_GROUNDING: "{{ COURSEMATE_REQUIRE_GROUNDING }}"
+        COURSEMATE_INDEX_PATH: "/data/coursemate-index.db"
+      volumes:
+        # The index must outlive the container. Losing it is not data loss --
+        # it can be rebuilt from the modulestore -- but an empty index makes the
+        # tutor answer "still being prepared" for every question until someone
+        # notices and re-runs the bootstrap.
+        - ../../data/coursemate:/data
 
   # --- same-origin route on the LMS host ------------------------------------
   # `handle` is terminal for matched requests and is evaluated before the bare

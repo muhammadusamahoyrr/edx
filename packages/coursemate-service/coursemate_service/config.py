@@ -72,6 +72,10 @@ class Settings(BaseSettings):
 
     reranker_model: str = "BAAI/bge-reranker-base"
 
+    #: Retrieval index. A file, not a service: at course scale SQLite FTS5 is
+    #: faster than a network hop to a vector database would be.
+    index_path: str = "/data/coursemate-index.db"
+
     # --- abuse and cost (§10.8) ----------------------------------------------
     #: These live at the boundary alongside authorization so a new agent node
     #: cannot bypass them. Since v8 they also cover student traffic, which used

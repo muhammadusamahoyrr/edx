@@ -11,11 +11,7 @@ LMS-side receiver. Two RELATIVE_PATHs, two processes, one bug avoided.
 """
 
 from django.apps import AppConfig
-from edx_django_utils.plugins.constants import (
-    PluginSettings,
-    PluginSignals,
-    PluginURLs,
-)
+from edx_django_utils.plugins.constants import PluginSettings, PluginSignals
 from openedx.core.djangoapps.plugins.constants import ProjectType, SettingsType
 
 
@@ -23,14 +19,14 @@ class CourseMateConfig(AppConfig):
     name = "coursemate_platform"
     verbose_name = "CourseMate"
 
+    # NOTE: no PluginURLs config, deliberately. An earlier version declared one
+    # pointing at `coursemate_platform.urls`, a module that does not exist —
+    # Django then failed to build the URLconf and every management command died
+    # with ModuleNotFoundError. We need no custom Django routes: the XBlock is
+    # reached through the platform's own handler URLs
+    # (/courses/{course}/xblock/{usage}/handler/{name}), and the student stream
+    # goes to the CourseMate service via Caddy, never through an LMS route.
     plugin_app = {
-        PluginURLs.CONFIG: {
-            ProjectType.CMS: {
-                PluginURLs.NAMESPACE: "coursemate",
-                PluginURLs.REGEX: r"^coursemate/",
-                PluginURLs.RELATIVE_PATH: "urls",
-            },
-        },
         PluginSettings.CONFIG: {
             ProjectType.LMS: {
                 SettingsType.COMMON: {PluginSettings.RELATIVE_PATH: "settings.common"},

@@ -23,7 +23,7 @@ from coursemate_contracts.errors import ErrorCode
 
 from ..config import settings
 from .client import NoModelConfigured, get_router
-from .context import ContextProvider, NullContextProvider
+from .context import ContextProvider
 from .prompts import build_messages
 
 log = logging.getLogger(__name__)
@@ -31,8 +31,13 @@ log = logging.getLogger(__name__)
 
 class AnswerPipeline:
     def __init__(self, context_provider: ContextProvider | None = None) -> None:
-        # Injected, so Phase 6 swaps retrieval in without editing this class.
-        self.context = context_provider or NullContextProvider()
+        # Injected, so retrieval can be replaced (or stubbed in tests) without
+        # editing this class. Phase 6 swapped NullContextProvider for the real
+        # one here and nothing else in the pipeline changed.
+        if context_provider is None:
+            from .retrieval import CourseContextProvider
+            context_provider = CourseContextProvider()
+        self.context = context_provider
 
     async def stream(
         self, request: ChatRequest, claims: StudentClaims

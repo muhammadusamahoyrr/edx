@@ -15,6 +15,7 @@ from coursemate_contracts import CONTRACT_VERSION
 from fastapi import FastAPI
 
 from .api.chat import router as chat_router
+from .api.ingest import router as ingest_router
 from .config import settings
 
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +37,9 @@ app = FastAPI(title="CourseMate", version="0.1.0")
 # carry a different credential class (§3.4): a leaked student token must not be
 # able to write to the index.
 app.include_router(chat_router, prefix="/coursemate/api", tags=["student"])
+# Service-credential routes. Kept on a separate router precisely so a leaked
+# student token cannot reach them (§3.4).
+app.include_router(ingest_router, prefix="/coursemate/api/ingest", tags=["ingest"])
 
 
 @app.get("/coursemate/health")

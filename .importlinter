@@ -72,6 +72,7 @@ name = Agents reach knowledge only through the CourseIntelligence boundary
 type = forbidden
 source_modules =
     coursemate_service.agents
+    coursemate_service.ai
 forbidden_modules =
     coursemate_service.knowledge
 # agents -> boundary -> knowledge is correct and expected. The violation is a

@@ -54,6 +54,18 @@ class IngestRequest(BaseModel):
     #: ingest is traceable to its trigger (§11.4).
     trace_id: str
 
+    #: **The write-then-swap boundary is the RUN, not the batch** (§5.3).
+    #: A course is sent in batches; every batch of one run shares this id and is
+    #: written under it as a single version. Only the final batch flips the
+    #: active pointer.
+    #:
+    #: This is not a refinement — without it each batch swapped itself in and
+    #: deactivated its predecessors, so a 226-block course ended up serving only
+    #: the last 26 blocks while reporting complete success. The client owns these
+    #: fields because only the client knows where a run begins and ends.
+    run_id: str
+    is_final: bool = False
+
 
 class IngestAccepted(BaseModel):
     """What the service reports back after write-verify-swap (§5.3)."""

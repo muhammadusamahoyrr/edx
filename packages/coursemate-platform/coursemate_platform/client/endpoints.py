@@ -14,6 +14,14 @@ from coursemate_contracts.metadata import ContentType
 
 from . import http
 
+# The service routes everything under /coursemate. These calls go container to
+# container and bypass Caddy, so they must carry the app's full path — Caddy is
+# what makes the browser's /coursemate/... work, and it is not in this path.
+_PREFIX = "/coursemate/api"
+INGEST_BLOCKS = f"{_PREFIX}/ingest/blocks"
+INGEST_DELETE = f"{_PREFIX}/ingest/delete"
+INVALIDATE = f"{_PREFIX}/invalidate"
+
 #: Open edX block type -> our content_type. Anything absent is not ingested.
 _CONTENT_TYPE = {
     "html": ContentType.LESSON,
@@ -22,7 +30,8 @@ _CONTENT_TYPE = {
 }
 
 
-def send_leaves(*, tenant, course_id, offering_id, course_version, leaves, trace_id) -> IngestAccepted:
+def send_leaves(*, tenant, course_id, offering_id, course_version, leaves, trace_id,
+                run_id=None, is_final=False) -> IngestAccepted:
     """One record per leaf block.
 
     That shape is deliberate: design §5.5 rule 1 says two blocks are never merged
@@ -36,6 +45,8 @@ def send_leaves(*, tenant, course_id, offering_id, course_version, leaves, trace
         offering_id=offering_id,
         course_version=course_version,
         trace_id=trace_id,
+        run_id=run_id or trace_id,
+        is_final=is_final,
         blocks=[
             LeafBlock(
                 usage_key=leaf.usage_key,
@@ -49,14 +60,14 @@ def send_leaves(*, tenant, course_id, offering_id, course_version, leaves, trace
             for leaf in leaves
         ],
     )
-    return IngestAccepted(**http.post("/api/ingest/blocks", request.model_dump(mode="json")))
+    return IngestAccepted(**http.post(INGEST_BLOCKS, request.model_dump(mode="json")))
 
 
 def send_delete(*, tenant, offering_id, usage_key, trace_id) -> dict:
     request = DeleteRequest(
         tenant=tenant, offering_id=offering_id, usage_key=usage_key, trace_id=trace_id
     )
-    return http.post("/api/ingest/delete", request.model_dump(mode="json"))
+    return http.post(INGEST_DELETE, request.model_dump(mode="json"))
 
 
 def send_invalidation(*, tenant, reason, course_id, offering_id, student_id, trace_id) -> dict:
@@ -68,4 +79,4 @@ def send_invalidation(*, tenant, reason, course_id, offering_id, student_id, tra
         student_id=student_id,
         trace_id=trace_id,
     )
-    return http.post("/api/invalidate", notice.model_dump(mode="json"))
+    return http.post(INVALIDATE, notice.model_dump(mode="json"))
