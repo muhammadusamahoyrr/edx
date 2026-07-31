@@ -1,5 +1,11 @@
 """Cache policy — design §6.4 and §10.2.
 
+**STATUS: specified, not wired.** No response cache exists in the request path
+yet, so nothing calls this module today. It is kept — and tested — so that whoever
+adds caching inherits the rules rather than rediscovering the bugs behind them.
+See README.md in this directory before wiring anything up.
+
+
 This module exists as its own file for one reason: the rule *"personal-namespace
 results are never cached"* is stated in two design sections and would otherwise be
 implemented in three cache tiers. A rule implemented three times is a rule that

@@ -1,8 +1,6 @@
-"""The Course-Intelligence boundary — design §6.5.
+"""The Course-Intelligence boundary contract — design §6.5.
 
-Four read-only tools. The design answers the obvious objection ("if your only
-consumer is LangGraph, why not call retrieval directly?") with security rather
-than extensibility:
+The design's argument for a boundary is security, not extensibility:
 
     Four things must happen on *every* data access: resolve identity, check
     enrollment/role for the requested scope, apply the tenant/student filter
@@ -10,76 +8,72 @@ than extensibility:
     node can forget one. Behind a single interface they are a chokepoint that
     cannot be bypassed.
 
-That argument holds with exactly one consumer, which is why this exists on day
-one. `.importlinter` contract 3 forbids `agents` from importing `knowledge`, so
-the chokepoint is enforced by CI rather than by review.
+That argument holds with exactly one consumer, which is why this exists now.
+`.importlinter` contract 3 forbids `ai` and `agents` from importing `knowledge`,
+so the chokepoint is enforced by CI rather than by review.
+
+**This file states only what is implemented.** An earlier version declared four
+tools while `CourseIntelligenceImpl` provided one — a documented contract that
+did not match the code, which is worse than no contract at all: it invites a
+caller to depend on a method that does not exist. The deferred tools are listed
+at the bottom as prose, not as a Protocol anything can be type-checked against.
 
 Every tool is keyed on **offering_id**, never course_id: the offering is the real
-isolation unit, since CS-101 Fall 2026 holds a different exam-prep pack and a
-different cohort from the same course run a year later. The boundary resolves
-course_id -> offering_id from the caller's enrollment.
-
-Promotion trigger, written down: expose this same contract over MCP when a second
-consumer appears. The signatures, authz checks, audit records and return schemas
-already *are* the MCP contract; promotion is wiring, not rework.
+isolation unit, since CS-101 Fall 2026 holds a different cohort from the same
+course a year later.
 """
 
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from coursemate_contracts.examprep import ExamPrepPack
-from coursemate_contracts.metadata import ChunkMetadata
-from pydantic import BaseModel
+from coursemate_contracts.auth import StudentClaims
 
-
-class RetrievedChunk(BaseModel):
-    text: str
-    metadata: ChunkMetadata
-    score: float
-
-
-class Progress(BaseModel):
-    offering_id: str
-    completed_usage_keys: list[str] = []
-    percent_complete: float = 0.0
-
-
-class StruggleSignal(BaseModel):
-    """Aggregate and anonymised, with a k-anonymity floor (§10.3).
-
-    Below k=5 distinct students the signal is **suppressed entirely** rather than
-    rounded or bucketed — "2 of 4 students are stuck on X" identifies people, and
-    small cohorts are common in university courses.
-    """
-
-    topic: str
-    distinct_students: int
-    fraction_struggling: float
+from ..knowledge.store import StoredChunk
 
 
 @runtime_checkable
 class CourseIntelligence(Protocol):
     """The only path from reasoning to knowledge. Read-only, by design.
 
-    §10.6 leans on that: "the agent's entire tool surface is read-only, and the
-    only path into a course runs through the proposal queue and a human accept.
-    There is no prompt that makes CourseMate change what students see."
+    §10.6 leans on that read-only surface: *"the agent's entire tool surface is
+    read-only, and the only path into a course runs through the proposal queue
+    and a human accept. There is no prompt that makes CourseMate change what
+    students see."*
     """
 
-    async def retrieve_course_context(
-        self, query: str, offering_id: str, student_id: str
-    ) -> list[RetrievedChunk]:
+    def retrieve_course_context(
+        self, query: str, offering_id: str, claims: StudentClaims, limit: int = 5
+    ) -> list[StoredChunk]:
+        """Scoped, filtered, reranked and audited course content."""
         ...
 
-    async def get_student_progress(self, student_id: str, offering_id: str) -> Progress:
+    def has_index(self, offering_id: str) -> bool:
+        """Whether this offering has been indexed at all.
+
+        Separate from "nothing matched" on purpose: they produce different
+        messages to the student, and only one of them means "come back later"
+        (§5.1).
+        """
         ...
 
-    async def get_struggle_signals(self, offering_id: str) -> list[StruggleSignal]:
-        """Deferred with the instructor loop (§1.2, §9.3), and the k=5 floor is
-        deferred *with* it — a control may be deferred together with the feature
-        it guards, never while shipping the thing it protects."""
-        ...
 
-    async def get_exam_prep_pack(self, offering_id: str, student_id: str) -> ExamPrepPack:
-        ...
+# --- Deferred tools -------------------------------------------------------
+#
+# Specified in design §6.5 and deliberately NOT declared above, because nothing
+# implements them yet:
+#
+#   get_student_progress(student_id, offering_id)
+#       Completion/Grades APIs. Lands with progress-aware tutoring.
+#
+#   get_struggle_signals(offering_id)
+#       Aggregate, anonymised, k-anonymity floor of 5 distinct students (§10.3).
+#       Deferred WITH the instructor loop (§1.2, §9.3) — a control may be
+#       deferred together with the feature it guards, never while shipping the
+#       thing it protects. §9.3 also notes the signal would be biased in the MVP:
+#       the tutor is placed per-unit by an instructor, so "students are stuck on
+#       X" can only surface where a tutor was already added.
+#
+#   get_exam_prep_pack(offering_id, student_id)
+#       Feature B. Contract exists in coursemate_contracts.examprep; no storage,
+#       extraction or UI behind it yet.

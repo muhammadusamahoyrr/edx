@@ -1,0 +1,35 @@
+# Dependency layer — built rarely, cached aggressively.
+#
+#   docker build -f deploy/Dockerfile.deps -t coursemate/deps:1 .
+#
+# Split from the source image because dependencies and source change at very
+# different rates: LiteLLM's tree moves monthly, our source moves every few
+# minutes. Baking both into one image meant every one-line change re-downloaded
+# ~200MB of wheels — 10-15 minutes on a constrained link, and failing outright
+# often enough to block work.
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    # The real failure on a slow link was
+    # "ReadTimeoutError: files.pythonhosted.org: Read timed out" — pip's default
+    # 15s timeout is optimistic at ~0.6 MB/s.
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=10
+
+# Kept in sync with the two pyproject files by hand. The duplication is
+# deliberate: generating this from them would require copying them in, which
+# reintroduces the cache invalidation this file exists to avoid.
+RUN pip install --no-cache-dir -q \
+      "pydantic>=2.7" \
+      "pydantic-settings>=2.2" \
+      "fastapi>=0.110" \
+      "uvicorn[standard]>=0.29" \
+      "httpx>=0.27" \
+      "pyjwt[crypto]>=2.8" \
+      "redis>=5.0" \
+      "litellm>=1.55"
+
+# Non-root: the service is reachable from the browser via the ingress path, so it
+# is the most exposed process in the deployment.
+RUN useradd --create-home --uid 1000 coursemate

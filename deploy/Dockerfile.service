@@ -1,40 +1,45 @@
-# CourseMate service image.
+# CourseMate service image — source layer only.
 #
-# Runs OUTSIDE Open edX (design §3.4): latency, memory, model failures and
-# traffic spikes are contained in a container that can be scaled and restarted
-# without touching the LMS.
-#
+#   # once, or whenever dependencies change:
+#   docker build -f deploy/Dockerfile.deps -t coursemate/deps:1 .
+#   # every code change (no network required):
 #   docker build -f deploy/Dockerfile.service -t coursemate/service:0.1.0 .
 #
-FROM python:3.11-slim
+# **Why the split.** Dependencies and source change at completely different
+# rates: LiteLLM's tree moves monthly, our source moves every few minutes. Baking
+# both into one image meant every one-line change re-downloaded ~200MB of wheels,
+# which on this link took 10-15 minutes and failed outright often enough
+# ("ReadTimeoutError: files.pythonhosted.org") to block work. Splitting them
+# makes a source rebuild a file copy: seconds, and offline.
+#
+# This is standard layer discipline, but it is worth stating plainly because the
+# first two versions of this file got it wrong in a way that only showed up as
+# "the build is slow again".
+FROM coursemate/deps:1
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
+
+# The base image ends with `USER coursemate`, so every RUN here would inherit a
+# non-root user with no write access to site-packages — pip then fails with a
+# bare exit code 1 that says nothing about permissions. Root for the install,
+# dropped again before CMD.
+USER root
 
 WORKDIR /app
 
 COPY packages/coursemate-contracts /app/coursemate-contracts
 COPY packages/coursemate-service   /app/coursemate-service
 
-# Two flags, both earned the hard way on a slow link:
-#
-#  --no-build-isolation  uses the setuptools already in the image rather than
-#      downloading one into a throwaway build env. Without it a momentary PyPI
-#      failure surfaces as "Could not find a version that satisfies
-#      setuptools>=68 (from versions: none)", which reads like a version
-#      conflict and is actually a network error.
-#  --timeout/--retries   the real failure here was
-#      "ReadTimeoutError: files.pythonhosted.org: Read timed out". pip's default
-#      15s timeout is optimistic on a constrained connection.
-ENV PIP_DEFAULT_TIMEOUT=120 \
-    PIP_RETRIES=10
-RUN pip install --no-cache-dir -q --no-build-isolation \
+# --no-deps: the base image already satisfies everything, so this must not reach
+#            the network.
+# --no-build-isolation: uses the setuptools already present rather than fetching
+#            one, which is the other thing that turned a flaky link into a
+#            misleading "no matching distribution for setuptools>=68".
+RUN pip install --no-cache-dir -q --no-deps --no-build-isolation \
       /app/coursemate-contracts \
       /app/coursemate-service
 
-# Non-root: this container is reachable from the browser via the ingress path,
-# so it is the most exposed process in the deployment.
-RUN useradd --create-home --uid 1000 coursemate
 USER coursemate
 
 EXPOSE 8000

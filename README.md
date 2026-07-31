@@ -1,69 +1,139 @@
 # CourseMate
 
-An AI layer on Open edX: a course-grounded, cited, confidence-aware **tutor**, and
-a **final exam prep** mode built around a course's CLOs and past papers.
+**An AI tutor for Open edX that answers only from the course it lives in — and says so when it can't.**
 
-**Target platform: Open edX Ulmo.** Pinned, not aspirational — `master` moves, and
-the command this design models its bootstrap on (`reindex_studio`) dropped every
-flag it had between the release the design was written against and now. See
-`docs/CourseMate_Repository_Structure.md` §7b.
+CourseMate embeds a chat tutor inside an Open edX lesson. It answers from that
+course's published content, cites the lesson each answer came from, and abstains
+when the course doesn't cover the question rather than improvising from a model's
+general knowledge.
 
-## What runs where
+Built against a real Open edX **Ulmo** instance with the 413-block demo course.
 
-Two artifacts ship to two different places, and keeping them apart is the point.
+---
 
-| Package | Ships to | Holds |
-|---|---|---|
-| `coursemate-platform` | Open edX image (LMS + CMS + Celery) | XBlock, event receivers, ingest worker |
-| `coursemate-service` | Its own container | Knowledge, boundary, agents, models |
-| `coursemate-contracts` | Both, as a dependency | The wire schemas |
+## What it does
 
-The platform package's dependency list is four lines long and deliberately absent
-of `langgraph`, `litellm`, any model client, and any vector store. `.importlinter`
-contract 2 enforces that, because *"CourseMate cannot degrade your LMS"* is the
-promise that makes this installable at a university at all — and it is the promise
-most likely to be broken by a small convenient import at 11pm.
+| | |
+|---|---|
+| **Grounded** | Answers are built from retrieved course content, never from the model alone |
+| **Cited** | Every answer links back to the lesson block it came from |
+| **Abstains** | Below a confidence threshold it says *"that doesn't appear to be covered in this course"* — in **3 ms**, before any model call |
+| **Authorised** | Enrollment is re-derived from Open edX on every request; a valid token is not sufficient |
+| **Non-invasive** | No core Open edX changes, no fork. Installs as a plugin |
 
-**No LMS worker is held for an answer.** The XBlock mints a short-lived JWT and
-returns in milliseconds; the browser streams from the service on a same-origin
-path routed at the ingress. A streaming *proxy* would have held a gunicorn worker
-for the whole generation, which is the same worker exhaustion the topology exists
-to prevent — the pool is exhausted by occupancy, not computation (design §3.4 r3).
+### The load-bearing architectural decision
+
+**The LMS is never in the answer path.** The XBlock mints a short-lived JWT and
+returns; the browser streams from the CourseMate service over a same-origin path
+routed at the ingress.
+
+Measured: **3 concurrent 4-second generations produced zero LMS log lines and
+103 ms of LMS CPU — against a 118 ms idle baseline.** The obvious design (proxy
+the stream through the XBlock) would have held one gunicorn worker per student
+for the full generation. A worker pool is exhausted by *occupancy*, not
+computation.
+
+```
+Browser ──1── XBlock.mint()  →  JWT          (0.115 ms; LMS released)
+   │
+   └────2──── /coursemate/api/chat  ──→  CourseMate service
+              (same-origin, routed by Caddy, never enters an LMS process)
+                                   │
+                    retrieve → gate → LiteLLM → SSE stream → browser
+```
+
+---
+
+## Results
+
+Measured on the Open edX demo course (231 indexed chunks, `qwen2.5:7b` via Ollama).
+
+| | |
+|---|---|
+| recall@3 / recall@5 | **1.000** / 1.000 |
+| MRR | 0.833 |
+| Retrieval latency p95 | **12 ms** |
+| False-answer rate (answered when it should abstain) | **0.000** |
+| False-abstention rate | **0.000** |
+| Citation correctness | 1.000 |
+| Authorization matrix | **4/4 pass** |
+
+Full methodology, the reranker A/B, and the bugs these numbers exposed:
+[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
+
+---
 
 ## Quick start
 
+Requires Docker, and Open edX via [Tutor](https://docs.tutor.edly.io/).
+
+```bash
+# 1. install the plugin
+cp deploy/tutor-plugin/coursemate.yml "$(tutor plugins printroot)/"
+tutor plugins enable coursemate
+tutor config save
+
+# 2. build the service image
+docker build -f deploy/Dockerfile.deps    -t coursemate/deps:1      .
+docker build -f deploy/Dockerfile.service -t coursemate/service:0.1.0 .
+
+# 3. start, then index a course
+tutor local start -d
+tutor local run cms ./manage.py cms coursemate_reindex \
+    --course course-v1:YourOrg+Course+Run --inline
 ```
-make install
-make check          # architecture contracts + fast tests
-```
 
-`make test` needs no Tutor, no containers and no network. Tests that need a
-running platform live in `packages/coursemate-platform/tests/platform/` and run at
-milestones, because a suite that needs a platform is a suite nobody runs.
+Add `coursemate_tutor` to the course's Advanced Module List, drop the block into
+a unit, publish. Full walkthrough: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
-## Architecture rules, enforced in CI
-
-`.importlinter` turns six design promises into build failures rather than
-code-review catches:
-
-1. Only `content_adapter` touches the modulestore (§3.3)
-2. The platform package imports nothing AI-shaped (§3.4, Principle 8)
-3. Agents reach knowledge only through the `CourseIntelligence` boundary (§6.5)
-4. Nothing imports the dormant proposal queue (§1.2, §9.1)
-5. Runtime packages never import the evaluation harness (§4)
-6. Contracts import nothing but pydantic
+---
 
 ## Documentation
 
-| Document | For |
+| Document | Contents |
 |---|---|
-| `docs/CourseMate_Complete_Design.md` | Every decision, its reason, and the alternative rejected. **Source of truth.** |
-| `docs/CourseMate_Repository_Structure.md` | Why the folders are shaped this way; the source-verification log |
-| `docs/CourseMate_Build_Plan.md` | Day-level sequence, milestones, and the pre-committed cut ladder |
-| `docs/Week1_Verification_Plan.md` | The open platform behaviours as bounded tests |
-| `docs/adr/` | Decisions made *during* the build |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Components, data flows, diagrams, the decisions and their reasons |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Installation, configuration, operations, troubleshooting |
+| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | Evaluation methodology, results, bugs found by measurement |
+| [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) | What does not work, and what would be built next |
+| [`docs/PROJECT_STRUCTURE.md`](docs/PROJECT_STRUCTURE.md) | Repository layout and why each boundary exists |
+| [`docs/TECHNICAL_SUMMARY.md`](docs/TECHNICAL_SUMMARY.md) | Engineering decisions, trade-offs, lessons |
+| [`docs/CourseMate_Complete_Design.md`](docs/CourseMate_Complete_Design.md) | Full design document — every decision with its reason and rejected alternative |
 
-Where a document disagrees with the design, the design wins and the other is
-stale. When something moves from *built* to *deferred*, search every document for
-its name before closing the change — four separate inconsistencies in this set
-were caused by a claim outliving the thing that supported it.
+---
+
+## Development
+
+```bash
+make install     # venv + editable installs
+make check       # architecture contracts + 66 tests, no Open edX required
+```
+
+Tests run in seconds without a platform. Tests that need Tutor live in
+`packages/coursemate-platform/tests/platform/` and run at milestones — a suite
+that needs a platform is a suite nobody runs.
+
+### Architecture enforced in CI
+
+`.importlinter` turns six design promises into build failures:
+
+1. Only `content_adapter` touches the modulestore
+2. **The platform package imports nothing AI-shaped** — this is what makes *"CourseMate cannot degrade your LMS"* structurally true rather than aspirational
+3. Reasoning reaches knowledge only through the `CourseIntelligence` boundary
+4. Nothing imports the dormant proposal queue
+5. Runtime packages never import the evaluation harness
+6. Contracts import nothing but pydantic
+
+Contract 2 has been verified to fail on a deliberate violation — a green contract
+that cannot fail is decoration.
+
+---
+
+## Status
+
+Working end to end and measured. **Not production-deployed.** The honest list of
+what is missing — semantic retrieval, hosted inference, Feature B, the instructor
+loop — is in [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) rather than omitted here.
+
+Licensed for evaluation. The Open edX demo course used for testing is © the Open
+edX community under CC BY-NC-SA and is not redistributed with this project.

@@ -1,4 +1,15 @@
-"""The isolation tests.
+"""Cache isolation rules — for a cache that does not exist yet.
+
+**These tests currently pass vacuously.** No response cache is wired into the
+request path, so nothing they protect is running. They are written now because
+the rules are the expensive part, not the code: two of them encode bugs already
+found once (a staff-scope answer served to a student, and personal uploads
+surviving in a cache after every filter was correct).
+
+They stop being vacuous the moment a cache is added, and they will fail loudly if
+it is added wrongly. Do not read a green run here as evidence that caching is
+safe today — read it as the specification the cache must satisfy.
+
 
 Design §10.2 names caching as "how isolation quietly fails *after* all the filters
 are written correctly" — a bug class that passes code review, produces no error,

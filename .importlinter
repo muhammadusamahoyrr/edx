@@ -68,10 +68,9 @@ forbidden_modules =
 # audit record. Scattered across agent nodes, a new node forgets one. This makes
 # forgetting a CI failure rather than a code-review catch.
 [importlinter:contract:agents-go-through-the-boundary]
-name = Agents reach knowledge only through the CourseIntelligence boundary
+name = Reasoning reaches knowledge only through the CourseIntelligence boundary
 type = forbidden
 source_modules =
-    coursemate_service.agents
     coursemate_service.ai
 forbidden_modules =
     coursemate_service.knowledge
@@ -89,7 +88,7 @@ name = Nothing imports the dormant proposal queue
 type = forbidden
 source_modules =
     coursemate_service.api
-    coursemate_service.agents
+    coursemate_service.ai
     coursemate_service.knowledge
     coursemate_service.ingestion
 forbidden_modules =
