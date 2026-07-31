@@ -7,6 +7,44 @@ a fresh session cannot infer: how to run things here, and where the traps are.
 harsh and kept current. `git log` is the narrative record — commit messages carry
 the reasoning, not just the diff.
 
+## STATE — read this first, then verify it
+
+Last updated 2026-07-31. **Treat every line as stale until checked** — the
+commands to check are given. A note that disagrees with the running system is
+wrong; the system wins.
+
+**The stack is up and working. Do not disturb it casually.**
+
+| What | State | Check |
+|---|---|---|
+| Everything through the sweep | Done, verified live | `git log --oneline` |
+| DemoX index | 226 chunks active, 221 blocks served | `tools/ops/store_dump.sh` |
+| Plugin migrations | Applied | `tools/ops/migrate.sh` |
+| Package in all 4 containers | Real pip installs | `tools/ops/check_install.sh` |
+| Celery tasks registered | Yes, in both workers | `tools/ops/check_tasks.sh` |
+| `coursemate-beat` container | **UNVERIFIED — never started** | `docker ps -a \| grep beat` |
+| openedx image rebuild | Was running 2026-07-31, hours long | `pgrep -f "tutor images build"` |
+
+**In flight when this was written:** an openedx image rebuild, so the beat
+container can start from an image that actually contains the package. The probe
+that verifies it is written and ready: `tools/verification/beat_container_probe.sh`.
+If the image is built, run it. If the build died, re-run `tools/ops/deploy_image.sh`
+— and expect hours, this connection is slow.
+
+### Do not do these without asking
+
+1. **`tutor local restart`, `docker compose up --force-recreate`, or
+   `tutor local stop`.** The four Open edX containers hold pip installs made into
+   the *container layer*, not the image. Recreating any of them silently reverts
+   CourseMate to absent — the LMS keeps working, the tutor quietly stops. Use
+   `docker restart <name>`, which preserves the layer.
+2. **Rebuild the openedx image "just to be safe".** It is a full rebuild here
+   (Python compiled from source, npm, webpack) and costs hours.
+3. **Re-run `coursemate_reindex` on a whim.** The index is good. A reindex is
+   safe by design (write→verify→swap) but it is not free.
+
+Rebuilding the *service* image is fine — ~20s, offline, no dependencies.
+
 ## Verify, don't assume
 
 Claims get labelled **VERIFIED** (observed), **INFERRED** (from source), or
