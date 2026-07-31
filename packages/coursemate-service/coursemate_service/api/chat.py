@@ -18,17 +18,16 @@ else about this file changes — which is the point of building it this way.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
 
 from coursemate_contracts.auth import StudentClaims
-from coursemate_contracts.chat import ChatRequest, Citation, FrameType, StreamFrame
+from coursemate_contracts.chat import ChatRequest, StreamFrame
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
-from ..config import settings
+from ..ai.pipeline import pipeline
 from .deps import rate_limited
 
 log = logging.getLogger(__name__)
@@ -45,36 +44,16 @@ def _sse(frame: StreamFrame) -> str:
     return f"data: {frame.model_dump_json(exclude_none=True)}\n\n"
 
 
-async def _scripted_answer(request: ChatRequest, claims: StudentClaims) -> AsyncIterator[str]:
-    """Stand-in for generation. Replaced by LiteLLM in Phase 5.
+async def _encode(request: ChatRequest, claims: StudentClaims) -> AsyncIterator[str]:
+    """Adapt pipeline frames to the SSE wire format.
 
-    Deliberately *slow* — a token every 150ms. A fast stub would prove nothing:
-    the property under test is that a long-running generation occupies no LMS
-    worker, and that is only observable when generation takes measurable time.
+    This is the entire generation-side responsibility of the transport layer: the
+    pipeline decides *what* to say, this decides *how it is framed on the wire*.
+    Keeping the split here is what lets retrieval, reranking and query rewriting
+    land in Phase 6 without the API changing shape.
     """
-    words = [
-        "Phase", "4", "transport", "verified:", "this", "answer", "is",
-        "streaming", "from", "the", "CourseMate", "service", "directly", "to",
-        "your", "browser.", "No", "LMS", "worker", "is", "held", "open",
-        "while", "this", "runs.",
-    ]
-    for word in words:
-        await asyncio.sleep(0.15)
-        yield _sse(StreamFrame(type=FrameType.TOKEN, text=word + " "))
-
-    # Citation is mandatory in the real pipeline (§8.5): an answer that cannot
-    # cite abstains. Emitted here so the frame type is exercised end to end.
-    yield _sse(
-        StreamFrame(
-            type=FrameType.CITATION,
-            citation=Citation(
-                usage_key=claims.usage_key or "",
-                display_name="(scripted — no retrieval yet)",
-                url=None,
-            ),
-        )
-    )
-    yield _sse(StreamFrame(type=FrameType.DONE, provider="scripted"))
+    async for frame in pipeline.stream(request, claims):
+        yield _sse(frame)
 
 
 @router.post("/chat")
@@ -97,7 +76,7 @@ async def chat(
     )
 
     return StreamingResponse(
-        _scripted_answer(request, claims),
+        _encode(request, claims),
         media_type="text/event-stream",
         headers={
             # Defeat proxy buffering. Without these an intermediary may hold the

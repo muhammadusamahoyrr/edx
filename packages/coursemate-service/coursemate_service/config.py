@@ -39,13 +39,37 @@ class Settings(BaseSettings):
     #: Measurably worse, explicitly logged, never an outage (§8.2).
     rerank_enabled: bool = True
 
-    # --- models (§8.2) --------------------------------------------------------
-    cheap_model: str = "claude-haiku-4-5-20251001"
-    strong_model: str = "claude-opus-5"
-    #: A different *provider*, which is what survives one vendor's outage. The
-    #: self-hosted local model is deferred (§8.4), so a simultaneous outage of
-    #: both means the tutor is unavailable and says so.
+    # --- models (§8.2, §8.4) --------------------------------------------------
+    #: Provider strings in LiteLLM form, e.g. "anthropic/claude-opus-5",
+    #: "openai/gpt-4o", "gemini/gemini-2.0-flash", "ollama/llama3".
+    #: Swapping providers is configuration, never a code change.
+    strong_model: str = "anthropic/claude-opus-5"
+    cheap_model: str = "anthropic/claude-haiku-4-5-20251001"
+    model_api_key: str | None = None
+
+    #: A different *provider*, which is what survives one vendor's outage — not a
+    #: second model from the same vendor. The self-hosted local model stays
+    #: deferred (§8.4): a simultaneous outage of both hosted providers means the
+    #: tutor is unavailable and says so, rather than degrading silently.
     fallback_model: str | None = None
+    fallback_api_key: str | None = None
+
+    #: Per-request ceiling. Beyond this the provider is hung, not slow, and
+    #: holding the student's connection open helps nobody.
+    model_timeout_seconds: int = 60
+    max_output_tokens: int = 800
+
+    #: Development only. When set, LiteLLM returns this instead of calling a
+    #: provider — exercising the real Router, retry policy, fallback config and
+    #: streaming path with no network call and no key. Never set in production.
+    mock_response: str | None = None
+
+    #: When true the tutor abstains unless retrieval supplied context (§8.5).
+    #: False until Phase 6 lands retrieval; with no retriever and grounding
+    #: required, every question would correctly abstain and nothing would be
+    #: demonstrable. Flipping this to True is what turns grounding on.
+    require_grounding: bool = False
+
     reranker_model: str = "BAAI/bge-reranker-base"
 
     # --- abuse and cost (§10.8) ----------------------------------------------

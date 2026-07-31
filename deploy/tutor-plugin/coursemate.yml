@@ -28,6 +28,22 @@ config:
     # mint_student_token() refuses to sign with one (RFC 7518 §3.2).
     JWT_SIGNING_KEY: "{{ 64|random_string }}"
     SERVICE_CREDENTIAL: "{{ 64|random_string }}"
+  defaults:
+    # Provider strings in LiteLLM form. Swapping providers is configuration, not
+    # a code change (§8.4) — e.g. openai/gpt-4o, gemini/gemini-2.0-flash,
+    # ollama/llama3. FALLBACK should be a DIFFERENT vendor: that is what survives
+    # one provider's outage, which a second model from the same vendor does not.
+    STRONG_MODEL: "anthropic/claude-opus-5"
+    CHEAP_MODEL: "anthropic/claude-haiku-4-5-20251001"
+    MODEL_API_KEY: ""
+    FALLBACK_MODEL: ""
+    FALLBACK_API_KEY: ""
+    # Development only: returns a canned answer through the real Router without
+    # calling a provider. Must be empty in production.
+    MOCK_RESPONSE: ""
+    # Flip to true once retrieval lands (Phase 6). Until then the tutor would
+    # correctly abstain on every question, since it cannot yet read the course.
+    REQUIRE_GROUNDING: false
 
 patches:
   # --- the service container ------------------------------------------------
@@ -39,6 +55,13 @@ patches:
         COURSEMATE_TENANT: "default"
         COURSEMATE_JWT_SIGNING_KEY: "{{ COURSEMATE_JWT_SIGNING_KEY }}"
         COURSEMATE_SERVICE_CREDENTIAL: "{{ COURSEMATE_SERVICE_CREDENTIAL }}"
+        COURSEMATE_STRONG_MODEL: "{{ COURSEMATE_STRONG_MODEL }}"
+        COURSEMATE_CHEAP_MODEL: "{{ COURSEMATE_CHEAP_MODEL }}"
+        COURSEMATE_MODEL_API_KEY: "{{ COURSEMATE_MODEL_API_KEY }}"
+        COURSEMATE_FALLBACK_MODEL: "{{ COURSEMATE_FALLBACK_MODEL }}"
+        COURSEMATE_FALLBACK_API_KEY: "{{ COURSEMATE_FALLBACK_API_KEY }}"
+        COURSEMATE_MOCK_RESPONSE: "{{ COURSEMATE_MOCK_RESPONSE }}"
+        COURSEMATE_REQUIRE_GROUNDING: "{{ COURSEMATE_REQUIRE_GROUNDING }}"
 
   # --- same-origin route on the LMS host ------------------------------------
   # `handle` is terminal for matched requests and is evaluated before the bare
