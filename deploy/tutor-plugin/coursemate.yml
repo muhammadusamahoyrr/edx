@@ -1,45 +1,36 @@
 # CourseMate Tutor plugin.
 #
-# Install:   cp coursemate.yml "$(tutor plugins printroot)"/
-#            tutor plugins enable coursemate
-#            tutor config save
+#   cp coursemate.yml "$(tutor plugins printroot)"/
+#   tutor plugins enable coursemate
+#   tutor config save && tutor local start -d
 #
-# Two things this does, and they are separate concerns:
+# What this does, and why each piece is required by the architecture:
 #
-#   1. Installs coursemate-platform into the openedx image, so the XBlock and the
-#      event receivers exist in LMS, CMS and the Celery workers.
-#   2. Routes /coursemate/ at Caddy to the CourseMate service, which is what makes
-#      the v8 mint-and-connect topology work (design §3.4 rule 3): the browser
-#      streams from the service on a SAME-ORIGIN path, so there is no CORS
-#      surface and no second published hostname — and, critically, the request
-#      never enters an LMS application process, so no gunicorn worker is held
-#      open for the duration of an answer.
+#  1. Runs the CourseMate service as its own container — OUTSIDE the Open edX
+#     processes, so model latency and failures cannot touch the LMS (§3.4).
+#
+#  2. Routes /coursemate/* on the LMS host to that service. This is the piece
+#     that makes v8's mint-and-connect topology work: the browser streams from a
+#     SAME-ORIGIN path, so there is no CORS surface and no second published
+#     hostname — and, decisively, the request is routed by Caddy and never
+#     enters an LMS application process. No gunicorn worker is held open for the
+#     duration of an answer.
+#
+#  3. Supplies the JWT signing key to the LMS/CMS so the XBlock can mint tokens.
+#     Note what is NOT supplied: no model provider key. The XBlock makes no model
+#     calls, so it has no reason to hold one (§10.4).
 name: coursemate
 version: 0.1.0
 
+config:
+  unique:
+    # 64 chars. HS256 with a shorter secret is weaker than it looks, and
+    # mint_student_token() refuses to sign with one (RFC 7518 §3.2).
+    JWT_SIGNING_KEY: "{{ 64|random_string }}"
+    SERVICE_CREDENTIAL: "{{ 64|random_string }}"
+
 patches:
-  # --- 1. install the plugin package into the image -------------------------
-  openedx-dockerfile-post-python-requirements: |
-    # Mounted at build time via `tutor mounts add`, or copied in CI.
-    COPY --chown=app:app ./coursemate-platform /openedx/coursemate-platform
-    RUN pip install -e /openedx/coursemate-platform
-
-  # --- 2. same-origin route for the student stream --------------------------
-  # Caddy sits in front of the LMS. Adding the path here means the browser's
-  # request is routed by the proxy and never touches the LMS app.
-  caddyfile: |
-    @coursemate path /coursemate/*
-    handle @coursemate {
-      # SSE: no buffering, and a timeout long enough for a full generation.
-      reverse_proxy coursemate:8000 {
-        flush_interval -1
-        transport http {
-          response_header_timeout 120s
-        }
-      }
-    }
-
-  # --- 3. the service container ---------------------------------------------
+  # --- the service container ------------------------------------------------
   local-docker-compose-services: |
     coursemate:
       image: coursemate/service:0.1.0
@@ -48,24 +39,31 @@ patches:
         COURSEMATE_TENANT: "default"
         COURSEMATE_JWT_SIGNING_KEY: "{{ COURSEMATE_JWT_SIGNING_KEY }}"
         COURSEMATE_SERVICE_CREDENTIAL: "{{ COURSEMATE_SERVICE_CREDENTIAL }}"
-      depends_on:
-        - redis
 
-  # --- 4. settings the plugin package reads ---------------------------------
-  # These land in ENV_TOKENS, which is where settings/common.py looks. Note what
-  # is NOT here: any model provider key. The XBlock makes no model calls, so it
-  # has no reason to hold one (§10.4).
-  common-env-features: |
-    "COURSEMATE_JWT_SIGNING_KEY": "{{ COURSEMATE_JWT_SIGNING_KEY }}",
-    "COURSEMATE_STREAM_PATH": "/coursemate/api/chat",
-    "COURSEMATE_SERVICE_URL": "http://coursemate:8000",
-    "COURSEMATE_SERVICE_CREDENTIAL": "{{ COURSEMATE_SERVICE_CREDENTIAL }}",
-    "COURSEMATE_TENANT": "default",
+  # --- same-origin route on the LMS host ------------------------------------
+  # `handle` is terminal for matched requests and is evaluated before the bare
+  # `reverse_proxy` that Tutor imports for the LMS, so /coursemate/* is served by
+  # us and everything else still reaches the LMS untouched.
+  caddyfile-lms: |
+    handle /coursemate/* {
+      reverse_proxy coursemate:8000 {
+        # SSE requires unbuffered forwarding. Without flush_interval -1 Caddy
+        # buffers the response and delivers it in one piece, which is
+        # indistinguishable from a hung stream in the browser.
+        flush_interval -1
+        transport http {
+          # Long enough for a full generation; the connection is held by Caddy
+          # and the service, never by an LMS worker.
+          response_header_timeout 300s
+          read_timeout 300s
+        }
+      }
+    }
 
-config:
-  unique:
-    # Generated once per deployment by Tutor and persisted in config.yml.
-    # 32+ characters, because HS256 with a shorter key is weaker than it looks
-    # and mint_student_token refuses to sign with one (RFC 7518 §3.2).
-    JWT_SIGNING_KEY: "{{ 64|random_string }}"
-    SERVICE_CREDENTIAL: "{{ 64|random_string }}"
+  # --- settings the plugin package reads ------------------------------------
+  openedx-common-settings: |
+    COURSEMATE_JWT_SIGNING_KEY = "{{ COURSEMATE_JWT_SIGNING_KEY }}"
+    COURSEMATE_SERVICE_CREDENTIAL = "{{ COURSEMATE_SERVICE_CREDENTIAL }}"
+    COURSEMATE_STREAM_PATH = "/coursemate/api/chat"
+    COURSEMATE_SERVICE_URL = "http://coursemate:8000"
+    COURSEMATE_TENANT = "default"

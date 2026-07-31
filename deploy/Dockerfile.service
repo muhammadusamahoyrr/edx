@@ -1,0 +1,37 @@
+# CourseMate service image.
+#
+# Runs OUTSIDE Open edX (design §3.4): latency, memory, model failures and
+# traffic spikes are contained in a container that can be scaled and restarted
+# without touching the LMS.
+#
+#   docker build -f deploy/Dockerfile.service -t coursemate/service:0.1.0 .
+#
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+COPY packages/coursemate-contracts /app/coursemate-contracts
+COPY packages/coursemate-service   /app/coursemate-service
+
+RUN pip install --no-cache-dir -q \
+      /app/coursemate-contracts \
+      /app/coursemate-service
+
+# Non-root: this container is reachable from the browser via the ingress path,
+# so it is the most exposed process in the deployment.
+RUN useradd --create-home --uid 1000 coursemate
+USER coursemate
+
+EXPOSE 8000
+
+# Single worker on purpose. The workload is async and I/O-bound (model calls,
+# retrieval), so concurrency comes from the event loop rather than from
+# processes. Scale by adding replicas, not workers — a streaming endpoint holds
+# a connection, and per-process memory is dominated by the reranker later.
+CMD ["uvicorn", "coursemate_service.main:app", \
+     "--host", "0.0.0.0", "--port", "8000", \
+     "--timeout-keep-alive", "120", \
+     "--no-access-log"]

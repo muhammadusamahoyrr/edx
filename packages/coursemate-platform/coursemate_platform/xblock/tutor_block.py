@@ -153,13 +153,19 @@ class CourseMateTutorXBlock(XBlock):
         user_id = str(user.opt_attrs.get("edx-platform.user_id", ""))
         roles = list(user.opt_attrs.get("edx-platform.user_role", "") or "")
 
+        if not settings.COURSEMATE_JWT_SIGNING_KEY:
+            # Unset key disables the tutor; it never breaks the platform (§10.4).
+            return {"error": "unavailable"}
+
+        usage_id = self.scope_ids.usage_id
         token = mint_student_token(
             signing_key=settings.COURSEMATE_JWT_SIGNING_KEY,
             user_id=user_id,
             course_id=self._course_id(),
             offering_id=self._offering_id(),
             roles=roles if isinstance(roles, list) else [str(roles)],
-            usage_key=str(self.scope_ids.usage_id),
+            usage_key=str(usage_id),
+            block_id=usage_id.block_id,
             stream_path=settings.COURSEMATE_STREAM_PATH,
         )
         return token.model_dump()

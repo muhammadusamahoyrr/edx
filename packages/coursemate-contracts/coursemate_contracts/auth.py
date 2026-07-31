@@ -29,21 +29,29 @@ AUDIENCE_SERVICE = "coursemate:service"
 
 
 class StudentClaims(BaseModel):
-    """Claims the XBlock mints into the student token."""
+    """Claims the XBlock mints into the student token.
+
+    Deliberately small. Everything here answers *who is asking and from where*;
+    nothing here grants access. The service re-derives authorization on every
+    request, so a forged claim buys nothing (§6.5, §10.1).
+    """
 
     sub: str  # user_id
     course_id: str
     offering_id: str
-    #: Platform roles as the LMS reports them. Informational: the service checks
-    #: role against the platform itself before honouring anything staff-only.
+    #: Platform roles as the LMS reports them. Informational only: anything
+    #: staff-only is re-checked against the platform before it is honoured.
     roles: list[str] = Field(default_factory=list)
     aud: str = AUDIENCE_STUDENT
     iss: str = "coursemate-xblock"
     exp: int
     iat: int
     #: Ties a token to one rendered block, so it cannot be replayed against a
-    #: different unit's tutor.
+    #: different unit's tutor. `usage_key` is the fully-qualified locator;
+    #: `block_id` is its short form, carried separately because retrieval filters
+    #: and audit records key on it directly (§6.2).
     usage_key: str | None = None
+    block_id: str | None = None
 
 
 class TokenResponse(BaseModel):

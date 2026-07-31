@@ -14,20 +14,31 @@ import logging
 from coursemate_contracts import CONTRACT_VERSION
 from fastapi import FastAPI
 
+from .api.chat import router as chat_router
 from .config import settings
 
+logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-app = FastAPI(
-    title="CourseMate",
-    version="0.1.0",
-    # Mounted behind the LMS origin at /coursemate/ (§3.4 v8), so the browser is
-    # same-origin and no gunicorn worker is held for an answer.
-    root_path="/coursemate",
-)
+# Served behind the LMS origin at /coursemate/ (§3.4 v8), so the browser is
+# same-origin and no gunicorn worker is held open for an answer.
+#
+# **No `root_path`, deliberately.** Caddy uses `handle` rather than `handle_path`,
+# so it forwards the full path *including* the /coursemate prefix. Setting
+# `root_path="/coursemate"` makes Starlette strip that prefix before matching, so
+# a request for /coursemate/health tries to match "/health" and 404s against a
+# route that plainly exists. The two settings must agree: either the proxy strips
+# and the app declares bare paths, or neither does. We chose neither, because one
+# fewer transformation is one fewer place for them to disagree.
+app = FastAPI(title="CourseMate", version="0.1.0")
+
+# Student-facing routes. Separate router from ingest/invalidation because they
+# carry a different credential class (§3.4): a leaked student token must not be
+# able to write to the index.
+app.include_router(chat_router, prefix="/coursemate/api", tags=["student"])
 
 
-@app.get("/health")
+@app.get("/coursemate/health")
 def health() -> dict:
     """Liveness plus the contract version.
 
@@ -43,7 +54,7 @@ def health() -> dict:
     }
 
 
-@app.get("/health/ready")
+@app.get("/coursemate/health/ready")
 def ready() -> dict:
     """Readiness. Distinct from liveness because an empty index is not a fault —
     it is the `preparing` state (§5.1), and the difference matters to a student."""
