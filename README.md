@@ -109,6 +109,11 @@ make install     # venv + editable installs
 make check       # architecture contracts + 66 tests, no Open edX required
 ```
 
+Tests are self-contained — a clean checkout runs green with no environment setup.
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the same two
+commands on Python 3.11 and 3.12, **plus a job that introduces a deliberate
+contract violation and fails the build if the contract does not catch it.**
+
 Tests run in seconds without a platform. Tests that need Tutor live in
 `packages/coursemate-platform/tests/platform/` and run at milestones — a suite
 that needs a platform is a suite nobody runs.
@@ -135,5 +140,15 @@ Working end to end and measured. **Not production-deployed.** The honest list of
 what is missing — semantic retrieval, hosted inference, Feature B, the instructor
 loop — is in [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) rather than omitted here.
 
-Licensed for evaluation. The Open edX demo course used for testing is © the Open
-edX community under CC BY-NC-SA and is not redistributed with this project.
+## License
+
+MIT — see [`LICENSE`](LICENSE).
+
+The Open edX demo course used for development and benchmarking is published by the
+Open edX community under **CC BY-NC-SA** and is **not redistributed here** — it is
+fetched at setup time. Its Non-Commercial and Share-Alike terms do not compose
+with MIT, which is why it is downloaded rather than vendored.
+
+Open edX® is a registered trademark of edX Inc. CourseMate is an independent
+plugin, modifies no Open edX source, and is not endorsed by or affiliated with
+edX Inc.

@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: contracts + tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is what the Open edX Ulmo image ships, so it is the version that
+        # matters. 3.12 is there to catch deprecations before an upgrade forces
+        # them on us.
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install -q --upgrade pip
+          pip install -q -e packages/coursemate-contracts
+          pip install -q pytest pytest-asyncio pyjwt import-linter ruff \
+                         fastapi pydantic-settings httpx litellm
+
+      # Run directly rather than through `make check`: the Makefile builds a venv,
+      # which a CI runner already provides. Same two commands, same order.
+      - name: Architecture contracts
+        env:
+          PYTHONPATH: packages/coursemate-service:packages/coursemate-platform
+        run: lint-imports --config .importlinter
+
+      - name: Tests
+        env:
+          PYTHONPATH: packages/coursemate-service:packages/coursemate-platform
+        run: |
+          pytest packages/coursemate-service/tests \
+                 packages/coursemate-platform/tests/unit \
+                 -q --asyncio-mode=auto
+
+  contracts-can-fail:
+    name: guard rails actually bite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install -q --upgrade pip
+          pip install -q -e packages/coursemate-contracts
+          pip install -q import-linter pydantic
+
+      # A green contract that CANNOT fail is decoration. This introduces a
+      # deliberate violation of the most important rule — the Open edX plugin
+      # importing an AI library — and fails the build if the contract does NOT
+      # catch it. Without this, a misconfigured .importlinter would report six
+      # passing contracts while enforcing nothing.
+      - name: Contract 2 must reject an AI import in the platform package
+        env:
+          PYTHONPATH: packages/coursemate-service:packages/coursemate-platform
+        run: |
+          echo "import litellm  # deliberate violation" \
+            > packages/coursemate-platform/coursemate_platform/_ci_violation.py
+          if lint-imports --config .importlinter; then
+            echo "::error::contract 2 did not catch a deliberate AI import"
+            exit 1
+          fi
+          echo "contract 2 correctly rejected the violation"
+          rm packages/coursemate-platform/coursemate_platform/_ci_violation.py
+
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -q ruff
+      # Non-blocking: style should not gate correctness, and this repository
+      # predates the linter. Surfaced so it can be cleaned up deliberately.
+      - run: ruff check packages eval --output-format=github || true
