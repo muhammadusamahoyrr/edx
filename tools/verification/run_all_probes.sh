@@ -110,7 +110,7 @@ from collections import Counter
 from opaque_keys.edx.keys import CourseKey
 from xmodule.modulestore import ModuleStoreEnum
 from xmodule.modulestore.django import modulestore
-key = CourseKey.from_string('course-v1:edX+DemoX+Demo_Course')
+key = CourseKey.from_string('course-v1:OpenedX+DemoX+DemoCourse')
 store = modulestore()
 course = store.get_course(key)
 print('course display_name :', course.display_name if course else 'NOT FOUND')

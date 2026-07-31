@@ -24,7 +24,7 @@ from openedx_events.content_authoring.signals import XBLOCK_PUBLISHED  # noqa: E
 from xmodule.modulestore import ModuleStoreEnum  # noqa: E402
 from xmodule.modulestore.django import modulestore  # noqa: E402
 
-COURSE = "course-v1:edX+DemoX+Demo_Course"
+COURSE = "course-v1:OpenedX+DemoX+DemoCourse"
 CAPTURED: list[dict] = []
 
 

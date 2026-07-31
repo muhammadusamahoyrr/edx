@@ -13,7 +13,7 @@ from probe_report import Confidence, Finding  # noqa: E402
 
 from opaque_keys.edx.keys import CourseKey  # noqa: E402
 
-COURSE = "course-v1:edX+DemoX+Demo_Course"
+COURSE = "course-v1:OpenedX+DemoX+DemoCourse"
 
 
 def build_files() -> Finding:

@@ -16,7 +16,7 @@ from opaque_keys.edx.keys import CourseKey  # noqa: E402
 from xmodule.modulestore import ModuleStoreEnum  # noqa: E402
 from xmodule.modulestore.django import modulestore  # noqa: E402
 
-COURSE = "course-v1:edX+DemoX+Demo_Course"
+COURSE = "course-v1:OpenedX+DemoX+DemoCourse"
 
 
 def build() -> Finding:
