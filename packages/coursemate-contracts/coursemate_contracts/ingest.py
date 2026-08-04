@@ -39,6 +39,15 @@ class LeafBlock(BaseModel):
     week: int | None = Field(default=None, ge=0)
     publish_time: datetime | None = None
 
+    #: Access groups this block is restricted to, as `"<partition>:<group>"`
+    #: tokens. Empty means every enrolled student may see it.
+    #:
+    #: Carried on the wire because only the platform can read a block's
+    #: `group_access`, and the service is where the filter has to run — it is the
+    #: side that knows who is asking. Staff-only content never appears here at
+    #: all: it is absolute, so the platform drops it rather than describing it.
+    group_tokens: list[str] = Field(default_factory=list)
+
 
 class IngestRequest(BaseModel):
     """A batch of leaves for one course, from one bootstrap run or one publish."""

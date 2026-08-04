@@ -55,6 +55,22 @@ class StudentClaims(BaseModel):
     #: and audit records key on it directly (§6.2).
     usage_key: str | None = None
     block_id: str | None = None
+    #: Access groups the caller belongs to, as `"<partition>:<group>"` tokens,
+    #: resolved server-side at mint time through the platform's PartitionService.
+    #:
+    #: **This is the one claim the service acts on rather than re-deriving, and
+    #: the reason is worth stating.** Re-deriving it would mean hard-coding
+    #: partition and group ids that are per-instance configuration — right on one
+    #: deployment and quietly wrong on the next, in the direction that shows a
+    #: paying student less than they paid for. Minting them inside the LMS uses
+    #: the platform's own partition logic instead.
+    #:
+    #: The cost is bounded staleness: a track or cohort change takes effect at
+    #: the next mint rather than instantly, so at most `DEFAULT_TTL_SECONDS`.
+    #: That is the same order as the 60 s authorization cache, and unlike
+    #: enrollment there is no revocation event to make it immediate. Enrollment
+    #: itself is still re-derived on every call and still fails closed.
+    group_tokens: list[str] = Field(default_factory=list)
 
 
 class TokenResponse(BaseModel):

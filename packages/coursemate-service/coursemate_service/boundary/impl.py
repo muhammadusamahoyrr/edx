@@ -91,6 +91,10 @@ class CourseIntelligenceImpl:
             query,
             tenant=settings.tenant,
             offering_id=offering_id,
+            # Block-level access, filtered in the same query as tenant and
+            # offering. A caller with no resolved groups sees unrestricted
+            # content only — the fail-closed reading, matching _authorize above.
+            group_tokens=frozenset(claims.group_tokens or ()),
             limit=settings.retrieve_candidates,
         )
         chunks = get_reranker().rerank(query, candidates, top_k=limit)

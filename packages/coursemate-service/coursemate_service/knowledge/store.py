@@ -63,6 +63,21 @@ CREATE INDEX IF NOT EXISTS ix_usage   ON chunks(usage_key, version);
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
     USING fts5(text, content='chunks', content_rowid='id', tokenize='porter unicode61');
 
+-- One row per (chunk, permitted group). A side table rather than a JSON column
+-- on `chunks`, because the restriction has to be resolvable INSIDE the ranking
+-- query: §6.3 requires unauthorized content never to be a *candidate*, and a
+-- JSON column would force filtering after ranking, which leaks through result
+-- counts and timing even when the text never reaches the student.
+--
+-- No rows for a chunk means unrestricted, which is the common case and costs
+-- one NOT EXISTS.
+CREATE TABLE IF NOT EXISTS chunk_groups (
+    chunk_id    INTEGER NOT NULL,
+    group_token TEXT    NOT NULL,
+    PRIMARY KEY (chunk_id, group_token)
+);
+CREATE INDEX IF NOT EXISTS ix_chunk_groups_token ON chunk_groups(group_token);
+
 CREATE TABLE IF NOT EXISTS offering_state (
     offering_id      TEXT PRIMARY KEY,
     active_version   TEXT,
@@ -141,14 +156,29 @@ class ChunkStore:
         if not rows:
             return 0
         with self._lock:
-            cur = self._conn.executemany(
-                """INSERT INTO chunks
-                   (tenant, course_id, offering_id, usage_key, block_id, block_type,
-                    content_type, display_name, version, ordinal, text, active)
-                   VALUES (:tenant,:course_id,:offering_id,:usage_key,:block_id,:block_type,
-                           :content_type,:display_name,:version,:ordinal,:text,0)""",
-                rows,
-            )
+            # Inserted one at a time rather than with executemany, because each
+            # row's access tokens need that row's id — and a chunk written
+            # without its restriction would be served to everyone. Getting this
+            # wrong is silent: the chunk looks fine, it is just visible to more
+            # people than it should be.
+            written = 0
+            for row in rows:
+                cur = self._conn.execute(
+                    """INSERT INTO chunks
+                       (tenant, course_id, offering_id, usage_key, block_id, block_type,
+                        content_type, display_name, version, ordinal, text, active)
+                       VALUES (:tenant,:course_id,:offering_id,:usage_key,:block_id,:block_type,
+                               :content_type,:display_name,:version,:ordinal,:text,0)""",
+                    row,
+                )
+                written += cur.rowcount
+                tokens = row.get("group_tokens") or ()
+                if tokens:
+                    self._conn.executemany(
+                        "INSERT OR IGNORE INTO chunk_groups(chunk_id, group_token) "
+                        "VALUES (?, ?)",
+                        [(cur.lastrowid, t) for t in tokens],
+                    )
             # Keep the FTS index in step with the rows just inserted.
             self._conn.execute(
                 "INSERT INTO chunks_fts(rowid, text) "
@@ -156,7 +186,7 @@ class ChunkStore:
                 (rows[0]["version"],),
             )
             self._conn.commit()
-            return cur.rowcount
+            return written
 
     def verify(self, offering_id: str, version: str, expected: int) -> bool:
         with self._lock:
@@ -226,6 +256,7 @@ class ChunkStore:
             if stale:
                 marks = ",".join("?" * len(stale))
                 self._conn.execute(f"DELETE FROM chunks_fts WHERE rowid IN ({marks})", stale)
+                self._conn.execute(f"DELETE FROM chunk_groups WHERE chunk_id IN ({marks})", stale)
                 self._conn.execute(f"DELETE FROM chunks WHERE id IN ({marks})", stale)
                 self._conn.commit()
         log.info("swapped %s to version %s (%d chunks)", offering_id, version, count)
@@ -233,7 +264,13 @@ class ChunkStore:
     # --- retrieval -------------------------------------------------------
 
     def search(
-        self, query: str, *, tenant: str, offering_id: str, limit: int = 5
+        self,
+        query: str,
+        *,
+        tenant: str,
+        offering_id: str,
+        group_tokens: frozenset[str] = frozenset(),
+        limit: int = 5,
     ) -> list[StoredChunk]:
         """Rank by BM25 **within a pre-filtered candidate set**.
 
@@ -241,6 +278,11 @@ class ChunkStore:
         ranking — §6.3 requires unauthorized content never to be a *candidate*,
         rather than merely never returned. Post-filtering would leak through
         result counts and timing even when the text never reaches the student.
+
+        `group_tokens` extends that same rule one level down, to blocks the
+        instructor restricted to a cohort or an enrollment track. An empty set is
+        the honest default: a caller whose groups could not be resolved sees only
+        unrestricted content, never everything.
         """
         terms = _FTS_UNSAFE.sub(" ", query).split()
         if not terms:
@@ -253,19 +295,29 @@ class ChunkStore:
         # (Found by the hostile-input test, not by review.)
         match = " OR ".join(f'"{t}"' for t in terms)
 
+        # Empty IN () is a syntax error in SQLite, so an empty group set still
+        # needs a placeholder. NULL never matches a token, which gives exactly
+        # the intended behaviour: the caller sees unrestricted chunks only.
+        marks = ",".join("?" * len(group_tokens)) if group_tokens else "NULL"
+
         with self._lock:
             rows = self._conn.execute(
-                """
+                f"""
                 SELECT c.usage_key, c.block_id, c.display_name, c.content_type,
                        c.text, c.ordinal, bm25(chunks_fts) AS raw
                 FROM chunks_fts
                 JOIN chunks c ON c.id = chunks_fts.rowid
                 WHERE chunks_fts MATCH ?
                   AND c.tenant = ? AND c.offering_id = ? AND c.active = 1
+                  AND (NOT EXISTS (SELECT 1 FROM chunk_groups g
+                                   WHERE g.chunk_id = c.id)
+                       OR EXISTS (SELECT 1 FROM chunk_groups g
+                                  WHERE g.chunk_id = c.id
+                                    AND g.group_token IN ({marks})))
                 ORDER BY raw
                 LIMIT ?
                 """,
-                (match, tenant, offering_id, limit),
+                (match, tenant, offering_id, *sorted(group_tokens), limit),
             ).fetchall()
 
         if not rows:
@@ -387,6 +439,7 @@ class ChunkStore:
                 return 0
             id_marks = ",".join("?" * len(ids))
             self._conn.execute(f"DELETE FROM chunks_fts WHERE rowid IN ({id_marks})", ids)
+            self._conn.execute(f"DELETE FROM chunk_groups WHERE chunk_id IN ({id_marks})", ids)
             self._conn.execute(f"DELETE FROM chunks WHERE id IN ({id_marks})", ids)
             self._conn.execute(
                 "UPDATE offering_state SET chunk_count = "

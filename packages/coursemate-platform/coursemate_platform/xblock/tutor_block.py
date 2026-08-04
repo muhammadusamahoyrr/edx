@@ -170,9 +170,34 @@ class CourseMateTutorXBlock(XBlock):
             roles=roles if isinstance(roles, list) else [str(roles)],
             usage_key=str(usage_id),
             block_id=usage_id.block_id,
+            # Resolved here, inside the LMS, because only the platform can answer
+            # which partition groups a user is in. Empty on any failure, which
+            # denies gated content rather than granting it.
+            group_tokens=list(self._group_tokens()),
             stream_path=settings.COURSEMATE_STREAM_PATH,
         )
         return token.model_dump()
+
+    def _group_tokens(self) -> tuple[str, ...]:
+        """The caller's access groups, via the adapter.
+
+        Goes through `content_adapter` rather than importing PartitionService
+        here: §3.3 puts every platform content read behind that one module, and
+        contract 1 fails the build on a direct import from `xblock`.
+        """
+        from ..adapters import content_adapter
+
+        real_user = self.runtime.service(self, "user")
+        django_user = getattr(real_user, "_django_user", None) if real_user else None
+        if django_user is None:
+            return ()
+        try:
+            return content_adapter.user_group_tokens(
+                self.scope_ids.usage_id.course_key, django_user
+            )
+        except Exception:  # noqa: BLE001 - a mint must never fail on this
+            log.exception("coursemate: group token lookup failed")
+            return ()
 
     @XBlock.json_handler
     def persist_turn(self, data, suffix=""):  # noqa: ARG002

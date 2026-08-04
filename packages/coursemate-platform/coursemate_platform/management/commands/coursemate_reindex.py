@@ -31,7 +31,14 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--course", help="Course key, e.g. course-v1:Org+Num+Run")
-        parser.add_argument("--all", action="store_true", help="Every course on the instance")
+        parser.add_argument(
+            "--all", action="store_true",
+            help="Every course that opted in by adding the tutor block",
+        )
+        parser.add_argument(
+            "--force-all", action="store_true",
+            help="Every course on the instance, INCLUDING those that never opted in",
+        )
         parser.add_argument(
             "--inline", action="store_true",
             help="Run in this process rather than enqueuing (operators, verification)",
@@ -40,13 +47,32 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         from opaque_keys.edx.keys import CourseKey
 
-        if not options["course"] and not options["all"]:
-            raise CommandError("Specify --course <key> or --all")
+        if not options["course"] and not options["all"] and not options["force_all"]:
+            raise CommandError("Specify --course <key>, --all, or --force-all")
 
         from ...adapters import content_adapter
 
-        if options["all"]:
-            keys = content_adapter.list_course_keys()
+        if options["all"] or options["force_all"]:
+            every = content_adapter.list_course_keys()
+            if options["force_all"]:
+                # Deliberately explicit. Reading a course whose staff never asked
+                # for CourseMate is not a technical error but a trust one, so it
+                # needs a flag someone had to type.
+                keys = every
+                self.stdout.write(self.style.WARNING(
+                    f"--force-all: indexing ALL {len(keys)} course(s), "
+                    f"including those that never opted in."
+                ))
+            else:
+                # Opt-in is the presence of the tutor block: the course staff
+                # added it, which is the same consent `tasks/reconcile.py`
+                # already requires before sweeping a course. `--all` used to
+                # disagree with that and walk every course on the instance.
+                keys = [k for k in every if content_adapter.course_has_tutor(k)]
+                self.stdout.write(
+                    f"{len(keys)} course(s) opted in, {len(every) - len(keys)} skipped "
+                    f"(no tutor block). Use --force-all to override."
+                )
         else:
             keys = [CourseKey.from_string(options["course"])]
 

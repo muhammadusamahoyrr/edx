@@ -59,6 +59,11 @@ async def ingest_blocks(request: IngestRequest) -> IngestAccepted:
                         "version": version,
                         "ordinal": chunk.ordinal,
                         "text": chunk.text,
+                        # Every chunk of a restricted block inherits the block's
+                        # restriction. Carried per chunk rather than per block
+                        # because the filter runs in the retrieval query, which
+                        # only ever sees chunks.
+                        "group_tokens": tuple(block.group_tokens),
                     }
                 )
         except Exception:  # noqa: BLE001
@@ -116,6 +121,7 @@ async def delete_blocks(request: DeleteRequest) -> dict:
         if ids:
             marks = ",".join("?" * len(ids))
             store._conn.execute(f"DELETE FROM chunks_fts WHERE rowid IN ({marks})", ids)  # noqa: SLF001
+            store._conn.execute(f"DELETE FROM chunk_groups WHERE chunk_id IN ({marks})", ids)  # noqa: SLF001
             store._conn.execute(f"DELETE FROM chunks WHERE id IN ({marks})", ids)  # noqa: SLF001
             store._conn.commit()  # noqa: SLF001
     return {"deleted_chunks": len(ids)}

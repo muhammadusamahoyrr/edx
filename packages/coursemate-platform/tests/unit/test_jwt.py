@@ -87,3 +87,17 @@ def test_response_points_at_a_same_origin_path_not_a_hostname():
     response = _mint()
     assert response.stream_path.startswith("/")
     assert "://" not in response.stream_path
+
+
+def test_group_tokens_travel_in_the_token():
+    """Block-level access is resolved in the LMS at mint time, because only the
+    platform can map a user onto its own partition configuration."""
+    claims = decode_for_test(_mint(group_tokens=["50:2", "77:1"]).token, KEY)
+    assert claims["group_tokens"] == ["50:2", "77:1"]
+
+
+def test_group_tokens_default_to_empty_not_absent():
+    """An absent claim must read as 'no groups' — which denies gated content —
+    rather than as a missing field the service has to guess about."""
+    claims = decode_for_test(_mint().token, KEY)
+    assert claims["group_tokens"] == []

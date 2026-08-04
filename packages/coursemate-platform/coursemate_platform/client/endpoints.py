@@ -57,6 +57,7 @@ def send_leaves(*, tenant, course_id, offering_id, course_version, leaves, trace
                 display_name=leaf.display_name,
                 text=leaf.text,
                 content_type=_CONTENT_TYPE.get(leaf.block_type, ContentType.LESSON),
+                group_tokens=list(leaf.group_tokens),
             )
             for leaf in leaves
         ],

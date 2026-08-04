@@ -229,3 +229,75 @@ def test_null_reranker_is_a_pure_passthrough(store):
     store.swap("CS101", "v1")
     candidates = store.search("cohorts", tenant="default", offering_id="CS101", limit=20)
     assert NullReranker().rerank("cohorts", candidates, 2) == candidates[:2]
+
+
+# --- block-level access ----------------------------------------------------
+#
+# These belong with the isolation tests above, not in a file of their own: they
+# defend the same rule one level deeper. Course isolation stops a student
+# reading another course; these stop a student reading content their own course
+# restricted to a cohort or a paid track.
+
+
+def _restricted(offering, version, name, text, tokens, i=99):
+    return [{
+        "tenant": "default", "course_id": offering, "offering_id": offering,
+        "usage_key": f"block-v1:{offering}+type@html+block@{i}", "block_id": f"b{i}",
+        "block_type": "html", "content_type": "lesson", "display_name": name,
+        "version": version, "ordinal": 0, "text": text, "group_tokens": tokens,
+    }]
+
+
+def test_unrestricted_content_reaches_a_caller_with_no_groups(store):
+    """The common case. Most blocks carry no restriction and must not need one."""
+    store.write_chunks(_rows("CS101", "v1", [("Intro", "cohorts explained simply")]))
+    store.swap("CS101", "v1")
+    hits = store.search("cohorts", tenant="default", offering_id="CS101")
+    assert len(hits) == 1
+
+
+def test_restricted_content_is_hidden_from_a_caller_without_the_group(store):
+    store.write_chunks(
+        _restricted("CS101", "v1", "Graded", "cohorts graded exam answer", ("50:2",))
+    )
+    store.swap("CS101", "v1")
+    # An audit student: enrolled, but not in the verified group.
+    assert store.search("cohorts", tenant="default", offering_id="CS101") == []
+
+
+def test_restricted_content_reaches_a_caller_holding_the_group(store):
+    """The half that a blunt index-time filter would break: a student who paid
+    must still receive the content they paid for."""
+    store.write_chunks(
+        _restricted("CS101", "v1", "Graded", "cohorts graded exam answer", ("50:2",))
+    )
+    store.swap("CS101", "v1")
+    hits = store.search(
+        "cohorts", tenant="default", offering_id="CS101",
+        group_tokens=frozenset({"50:2"}),
+    )
+    assert len(hits) == 1
+    assert hits[0].display_name == "Graded"
+
+
+def test_holding_an_unrelated_group_does_not_unlock_content(store):
+    store.write_chunks(
+        _restricted("CS101", "v1", "Graded", "cohorts graded exam answer", ("50:2",))
+    )
+    store.swap("CS101", "v1")
+    assert store.search(
+        "cohorts", tenant="default", offering_id="CS101",
+        group_tokens=frozenset({"50:1", "77:9"}),
+    ) == []
+
+
+def test_restriction_is_dropped_when_its_chunk_is(store):
+    """A stale chunk_groups row would re-restrict whatever id SQLite reuses next,
+    which is invisible until an unrelated chunk quietly stops being returned."""
+    store.write_chunks(
+        _restricted("CS101", "v1", "Graded", "cohorts graded exam answer", ("50:2",))
+    )
+    store.swap("CS101", "v1")
+    store.delete_usage_keys("CS101", ["block-v1:CS101+type@html+block@99"])
+    left = store._conn.execute("SELECT COUNT(*) FROM chunk_groups").fetchone()[0]
+    assert left == 0

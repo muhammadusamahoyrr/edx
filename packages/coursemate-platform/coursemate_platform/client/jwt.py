@@ -55,6 +55,7 @@ def mint_student_token(
     roles: list[str],
     usage_key: str | None = None,
     block_id: str | None = None,
+    group_tokens: list[str] | None = None,
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
     stream_path: str = "/coursemate/api/chat",
 ) -> TokenResponse:
@@ -78,6 +79,7 @@ def mint_student_token(
         iat=now,
         usage_key=usage_key,
         block_id=block_id,
+        group_tokens=list(group_tokens or []),
     )
     token = jwt.encode(claims.model_dump(), signing_key, algorithm=ALGORITHM)
     return TokenResponse(
