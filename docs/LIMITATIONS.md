@@ -99,7 +99,129 @@ after every filter was correct.
   is indistinguishable from "everything was unpublished"; without the cap, one
   bad modulestore read wipes the index and logs success.
 - **Import/rerun handlers deferred.** An imported course needs a manual reindex.
-- Video transcripts are recognised but transcript extraction is a stub.
+- **Video transcript extraction VERIFIED end to end**, on one video:
+
+  ```
+  _video_transcript          -> 583 chars
+  iter_course_leaves         -> 222 leaves, 1 of type video
+  reindex                    -> 222 blocks, 227 chunks, 0 failed
+  search "campus-wide deployments" -> that video chunk, score 1.000
+  ```
+
+  The query phrase appears nowhere else in DemoX, so the top hit proves the
+  answer came from the transcript rather than from an html page on the same
+  topic. Attached with `tools/verification/add_test_transcript.sh`, through
+  `edxval.api.create_or_update_video_transcript` — the same path a real upload
+  takes — not by writing a file into the media volume, which would have tested
+  the filesystem and said nothing about whether the platform can find it.
+
+- **The other 9 DemoX videos still yield nothing, and that is the course's data,
+  not our code.** Probe 7 (`docs/Probe7_Access_And_Transcripts.md`): resolver
+  found in `xmodule.video_block.transcripts_utils`, 10 published videos, **10
+  carrying a transcript pointer, 0 yielding text** before the fix above.
+  Diagnosed with `tools/verification/transcript_diagnose.sh`:
+
+  | Case | What the block has | What happens |
+  |---|---|---|
+  | 2 of 3 sampled | `edx_video_id` set, edx-val row present, **file absent from `/openedx/media/video-transcripts/`** | `FileNotFoundError` |
+  | 1 of 3 sampled | `transcripts={}`, `sub=''` | `NotFoundError` — genuinely no transcript |
+
+  The DemoX import creates edx-val transcript rows pointing at `.srt` files it
+  never ships, and `transcripts_info['sub']` is the literal string
+  `non_existent_dummy_file_name`, so the contentstore has nothing either.
+  **The code is not the problem; the course has no transcripts.** Repairing one
+  video (above) proved that, and the remaining nine are left as they are — they
+  are useful evidence of what a broken media volume looks like in the logs.
+
+- **`get_transcript` skips its own fallback on `OSError`.** It falls back to the
+  contentstore only on `NotFoundError`, so an edx-val row whose file is missing
+  raises straight out and the contentstore path is never tried. We do **not**
+  reach around that: doing so would make the tutor cite transcripts the
+  platform's own video player cannot display. It is logged at WARNING instead,
+  because a missing file is an operator-fixable storage fault, unlike an
+  unauthored transcript.
+- **A supported block yielding no text is now logged.** It was silent, which is
+  how every video block disappeared without trace: `video` is on
+  `SUPPORTED_LEAF_TYPES`, so it never reached the unsupported-type branch.
+
+---
+
+## 5.1 Block-level access — implemented, partly unverified
+
+Course-level isolation was never the whole problem. Within one course, Open edX
+restricts blocks two ways, and neither is cleared by publishing:
+
+| Restriction | Handling | Verified? |
+|---|---|---|
+| `visible_to_staff_only` | Dropped at **index time** — absolute, no student may ever see it | Logic tested; DemoX has 0 such blocks, so unexercised live |
+| `group_access` (cohorts, enrollment track) | Carried per chunk, filtered **at query time in the SQL** | **VERIFIED live, both directions** |
+
+**Live evidence** (`tools/verification/access_filter_live.sh`, against the served
+index of 226 chunks):
+
+```
+chunk 'Visible to Content Group A'  token 18587404:1819362822
+  caller WITHOUT the group: 8 hits, restricted chunk hidden = True
+  caller WITH the group   : 9 hits, restricted chunk shown  = True
+chunk 'Visible to Content Group B'  token 18587404:205150518   (same result)
+RESULT: PASS
+```
+
+Both halves are asserted on purpose. Hiding it from an unentitled caller is the
+security half; **serving it to an entitled one is the half a blunt index-time
+filter would have broken** — a student who paid must still receive what they paid
+for. A test that only checked the first would pass just as well against a filter
+that hid the content from everybody.
+
+**Why the two are handled differently.** Staff-only is absolute, so it never
+enters the index. Group restrictions are conditional — a verified-track student
+*should* receive verified-only content — so filtering them at index time would
+have protected audit students by breaking the product for the ones who paid.
+They are therefore stored in a `chunk_groups` side table and resolved against the
+caller inside the retrieval query, alongside tenant and offering (§6.3).
+
+**What is not verified**, and it is the load-bearing half:
+
+- `content_adapter.user_group_tokens` reads the caller's groups through
+  `get_all_partitions_for_course(course, active_only=True)` +
+  `get_user_partition_groups(course_key, partitions, user, "id")` — the exact
+  pair `UserPartitionTransformer` uses, so our filter agrees with courseware
+  rather than approximating it. **VERIFIED live** (probe 7): returns `('50:1',)`
+  for `admin` against two active partitions — `50 Enrollment Track Groups`
+  (scheme `enrollment_track`) and `18587404 Content Groups` (scheme `cohort`).
+  The `_django_user` resolution works. It fails closed — any error yields no
+  groups, so the caller sees unrestricted content only.
+- **VERIFIED live: enrollment-track membership does surface through this path**,
+  as partition 50. The open question is narrower than it was — whether a *block*
+  restricted to a paid track carries partition 50 in `group_access`, which DemoX
+  cannot answer because its 2 restricted blocks are both cohort-restricted
+  (partition 18587404), not track-restricted.
+- **Course staff are not exempt.** `admin` holds no content-group token, so the
+  filter hides both cohort-restricted blocks from them. Courseware grants staff
+  a bypass through a separate access layer that this filter does not consult.
+  Fail-closed and harmless for students; surprising for staff.
+- **`PartitionService.get_user_group_id_for_partition` must not be used here.**
+  It assigns and *persists* a group when the user has none, so calling it per
+  mint would enroll students into split-test experiment groups as a side effect
+  of opening the tutor. An earlier draft of this code did exactly that.
+- **The transcript resolver moved between releases** —
+  `xmodule.video_block.transcripts_utils` through Sumac,
+  `openedx.core.djangoapps.video_config.transcripts_utils` after. Both are tried,
+  because a hard import of either raises at Celery startup on the other, which is
+  a dead worker rather than a missing feature. `get_transcript` confirmed to
+  return `(content, filename, mimetype)` and to try edx-val before contentstore.
+- Whether enrollment-track (paid) gating actually surfaces in `group_access`
+  rather than being applied at render time. If it is render-time only, the audit
+  case is still open. Cross-check: read `group_access` via the modulestore and
+  compare against the Block Structure API called as an audit user.
+- `XBlockUser` → Django user resolution in `tutor_block._group_tokens` uses
+  `_django_user`, which is private platform API.
+
+**Group membership is the one claim taken from the token rather than
+re-derived**, because re-deriving it service-side would mean hard-coding
+partition and group ids that are per-instance configuration. Staleness is bounded
+by the token TTL (5 minutes) and there is no revocation event for it, unlike
+enrollment — which is still re-derived per call and still fails closed.
 
 ---
 
@@ -110,6 +232,7 @@ after every filter was correct.
 | **Feature B — exam prep** | Contracts only. No storage, extraction, CLO tagging, or UI |
 | **Instructor loop** | Proposal queue schema exists, dormant. No struggle signals, review UI, or notifications |
 | **XBlockAside** | Tutor must be added per-unit by hand. The aside would auto-attach, filtered to `vertical` |
+| Instructor-visible opt-in state | `coursemate_reindex --all` now indexes only courses carrying the tutor block, matching what the sweep already required. There is no UI showing an admin which courses opted in — `--all` prints the counts and nothing else |
 | Socratic mode | Prompt written, never evaluated |
 | Query rewriting | Not built — *"that algorithm from week 4"* will retrieve poorly |
 | Cross-encoder reranking | Lexical reranker only |

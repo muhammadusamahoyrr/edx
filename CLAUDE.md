@@ -23,6 +23,10 @@ wrong; the system wins.
 | Package in all 4 containers | Real pip installs | `tools/ops/check_install.sh` |
 | Celery tasks registered | Yes, in both workers | `tools/ops/check_tasks.sh` |
 | `coursemate-beat` container | **UNVERIFIED — never started** | `docker ps -a \| grep beat` |
+| Video transcripts | **VERIFIED end to end** on 1 video (583 chars, retrieved at score 1.000). The other 9 DemoX videos have edx-val rows with missing files | `tools/verification/add_test_transcript.sh` |
+| Block-level access filter | **VERIFIED live end to end** — 2 restricted chunks hidden from a caller without the group, served to one with it | `tools/verification/access_filter_live.sh` |
+| DemoX index | **227 chunks active, 222 blocks** (incl. 1 video), 2 carrying group tokens | `tools/ops/store_dump.sh` |
+| Opt-in (`--all`) | **VERIFIED** — `course_has_tutor()` True on DemoX | `access_probe.sh` §E |
 | openedx image rebuild | Was running 2026-07-31, hours long | `pgrep -f "tutor images build"` |
 
 **In flight when this was written:** an openedx image rebuild, so the beat
@@ -118,6 +122,11 @@ Do not break these without saying so explicitly:
    inside LMS/CMS startup for every course on the instance.
 5. `tasks/__init__.py` must import every task module. An empty one registers
    nothing.
+6. Staff-only content is dropped at ingest; cohort/track restrictions are
+   **carried and filtered at query time**. Filtering the second kind at ingest
+   would hide paid content from the students who paid for it.
+7. Indexing is opt-in: a course qualifies by containing the tutor block.
+   `--force-all` exists and says what it is doing.
 
 The six import-linter contracts in `.importlinter` enforce the structural half of
 this and do fail when violated.
