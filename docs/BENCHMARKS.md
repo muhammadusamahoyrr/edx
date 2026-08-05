@@ -135,6 +135,56 @@ so revocation takes effect; cache keyed per user *and* offering.
 
 ---
 
+## 3.5 The paraphrase arm — added 2026-08-05
+
+The original 18 questions could no longer measure anything. recall@3 = 1.000, not
+because retrieval is excellent but because the questions were written while
+looking at the corpus and inherited its vocabulary. A gold set that asks *"what
+are XBlocks?"* of a lesson titled **XBlocks** is testing string matching.
+
+Ten paraphrase questions were added, each asking for the same content in words
+the lesson does not use. Run against the live index
+(`tools/verification/paraphrase_gap.sh`):
+
+| Arm | n | recall@1 | recall@3 |
+|---|---|---|---|
+| Original — question shares the lesson's words | 12 | 0.750 | **1.000** |
+| Paraphrase — question deliberately avoids them | 10 | 0.200 | **0.300** |
+
+**recall@3 falls from 1.000 to 0.300.** That is the number LIMITATIONS §1 has
+been asserting in prose since the beginning; it is now measured, and it is the
+baseline any semantic retriever has to beat.
+
+### The finding that matters more than the recall drop
+
+Look at the scores on the misses, against `confidence_threshold = 0.35`:
+
+```
+MISS p05  wanted [Content Libraries]
+          got    [How do discussions work?, ...]        top 0.386   <-- ABOVE TAU
+MISS p10  wanted [ORA, Assessments Summary]
+          got    [How do discussions work?, ...]        top 0.475   <-- ABOVE TAU
+```
+
+**2 of 10 are answered rather than abstained**, from the wrong lesson, with a
+confident score. The confidence gate catches a *weak* match — it does not catch a
+*confident match on the wrong content*. Those two questions produce a grounded,
+cited, plausible answer drawn from a lesson that does not address the question.
+
+This is a different failure from the one §8.5 was designed against, and it is
+worse: abstention is visible to the student, a confidently wrong citation is not.
+The claim verifier (§3.2 of LIMITATIONS) will mark sentences the retrieved text
+does not support, which narrows the blast radius, but it cannot help when the
+*retrieval itself* is confidently wrong — the answer will be faithfully grounded
+in the wrong lesson.
+
+**What this does not say.** Ten questions, one course, one author. It establishes
+that the gap is real and roughly how large; it does not establish that embeddings
+close it. That is the next measurement, and it now has something to be measured
+against.
+
+---
+
 ## 4. Bugs the benchmark found
 
 The benchmark's value was not the numbers. It was these.

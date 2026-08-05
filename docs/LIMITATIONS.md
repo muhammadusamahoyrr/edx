@@ -14,10 +14,19 @@ Semantic retrieval was the design's plan (§6.1). It was not built because it ne
 an embedding provider and none was configured — and shipping the lexical half is
 what §6.1 anticipates as one of the two retrievers in a hybrid.
 
-**Why the benchmark cannot currently show this.** recall@3 = 1.000 on the gold
-set, because the questions share vocabulary with the lessons that answer them.
-The gold set needs paraphrase questions before embeddings can be justified by
-measurement rather than by argument.
+**Now measured, not argued.** A paraphrase arm was added to the gold set on
+2026-08-05 — ten questions asking for the same content in words the lessons do
+not use. Against the live index:
+
+| Arm | n | recall@1 | recall@3 |
+|---|---|---|---|
+| Original (shares the lesson's words) | 12 | 0.750 | **1.000** |
+| Paraphrase (avoids them) | 10 | 0.200 | **0.300** |
+
+And the sharper finding: **2 of the 10 score ABOVE the confidence threshold while
+retrieving the wrong lesson**, so they are answered rather than abstained. The
+gate catches a weak match; it does not catch a confident match on wrong content.
+See BENCHMARKS §3.5.
 
 **Next:** add an embedding retriever *alongside* BM25 and merge — not replace.
 Lexical keeps exact technical terms that embeddings blur.

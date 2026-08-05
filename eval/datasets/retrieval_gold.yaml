@@ -113,3 +113,84 @@ questions:
     question: "What is the pricing model for enterprise course licensing?"
     expect: []
     covered: false
+
+  # --- PARAPHRASE SET: the same content, asked in the student's words -------
+  #
+  # Added 2026-08-05, and the reason is that the original 18 could no longer
+  # measure anything. recall@3 = 1.000 on them, not because retrieval is
+  # excellent but because the questions were written while looking at the
+  # corpus and inherited its vocabulary. A gold set that only asks "what are
+  # XBlocks?" of a lesson titled "XBlocks" tests string matching.
+  #
+  # Every question below deliberately AVOIDS the words the lesson uses, while
+  # asking for the same thing a real student would want. That is the exact case
+  # LIMITATIONS.md §1 names -- "what causes processes to hang forever?" will not
+  # find a lesson that only says "deadlock" -- and until these existed there was
+  # no way to justify embeddings by measurement rather than by argument.
+  #
+  # Expect these to score WORSE than q01-q12. That is the point: the number they
+  # produce is the baseline a semantic retriever has to beat, and without a
+  # baseline "we added embeddings and it felt better" is not a result.
+  #
+  # `paraphrase: true` so the harness can report them as their own arm rather
+  # than averaging the weakness away against the easy questions.
+
+  - id: p01
+    question: "What helps deaf learners follow along with a recorded lecture?"
+    expect: ["Transcripts", "Best Practices & Generating SRT Files"]
+    covered: true
+    paraphrase: true    # avoids: transcript, video, caption
+
+  - id: p02
+    question: "How do I split my class so different students see different material?"
+    expect: ["Setting up Cohorts", "Content groups", "Conditional Content"]
+    covered: true
+    paraphrase: true    # avoids: cohort, group configuration
+
+  - id: p03
+    question: "Can students form their own study circles inside the course?"
+    expect: ["Teams"]
+    covered: true
+    paraphrase: true    # avoids: team, small group, collaboration
+
+  - id: p04
+    question: "How do people add new kinds of interactive components to the platform?"
+    expect: ["XBlocks", "Contribute"]
+    covered: true
+    paraphrase: true    # avoids: XBlock, architecture, extension
+
+  - id: p05
+    question: "How can I give each student a different question from a shared pool?"
+    expect: ["Content Libraries"]
+    covered: true
+    paraphrase: true    # avoids: library, randomized
+
+  - id: p06
+    question: "How do I keep a section hidden until someone passes the one before it?"
+    expect: ["Conditional Content"]
+    covered: true
+    paraphrase: true    # avoids: conditional, prerequisite, gating
+
+  - id: p07
+    question: "Where can I see everything in the class at a glance and how far I have got?"
+    expect: ["Course Outline"]
+    covered: true
+    paraphrase: true    # avoids: outline, progress bar
+
+  - id: p08
+    question: "How can I give back to the project if I am not a programmer?"
+    expect: ["Contribute"]
+    covered: true
+    paraphrase: true    # avoids: contribute, open source community
+
+  - id: p09
+    question: "How do I let the class pick a favourite option and then show the tally?"
+    expect: ["Polls"]
+    covered: true
+    paraphrase: true    # avoids: poll, vote, survey
+
+  - id: p10
+    question: "How can students mark each other's written work?"
+    expect: ["ORA", "Assessments Summary"]
+    covered: true
+    paraphrase: true    # avoids: open response assessment, peer grading, rubric
