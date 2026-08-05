@@ -85,16 +85,27 @@ after every filter was correct.
   sweep course-v1:OpenedX+DemoX+DemoCourse: live=222 indexed=222 orphans=0
   ```
 
-- **The `coursemate-beat` container in the Tutor plugin cannot start today, and
-  that is a real gap rather than an untested one.** Verified: the deployed
-  openedx image is stock `overhangio/openedx:21.0.8-indigo` with **no
-  `coursemate_platform` installed**, and the container has never been created.
-  Beat started from it would find no schedule entry and schedule nothing,
-  silently. The fix is the image rebuild the Tutor plugin patch already
-  describes; until then the nightly sweep must be driven by cron or by hand.
-  The probe above sidesteps the rebuild by layering a `pip install` onto the
-  stock image, which proves the *runtime* half but not that
-  `tutor images build openedx` produces the same result. There is still **no unpublish event** in
+- **RESOLVED 2026-08-05: the `coursemate-beat` container now runs.** The openedx
+  image was rebuilt with the plugin baked in (29 minutes, not the hours the notes
+  predicted — buildx had a warm cache). The container starts, loads
+  `crontab: 30 3 * * *` from plugin settings, and was observed dispatching
+  `reconcile_all` to a worker that executed it. `beat_container_probe.sh` is the
+  production-path proof; `beat_probe_derived.sh` remains as the no-rebuild route.
+
+- **Environment caveat, and it is a real one:** the Docker daemon in this WSL
+  distro restart-loops every ~2–3 minutes (dockerd uptime resets while the distro
+  stays up for hours and memory is idle). Every container cycles with it. Work
+  observed completing is still real — restarts happen between operations — but
+  **an unattended nightly job cannot be called dependable on this host.** Beat
+  re-reads its persistent schedule on restart, so 03:30 would still fire; that is
+  a property of the scheduler, not evidence the host is stable.
+
+- *(Historical, resolved above: the deployed image was stock, so beat would have
+  found no schedule entry and scheduled nothing — silently, since an empty
+  schedule is not an error. Recorded because it is the exact shape of failure
+  this project keeps finding: a green path that does nothing.)*
+
+- There is still **no unpublish event** in
   `openedx-events`, so the sweep remains the only mechanism that can detect
   unpublished content, and a window therefore remains: between an unpublish and
   the next sweep, the tutor can still cite content students can no longer see.
