@@ -7,7 +7,8 @@ course's published content, cites the lesson each answer came from, and abstains
 when the course doesn't cover the question rather than improvising from a model's
 general knowledge.
 
-Built against a real Open edX **Ulmo** instance with the 413-block demo course.
+Built and verified against a real Open edX **Ulmo** instance — two courses,
+282 indexed chunks, a live Celery worker and a nightly sweep container.
 
 ---
 
@@ -19,6 +20,10 @@ Built against a real Open edX **Ulmo** instance with the 413-block demo course.
 | **Cited** | Every answer links back to the lesson block it came from |
 | **Abstains** | Below a confidence threshold it says *"that doesn't appear to be covered in this course"* — in **3 ms**, before any model call |
 | **Authorised** | Enrollment is re-derived from Open edX on every request; a valid token is not sufficient |
+| **Access-aware** | Staff-only blocks never enter the index; cohort- and paid-track blocks are filtered per caller **inside the SQL**, so unauthorised content is never even a candidate |
+| **Marks what it cannot support** | Sentences the retrieved material does not back are flagged in the answer, never silently rewritten |
+| **Reads video** | Transcripts resolved through the platform's own resolver, which handles both storage paths Open edX uses |
+| **Opt-in** | A course is indexed only if its staff added the tutor block. `--all` skips the rest and says how many |
 | **Non-invasive** | No core Open edX changes, no fork. Installs as a plugin |
 
 ### The load-bearing architectural decision
@@ -66,11 +71,10 @@ student cannot tell a fabricated answer from a real one.
 
 ## Results
 
-Measured on the Open edX demo course (231 indexed chunks, `qwen2.5:7b` via Ollama).
+Measured against the live stack, `qwen2.5:7b` via Ollama.
 
 | | |
 |---|---|
-| recall@3 / recall@5 | **1.000** / 1.000 |
 | MRR | 0.833 |
 | Retrieval latency p95 | **12 ms** |
 | False-answer rate (answered when it should abstain) | **0.000** |
@@ -78,8 +82,55 @@ Measured on the Open edX demo course (231 indexed chunks, `qwen2.5:7b` via Ollam
 | Citation correctness | 1.000 |
 | Authorization matrix | **4/4 pass** |
 
-Full methodology, the reranker A/B, and the bugs these numbers exposed:
+### Retrieval, and why one number is not enough
+
+The original gold set scores **recall@3 = 1.000** — which says less than it
+looks like. Those questions were written while reading the corpus, so they
+inherited its vocabulary. Asking *"what are XBlocks?"* of a lesson titled
+**XBlocks** measures string matching.
+
+So a second arm was added: the same content, asked in words the lessons do not
+use.
+
+| Arm | n | recall@1 | recall@3 |
+|---|---|---|---|
+| Original — shares the lesson's words | 12 | 0.750 | **1.000** |
+| Paraphrase — deliberately avoids them | 10 | 0.200 | **0.300** |
+
+**And the part that matters more than the drop:** two of the ten paraphrase
+questions retrieve the *wrong* lesson at a score **above** the confidence
+threshold — so they are answered rather than abstained. The gate catches a weak
+match; it does not catch a confident match on wrong content. That failure is
+invisible to a student, because the answer is fluent, cited, and grounded — in
+the wrong lesson.
+
+This is the honest state of lexical-only retrieval, and it is the baseline
+semantic retrieval has to beat.
+
+Full methodology, the reranker A/B, and the bugs measurement exposed:
 [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
+
+---
+
+## What measurement found that review did not
+
+Every one of these passed code review and returned success while being wrong.
+They are listed because they are the strongest argument for how this was built,
+not in spite of being embarrassing.
+
+| Defect | Why it survived |
+|---|---|
+| The confidence gate **could never fire** | `score = raw / best` makes the top hit exactly 1.0 for every query. The gate existed, had tests, and was structurally incapable of triggering. |
+| A 226-block course **served 26 blocks** | Each ingest batch swapped itself in and deactivated its predecessors. Nothing failed; the content silently vanished. |
+| Celery **discarded every task** while Publish returned 200 | The package was `docker cp`'d, so pip installed no dist-info, so the entry point was absent, so the app never reached `INSTALLED_APPS`. Only visible in a worker log. |
+| The enqueued reindex **activated nothing** | It never sent `is_final`, so the swap never ran. It reported `indexed == total`, because that counts what the service accepted, not what went live. Found only when a second course made the totals stop matching. |
+| A partition lookup was **a write, not a read** | Its docstring says it assigns a group and *persists* that decision. Called per token mint, it would have enrolled students into A/B experiment groups for opening the chat box. Caught by reading the platform source rather than trusting the function name. |
+| A frame type the UI rendered and **nothing ever emitted** | `UNSUPPORTED_CLAIM` shipped in the contract, was handled in the browser, and had no producer — so the documented check did not exist. |
+
+The common shape: **the failure path returned success.** That is why the probes
+in [`tools/verification/`](tools/verification/) assert on what a user would
+check, and why every "empty" result in them is disambiguated — a control that
+fails closed hides its own failure.
 
 ---
 
@@ -97,10 +148,19 @@ tutor config save
 docker build -f deploy/Dockerfile.deps    -t coursemate/deps:1      .
 docker build -f deploy/Dockerfile.service -t coursemate/service:0.1.0 .
 
-# 3. start, then index a course
+# 3. bake the plugin INTO the Open edX image -- not optional
+#    `docker cp` puts code on sys.path but installs no dist-info, so pip's
+#    cms.djangoapp entry point is absent, the app never reaches INSTALLED_APPS,
+#    Celery autodiscovers nothing, and every enqueued task is discarded while
+#    Studio's Publish button still returns 200.
+rsync -a packages "$(tutor config printroot)/env/build/openedx/coursemate/"
+tutor config save && tutor images build openedx     # ~30 min with a warm cache
+
+# 4. start, migrate, index
 tutor local start -d
+tutor local run cms ./manage.py cms migrate coursemate_platform
 tutor local run cms ./manage.py cms coursemate_reindex \
-    --course course-v1:YourOrg+Course+Run --inline
+--course course-v1:YourOrg+Course+Run --inline
 ```
 
 Add `coursemate_tutor` to the course's Advanced Module List, drop the block into
@@ -127,7 +187,7 @@ a unit, publish. Full walkthrough: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ```bash
 make install     # venv + editable installs
-make check       # architecture contracts + 66 tests, no Open edX required
+make check       # architecture contracts + 127 tests, no Open edX required
 ```
 
 Tests are self-contained — a clean checkout runs green with no environment setup.
@@ -157,9 +217,33 @@ that cannot fail is decoration.
 
 ## Status
 
-Working end to end and measured. **Not production-deployed.** The honest list of
-what is missing — semantic retrieval, hosted inference, Feature B, the instructor
-loop — is in [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) rather than omitted here.
+**Runs end to end on a live Open edX Ulmo stack, and is measured. Not published,
+not production-deployed.**
+
+| | |
+|---|---|
+| Verified working | Ingestion on publish, bootstrap, nightly sweep, video transcripts, retrieval, citations, abstention, enrollment re-derivation, block-level access, claim marking, two-course isolation |
+| Runs on | Tutor 21.0.8 / Open edX Ulmo, single node |
+| Not tried on | Other releases, Kubernetes, Learning Core, multiple replicas |
+| Not installable yet | Nothing is on PyPI or a public registry — this is a clone-and-build repo |
+
+**Known gaps, in the order they would be fixed** — the full list with reasons is
+in [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md), which is deliberately harsher
+than this section:
+
+1. **Retrieval is lexical only.** Measured cost: recall@3 falls from 1.000 to
+   0.300 on paraphrased questions, and two of ten are answered confidently from
+   the wrong lesson.
+2. **No hosted model provider has ever been exercised.** Retries, cooldowns and
+   cross-vendor failover are implemented and untested against a real outage.
+3. **One service replica only.** Rate limiting, the authz cache and LiteLLM
+   cooldowns are shared through Redis; the SQLite index is still a local file.
+4. **Feature B (exam prep) is data shapes only** — cut deliberately, against a
+   list written in week one so the decision was not made under deadline.
+
+The evaluation is 22 covered questions on two courses, scored by one person who
+also wrote the retriever. It is indicative, not settled, and it is reported that
+way throughout.
 
 ## License
 

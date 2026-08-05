@@ -15,7 +15,8 @@ a student cannot distinguish a fabricated answer from a real one.
 **CourseMate answers only from the course it lives in, cites the lesson, and
 abstains when the course doesn't cover the question.**
 
-Built on Open edX Ulmo, verified against the 413-block demo course.
+Built on Open edX Ulmo, verified against two courses — 282 indexed chunks — on a
+live stack with a Celery worker and a nightly sweep container.
 
 ---
 
