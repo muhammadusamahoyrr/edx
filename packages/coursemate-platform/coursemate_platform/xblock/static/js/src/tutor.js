@@ -31,7 +31,8 @@ function CourseMateTutor(runtime, element, initArgs) {
     preparing: "This course is still being prepared — please try again shortly.",
     unavailable: "The tutor is unavailable right now.",
     rate_limited: "Too many questions just now — give it a moment.",
-    not_enrolled: "You don't have access to this course's tutor."
+    not_enrolled: "You don't have access to this course's tutor.",
+    truncated: "That answer was cut short. Try asking for a smaller piece of it."
   };
 
   function el(tag, cls, text) {
@@ -214,6 +215,10 @@ function CourseMateTutor(runtime, element, initArgs) {
               showNotice(frame.error_code || "unavailable");
               break;
             case "done":
+              // A cut-off answer looks identical to a complete one — it just
+              // stops, and the student reads that as the tutor not knowing the
+              // rest. Say which it was.
+              if (frame.truncated) { showNotice("truncated"); }
               break;
           }
         }).then(function () {

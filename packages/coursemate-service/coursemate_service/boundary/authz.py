@@ -26,6 +26,7 @@ This module closes that. Two properties make it safe to put in the request path:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -33,6 +34,7 @@ from dataclasses import dataclass
 import httpx
 
 from ..config import settings
+from .. import shared_state
 
 log = logging.getLogger(__name__)
 
@@ -73,17 +75,49 @@ class EnrollmentVerifier:
         Called by the LMS-side unenrollment receiver (§3.4 rule 4) so revocation
         takes effect immediately rather than waiting out the TTL.
         """
+        # Local first: always, even when Redis is in use, because this process
+        # may have served from its own dict during a Redis outage.
         if user_id is None and offering_id is None:
-            n = len(self._cache)
+            dropped = len(self._cache)
             self._cache.clear()
-            return n
-        doomed = [
-            k for k in self._cache
-            if (user_id is None or k[0] == user_id) and (offering_id is None or k[1] == offering_id)
-        ]
-        for k in doomed:
-            self._cache.pop(k, None)
-        return len(doomed)
+        else:
+            doomed = [
+                k for k in self._cache
+                if (user_id is None or k[0] == user_id)
+                and (offering_id is None or k[1] == offering_id)
+            ]
+            for k in doomed:
+                self._cache.pop(k, None)
+            dropped = len(doomed)
+
+        client = shared_state.get_redis()
+        if client is None:
+            return dropped
+
+        # SCAN, not KEYS: KEYS blocks the whole Redis instance, and this one is
+        # also Celery's broker for the entire Open edX deployment.
+        pattern = f"cm:authz:{user_id or '*'}:{offering_id or '*'}"
+        try:
+            batch: list[str] = []
+            for key in client.scan_iter(match=pattern, count=500):
+                batch.append(key)
+                if len(batch) >= 500:
+                    dropped += client.delete(*batch)
+                    batch = []
+            if batch:
+                dropped += client.delete(*batch)
+        except Exception as exc:  # noqa: BLE001
+            # Loud, because this one matters: a failed invalidation means a
+            # revoked student keeps working until the TTL expires. Bounded at
+            # authz_cache_ttl_seconds rather than unbounded, but not immediate,
+            # which is the whole point of the notice.
+            log.error(
+                "coursemate: authz invalidation could not reach redis (%s); "
+                "revocation for user=%s offering=%s now waits out the %ss TTL",
+                type(exc).__name__, user_id, offering_id,
+                settings.authz_cache_ttl_seconds,
+            )
+        return dropped
 
     # --- platform credential ------------------------------------------------
 
@@ -169,14 +203,71 @@ class EnrollmentVerifier:
             checked_at=time.time(),
         )
 
+    # --- shared cache -------------------------------------------------------
+    #
+    # Redis when configured, per-process otherwise. The per-process version was
+    # not merely a scaling limit: `invalidate()` is a SECURITY control — the LMS
+    # unenrollment receiver calls it so a revoked student stops working
+    # immediately rather than waiting out the TTL — and with several replicas it
+    # cleared one dictionary while the others kept serving the old answer. The
+    # notice returned 200 and the student kept their access.
+
+    def _redis_key(self, user_id: str, offering_id: str) -> str:
+        return f"cm:authz:{user_id}:{offering_id}"
+
+    def _cache_get(self, user_id: str, offering_id: str) -> Entitlement | None:
+        client = shared_state.get_redis()
+        if client is None:
+            cached = self._cache.get(self._key(user_id, offering_id))
+            if cached is not None and cached.age < settings.authz_cache_ttl_seconds:
+                return cached
+            return None
+        try:
+            raw = client.get(self._redis_key(user_id, offering_id))
+        except Exception as exc:  # noqa: BLE001
+            # A cache miss, not a denial. Redis is an optimisation here; the
+            # platform remains the source of truth and is about to be asked.
+            # Failing closed on a cache outage would deny entitled students
+            # while proving nothing about anyone's enrollment.
+            shared_state.redis_failed("authz cache read", exc)
+            return None
+        if not raw:
+            return None
+        try:
+            d = json.loads(raw)
+            return Entitlement(
+                enrolled=bool(d["enrolled"]),
+                is_staff=bool(d["is_staff"]),
+                checked_at=float(d["checked_at"]),
+            )
+        except Exception:  # noqa: BLE001 - a corrupt entry is a miss, never a grant
+            return None
+
+    def _cache_put(self, user_id: str, offering_id: str, ent: Entitlement) -> None:
+        client = shared_state.get_redis()
+        if client is None:
+            self._cache[self._key(user_id, offering_id)] = ent
+            return
+        try:
+            client.setex(
+                self._redis_key(user_id, offering_id),
+                settings.authz_cache_ttl_seconds,
+                json.dumps({
+                    "enrolled": ent.enrolled,
+                    "is_staff": ent.is_staff,
+                    "checked_at": ent.checked_at,
+                }),
+            )
+        except Exception as exc:  # noqa: BLE001
+            shared_state.redis_failed("authz cache write", exc)
+
     def verify(self, user_id: str, offering_id: str) -> Entitlement:
-        key = self._key(user_id, offering_id)
-        cached = self._cache.get(key)
-        if cached is not None and cached.age < settings.authz_cache_ttl_seconds:
+        cached = self._cache_get(user_id, offering_id)
+        if cached is not None:
             return cached
 
         entitlement = self._ask_platform(user_id, offering_id)
-        self._cache[key] = entitlement
+        self._cache_put(user_id, offering_id, entitlement)
         return entitlement
 
     def require_enrolled(self, user_id: str, offering_id: str) -> Entitlement:

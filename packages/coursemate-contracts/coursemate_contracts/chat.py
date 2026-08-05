@@ -80,6 +80,14 @@ class StreamFrame(BaseModel):
     error_code: ErrorCode | None = None
     #: Which provider answered, for the trace (§11.4).
     provider: str | None = None
+    #: Set on DONE when the model stopped because it hit `max_output_tokens`
+    #: rather than because it had finished.
+    #:
+    #: A truncated answer is indistinguishable from a complete one to the student
+    #: who reads it — it simply appears to stop being helpful, and the natural
+    #: reading is that the tutor did not know the rest. Saying so costs one flag
+    #: and turns a silent quality failure into a visible, explainable one.
+    truncated: bool = False
 
 
 class PersistTurnRequest(BaseModel):

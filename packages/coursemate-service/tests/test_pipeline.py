@@ -40,12 +40,28 @@ async def test_no_provider_configured_reports_unavailable(monkeypatch):
     service. The student is told; the platform is untouched."""
     from coursemate_service.ai import client, pipeline as pl
 
+    from coursemate_contracts.chat import Citation
+    from coursemate_service.ai.context import ContextChunk, ContextResult
+
     client.reset_router()
     monkeypatch.setattr(client.settings, "strong_model", "")
     monkeypatch.setattr(client.settings, "cheap_model", "")
     monkeypatch.setattr(client.settings, "fallback_model", None)
 
-    frames = await _collect(pl.AnswerPipeline(), ChatRequest(question="hi"))
+    # Grounded context on purpose. Since `require_grounding` defaults True, an
+    # empty index is reported as `preparing` BEFORE the provider is consulted —
+    # which is the correct order (we would never have called a model with
+    # nothing to ground on, so "still being prepared" is both more specific and
+    # more actionable than "unavailable"). To reach the no-provider path at all,
+    # retrieval has to succeed first.
+    class _Grounded:
+        async def fetch(self, question, claims):  # noqa: ARG002
+            return ContextResult(
+                chunks=[ContextChunk(text="t", citation=Citation(usage_key="u"), score=0.9)],
+                top_score=0.9,
+            )
+
+    frames = await _collect(pl.AnswerPipeline(_Grounded()), ChatRequest(question="hi"))
     assert frames[-1].type == FrameType.ERROR
     assert frames[-1].error_code == ErrorCode.UNAVAILABLE
     client.reset_router()
@@ -156,3 +172,85 @@ def test_socratic_mode_does_not_relax_grounding():
     system = msgs[0]["content"].lower()
     assert "cite" in system
     assert "only" in system
+
+
+@pytest.mark.asyncio
+async def test_truncated_answer_is_reported_as_truncated(monkeypatch):
+    """A cut-off answer is indistinguishable from a complete one to the student.
+
+    It simply stops, and the natural reading is that the tutor did not know the
+    rest — a quality failure that looks like an answer, which is the shape this
+    project keeps finding.
+    """
+    from coursemate_contracts.chat import Citation
+    from coursemate_service.ai import client, pipeline as pl
+    from coursemate_service.ai.context import ContextChunk, ContextResult
+
+    class _Grounded:
+        async def fetch(self, question, claims):  # noqa: ARG002
+            return ContextResult(
+                chunks=[ContextChunk(text="t", citation=Citation(usage_key="u"), score=0.9)],
+                top_score=0.9,
+            )
+
+    class _Chunk:
+        def __init__(self, text, finish):
+            self.choices = [type("C", (), {
+                "delta": type("D", (), {"content": text})(),
+                "finish_reason": finish,
+            })()]
+            self.model = "test-model"
+
+    async def _stream():
+        yield _Chunk("half an ans", None)
+        yield _Chunk("wer", "length")          # provider says: hit the cap
+
+    class _Router:
+        async def acompletion(self, **kw):  # noqa: ARG002
+            return _stream()
+
+    client.reset_router()
+    monkeypatch.setattr(client, "get_router", lambda: _Router())
+    monkeypatch.setattr(pl, "get_router", lambda: _Router())
+
+    frames = await _collect(pl.AnswerPipeline(_Grounded()), ChatRequest(question="hi"))
+    done = frames[-1]
+    assert done.type == FrameType.DONE
+    assert done.truncated is True, "truncation was silent"
+    client.reset_router()
+
+
+@pytest.mark.asyncio
+async def test_complete_answer_is_not_flagged_truncated(monkeypatch):
+    """The control arm: `stop` must not be reported as a cut-off."""
+    from coursemate_contracts.chat import Citation
+    from coursemate_service.ai import client, pipeline as pl
+    from coursemate_service.ai.context import ContextChunk, ContextResult
+
+    class _Grounded:
+        async def fetch(self, question, claims):  # noqa: ARG002
+            return ContextResult(
+                chunks=[ContextChunk(text="t", citation=Citation(usage_key="u"), score=0.9)],
+                top_score=0.9,
+            )
+
+    class _Chunk:
+        def __init__(self, text, finish):
+            self.choices = [type("C", (), {
+                "delta": type("D", (), {"content": text})(),
+                "finish_reason": finish,
+            })()]
+            self.model = "test-model"
+
+    async def _stream():
+        yield _Chunk("a full answer", "stop")
+
+    class _Router:
+        async def acompletion(self, **kw):  # noqa: ARG002
+            return _stream()
+
+    client.reset_router()
+    monkeypatch.setattr(pl, "get_router", lambda: _Router())
+    frames = await _collect(pl.AnswerPipeline(_Grounded()), ChatRequest(question="hi"))
+    assert frames[-1].truncated is False
+    client.reset_router()

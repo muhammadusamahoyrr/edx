@@ -49,6 +49,8 @@ wrong; the system wins.
 | Block-level access filter | **VERIFIED live end to end** — 2 restricted chunks hidden from a caller without the group, served to one with it | `tools/verification/access_filter_live.sh` |
 | DemoX index | **227 chunks active, 222 blocks** (incl. 1 video), 2 carrying group tokens | `tools/ops/store_dump.sh` |
 | Opt-in (`--all`) | **VERIFIED** — `course_has_tutor()` True on DemoX | `access_probe.sh` §E |
+| Shared state (rate limit, authz, LiteLLM cooldowns) | **Redis db1, VERIFIED live** — 2 limiters, one budget | `tools/ops/deploy_shared_state.sh` |
+| `require_grounding` | **True by default now** (was False — the gate was opt-in) | `docker exec ...coursemate-1 python -c` |
 | Docker daemon stability | **RESTART-LOOPING** every ~2-3 min — see the warning above | `ps -eo etime,cmd \| grep dockerd` |
 
 **Done 2026-08-05:** the openedx image was rebuilt with the plugin baked in, all
@@ -97,7 +99,7 @@ upstream `edX+DemoX+Demo_Course`).
 
 ## Tests
 
-    make check        # 105 tests + 6 import-linter contracts
+    make check        # 112 tests + 6 import-linter contracts
 
 Runs on Windows against `.venv/`. No Open edX, no network, no containers.
 

@@ -36,14 +36,27 @@ config:
     STRONG_MODEL: "anthropic/claude-opus-5"
     CHEAP_MODEL: "anthropic/claude-haiku-4-5-20251001"
     MODEL_API_KEY: ""
+    # A DIFFERENT vendor from STRONG_MODEL. A second model from the same
+    # provider does not survive that provider's outage, which is the only thing
+    # a fallback is for. Empty by default because guessing a vendor for someone
+    # is worse than leaving it explicit -- but an empty value means the DEGRADED
+    # frame can never fire and there is no failover at all.
     FALLBACK_MODEL: ""
     FALLBACK_API_KEY: ""
+    # Shared state across replicas: rate limit, authz cache, LiteLLM cooldowns.
+    # Points at the Redis every Tutor deployment already runs for Celery, so it
+    # costs no new infrastructure. Empty falls back to per-process state, which
+    # is correct for one replica and silently wrong for two.
+    REDIS_URL: "redis://redis:6379/1"
     # Development only: returns a canned answer through the real Router without
     # calling a provider. Must be empty in production.
     MOCK_RESPONSE: ""
-    # Flip to true once retrieval lands (Phase 6). Until then the tutor would
-    # correctly abstain on every question, since it cannot yet read the course.
-    REQUIRE_GROUNDING: false
+    # Retrieval landed in Phase 6, so this is true by default. It gates the
+    # confidence gate, ABSTAINED and PREPARING — with it false a fresh install
+    # answers from the model's own knowledge instead of the course, which is the
+    # one behaviour this project exists to prevent. Turn it off only to debug
+    # retrieval, never on an instance serving students.
+    REQUIRE_GROUNDING: true
     # Open edX owns enrollment; the boundary re-derives it per call (§10.1).
     LMS_URL: "http://lms:8000"
     ENFORCE_ENROLLMENT: true
@@ -57,7 +70,12 @@ config:
     # made the primary. Raised so a local model is usable for development.
     MODEL_TIMEOUT_SECONDS: 300
     RERANK_TOP_K: 3
-    MAX_OUTPUT_TOKENS: 250
+    # Matches the service default. 250 was set for a CPU-bound local model and
+    # then drifted to 200 in config.yml, which truncated answers mid-sentence
+    # with no indication -- the DONE frame now carries `truncated` so that is at
+    # least visible. Lower this deliberately for a slow local model; do not
+    # leave it low by accident.
+    MAX_OUTPUT_TOKENS: 800
 
 patches:
   # --- the service container ------------------------------------------------
@@ -74,6 +92,7 @@ patches:
         COURSEMATE_MODEL_API_KEY: "{{ COURSEMATE_MODEL_API_KEY }}"
         COURSEMATE_FALLBACK_MODEL: "{{ COURSEMATE_FALLBACK_MODEL }}"
         COURSEMATE_FALLBACK_API_KEY: "{{ COURSEMATE_FALLBACK_API_KEY }}"
+        COURSEMATE_REDIS_URL: "{{ COURSEMATE_REDIS_URL }}"
         COURSEMATE_MOCK_RESPONSE: "{{ COURSEMATE_MOCK_RESPONSE }}"
         COURSEMATE_REQUIRE_GROUNDING: "{{ COURSEMATE_REQUIRE_GROUNDING }}"
         COURSEMATE_INDEX_PATH: "/data/coursemate-index.db"

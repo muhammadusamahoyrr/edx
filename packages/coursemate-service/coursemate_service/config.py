@@ -65,10 +65,18 @@ class Settings(BaseSettings):
     mock_response: str | None = None
 
     #: When true the tutor abstains unless retrieval supplied context (§8.5).
-    #: False until Phase 6 lands retrieval; with no retriever and grounding
-    #: required, every question would correctly abstain and nothing would be
-    #: demonstrable. Flipping this to True is what turns grounding on.
-    require_grounding: bool = False
+    #:
+    #: **Defaults True since retrieval landed.** It was False through Phase 5,
+    #: when there was no retriever and every question would have abstained — a
+    #: correct answer to the wrong question, and nothing demonstrable. That
+    #: reason expired with Phase 6 and the default did not follow it.
+    #:
+    #: Leaving it False meant every abstention behaviour — the confidence gate,
+    #: `ABSTAINED`, `PREPARING` — sat behind a flag a fresh install had OFF. A
+    #: safety control that must be switched on is not a control; it is a setting
+    #: someone will forget. An unindexed course now says "still being prepared"
+    #: out of the box rather than answering from the model's own knowledge.
+    require_grounding: bool = True
 
     reranker_model: str = "BAAI/bge-reranker-base"
 
@@ -91,6 +99,19 @@ class Settings(BaseSettings):
     #: development against a stubbed LMS -- never in a deployment serving real
     #: course content.
     enforce_enrollment: bool = True
+
+    # --- shared state across replicas (§3 of LIMITATIONS) ---------------------
+    #: Redis is already in every Tutor deployment — it is Celery's broker — so
+    #: this adds no infrastructure. Empty means "single process": the rate
+    #: limiter and authz cache fall back to in-memory, which is correct for one
+    #: replica and silently wrong for two.
+    #:
+    #: What this fixes, and it is three separate bugs with one cause:
+    #:   * the rate limiter allowed N x the limit with N replicas
+    #:   * invalidating an entitlement cleared one replica's cache
+    #:   * LiteLLM cooldowns were per-process, so a dead provider was
+    #:     rediscovered independently by every replica
+    redis_url: str = ""
 
     # --- abuse and cost (§10.8) ----------------------------------------------
     #: These live at the boundary alongside authorization so a new agent node

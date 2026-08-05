@@ -87,8 +87,25 @@ def get_router():
     from litellm import Router
     from litellm.types.router import RetryPolicy
 
+    # Rule 2, across replicas. Cooldowns kept in process memory mean each
+    # replica has to discover a dead provider for itself, so an outage costs
+    # `allowed_fails` failures PER REPLICA instead of once for the deployment.
+    # LiteLLM tracks cooldowns and tpm/rpm in Redis natively when given one, and
+    # Redis is already Celery's broker here.
+    redis_kwargs: dict[str, Any] = {}
+    if settings.redis_url:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(settings.redis_url)
+        if parsed.hostname:
+            redis_kwargs = {"redis_host": parsed.hostname, "redis_port": parsed.port or 6379}
+            if parsed.password:
+                redis_kwargs["redis_password"] = parsed.password
+            log.info("litellm router: shared cooldowns via redis at %s", parsed.hostname)
+
     _router = Router(
         model_list=model_list,
+        **redis_kwargs,
         # Rule 1: per-error-type retries. Auth errors are not retried — a wrong
         # key stays wrong, and retrying it just delays the honest failure.
         retry_policy=RetryPolicy(

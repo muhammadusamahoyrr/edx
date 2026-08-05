@@ -33,18 +33,53 @@ cross-vendor fallback are **implemented and untested against a real outage**.
 
 ---
 
-## 3. Single-replica assumptions
+## 3. Single-replica assumptions — mostly closed
 
-Two components are per-process and will behave incorrectly with a second replica:
+| Component | State |
+|---|---|
+| Rate limiter (`api/deps.py`) | ✅ **Redis sliding window**, shared across replicas |
+| Authz cache (`boundary/authz.py`) | ✅ **Redis**, and `invalidate()` clears every replica |
+| LiteLLM cooldowns | ✅ **Redis** — a dead provider is discovered once, not per replica |
+| SQLite index | ❌ **Still local.** Replicas would see different indexes. |
 
-| Component | Problem | Fix |
-|---|---|---|
-| Rate limiter (`api/deps.py`) | In-memory — N replicas allow N× the limit | Redis |
-| Authz cache (`boundary/authz.py`) | In-memory — revocation clears one replica | Redis |
-| SQLite index | Local file — replicas see different indexes | Shared store or read replicas |
+Redis costs no new infrastructure: it is already Celery's broker in every Tutor
+deployment. We use **db 1**; db 0 is the platform's broker, and sharing a
+keyspace with it means a careless `FLUSHDB` while debugging takes out both.
 
-None is hard to fix. All are silent if deployed unnoticed, which is why they are
-listed first among operational gaps.
+**Degradation is deliberately asymmetric.** With `redis_url` unset or Redis
+unreachable, all three fall back to per-process state — correct for one replica,
+which is what they were before. The rate limiter fails **open** (abuse control:
+denying every student because a cache is down trades a small risk for an
+outage); the authz cache treats a Redis failure as a **miss** and asks the
+platform, which remains the source of truth. Authorization itself still fails
+**closed**, unchanged.
+
+**Verified live** (`tools/ops/deploy_shared_state.sh`): two `_RateLimiter`
+instances standing in for two replicas shared one budget and blocked at request
+21 of 20.
+
+The SQLite index is the honest remainder — it needs a shared store or read
+replicas, which is a real piece of work rather than a config change.
+
+---
+
+## 3.1 Two defaults that were wrong
+
+- **`require_grounding` defaulted to `False`.** Every abstention behaviour — the
+  confidence gate, `ABSTAINED`, `PREPARING` — sits behind that flag, so a fresh
+  install answered from the model's own knowledge instead of the course. It was
+  False through Phase 5 for a good reason (no retriever existed, so everything
+  would have abstained); the reason expired with Phase 6 and the default did not
+  follow it. **A safety control that must be switched on is not a control.** Now
+  `True` in both `config.py` and the Tutor plugin.
+
+- **`max_output_tokens` had drifted to 200** (service default 800, plugin 250,
+  `config.yml` 200) and answers were being cut off mid-sentence with no
+  indication. A truncated answer is indistinguishable from a complete one to the
+  student who reads it — it simply stops, and the natural reading is that the
+  tutor did not know the rest. The `DONE` frame now carries `truncated`, the
+  browser renders a notice, and the limits are aligned at 800. Lower it
+  deliberately for a slow local model; do not leave it low by accident.
 
 ---
 

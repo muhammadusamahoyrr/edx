@@ -86,6 +86,7 @@ class AnswerPipeline:
 
         provider_used: str | None = None
         produced_any = False
+        finish_reason: str | None = None
 
         try:
             response = await asyncio.wait_for(
@@ -107,6 +108,9 @@ class AnswerPipeline:
                 text = getattr(delta, "content", None) if delta else None
                 if provider_used is None:
                     provider_used = getattr(part, "model", None) or "unknown"
+                # Carried from whichever chunk sets it — providers put it on the
+                # last one, but not all of them agree on which.
+                finish_reason = getattr(choice, "finish_reason", None) or finish_reason
                 if text:
                     produced_any = True
                     yield StreamFrame(type=FrameType.TOKEN, text=text)
@@ -139,7 +143,17 @@ class AnswerPipeline:
         if provider_used and settings.strong_model and provider_used not in settings.strong_model:
             yield StreamFrame(type=FrameType.DEGRADED, provider=provider_used)
 
-        yield StreamFrame(type=FrameType.DONE, provider=provider_used)
+        # `length` means the model was cut off at max_output_tokens, not that it
+        # finished. Without this the student sees an answer that just stops, and
+        # reads it as the tutor not knowing the rest.
+        truncated = finish_reason == "length"
+        if truncated:
+            log.warning(
+                "answer truncated at max_output_tokens=%s; raise it or tighten the prompt",
+                settings.max_output_tokens,
+            )
+
+        yield StreamFrame(type=FrameType.DONE, provider=provider_used, truncated=truncated)
 
 
 #: One instance per process. Stateless — conversation state stays with the

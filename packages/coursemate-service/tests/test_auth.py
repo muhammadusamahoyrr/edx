@@ -19,15 +19,28 @@ KEY = "service-signing-key-at-least-32-bytes!"
 
 @pytest.fixture(autouse=True)
 def _settings(monkeypatch):
+    """A settings object with this file's test keys, restored afterwards.
+
+    **The restore is the point.** This fixture used to do
+    `config.settings = config.Settings()` as a plain assignment, which
+    monkeypatch cannot undo — so every test that ran after this file saw a
+    *different* settings object than the one it had imported. A later test doing
+    `monkeypatch.setattr(settings, ...)` patched the original while the code
+    under test read the replacement, and the patch appeared to do nothing.
+
+    That failed in the full suite and passed when the file was run alone, which
+    is the worst shape a test bug can have: it looks like flakiness and gets
+    re-run rather than fixed.
+    """
     monkeypatch.setenv("COURSEMATE_JWT_SIGNING_KEY", KEY)
     monkeypatch.setenv("COURSEMATE_SERVICE_CREDENTIAL", "service-credential-32-bytes-minimum!")
     from coursemate_service import config
-
-    config.settings = config.Settings()  # type: ignore[call-arg]
     import coursemate_service.api.deps as deps
 
-    deps.settings = config.settings
-    return config.settings
+    fresh = config.Settings()  # type: ignore[call-arg]
+    monkeypatch.setattr(config, "settings", fresh)
+    monkeypatch.setattr(deps, "settings", fresh)
+    return fresh
 
 
 def _token(**overrides) -> str:
