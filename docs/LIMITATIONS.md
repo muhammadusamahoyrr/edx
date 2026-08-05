@@ -202,6 +202,37 @@ after every filter was correct.
   cannot be eliminated without a platform event** — claiming otherwise would be
   dishonest. Verified live on DemoX: unpublishing a unit removed nothing on its
   own, and the sweep then took the served index from 221 blocks to 216.
+- **The ENQUEUED bootstrap never activated what it wrote** (found and fixed
+  2026-08-05). `bootstrap_course` called `send_leaves` without `run_id` or
+  `is_final`, so the service never verified and never swapped: every chunk
+  landed INACTIVE, the course kept serving the previous version, and each run
+  leaked a whole copy of the course into the index. The task returned
+  `{'indexed': 222, 'total': 222}` throughout, because that counts what the
+  service ACCEPTED, not what became active.
+
+  The `--inline` path always set both flags, which is why every reindex done by
+  hand looked correct. The enqueued path is the one that runs in production —
+  the Studio button, the query-time backstop, `--all`.
+
+  **It only surfaced because a second course was imported** and the totals
+  stopped matching: 454 chunks across 2 versions with 227 active. With one
+  course the numbers were self-consistent and wrong.
+
+  A second defect sat behind it: `last_usage_key` was never cleared on success,
+  so the next run resumed from the last leaf of the finished one, sliced the
+  walk to nothing, sent no batches, and reported success. Verified before
+  fixing: `position in walk 221 of 221, leaves a resumed run sends: 0`.
+
+  Fixing the first alone would have caused a worse one. A resumed run sends only
+  the remaining tail, so swapping to a fresh version would activate a fraction
+  of the course while reporting a complete run — the 226-indexed-26-served
+  failure through the resume path. `CourseIndexState.run_id` (migration 0002)
+  persists the version so a resumed run continues it and the pointer flips once.
+
+  Verified live (`tools/verification/bootstrap_swap_probe.sh`), driving the real
+  Celery task: `454 chunks / 227 active / 2 versions` became
+  `227 / 227 / 1 version`.
+
 - **The nightly course list comes from the service, not the platform.**
   `CourseIndexState` is written only by the bootstrap task, so a list built from
   it was empty on a stack serving 231 chunks: the sweep ran across zero courses

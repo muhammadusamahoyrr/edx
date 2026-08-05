@@ -26,7 +26,22 @@ class CourseIndexState(models.Model):
     block_count = models.PositiveIntegerField(default=0)
     blocks_indexed = models.PositiveIntegerField(default=0)
     #: Walk position, so a resumed run continues rather than restarts.
+    #:
+    #: **Cleared when a run completes.** Leaving it set meant the next bootstrap
+    #: resumed from the LAST leaf of the finished run, sliced the walk down to
+    #: nothing, sent no batches, and reported success — so re-indexing a course
+    #: through the enqueued path silently did nothing.
     last_usage_key = models.CharField(max_length=255, blank=True, default="")
+    #: The version every batch of the current run writes under, persisted so a
+    #: RESUMED run continues that version instead of opening a new one.
+    #:
+    #: Without it, a resume writes only the remaining tail under a fresh version
+    #: and then swaps to it — activating a fraction of the course while
+    #: reporting a complete run. That is the 226-blocks-indexed-26-served bug
+    #: exactly, arriving through the resume path instead of the batch path.
+    #:
+    #: Empty means no run is in flight.
+    run_id = models.CharField(max_length=64, blank=True, default="")
 
     last_indexed_at = models.DateTimeField(null=True, blank=True)
     last_error = models.TextField(blank=True, default="")

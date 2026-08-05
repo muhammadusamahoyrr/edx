@@ -38,7 +38,7 @@ wrong; the system wins.
 | What | State | Check |
 |---|---|---|
 | Everything through the sweep | Done, verified live | `git log --oneline` |
-| Plugin migrations | Applied | `tools/ops/migrate.sh` |
+| Plugin migrations | Applied, incl. 0002 (`run_id`) | `tools/ops/migrate.sh` |
 | Package in all 4 containers | From the IMAGE now, not container layers | `tools/ops/check_install.sh` |
 | Celery tasks registered | Yes, in both workers | `tools/ops/check_tasks.sh` |
 | Beat dispatches the sweep | **VERIFIED** — both from a derived image and the real container | `tools/verification/beat_container_probe.sh` |
@@ -47,7 +47,9 @@ wrong; the system wins.
 | `--force-recreate` on openedx containers | **NOW SAFE** — the install comes from the image, not the container layer | `tools/ops/check_install.sh` after |
 | Video transcripts | **VERIFIED end to end** on 1 video (583 chars, retrieved at score 1.000). The other 9 DemoX videos have edx-val rows with missing files | `tools/verification/add_test_transcript.sh` |
 | Block-level access filter | **VERIFIED live end to end** — 2 restricted chunks hidden from a caller without the group, served to one with it | `tools/verification/access_filter_live.sh` |
-| DemoX index | **227 chunks active, 222 blocks** (incl. 1 video), 2 carrying group tokens | `tools/ops/store_dump.sh` |
+| Index | **2 courses**: DemoX 227 chunks (1 video, 2 restricted), OEX101 55 chunks | `tools/ops/store_dump.sh` |
+| Course isolation | **VERIFIED with two courses present** — no cross-course leakage | `tools/verification/import_second_course.sh` |
+| Enqueued bootstrap swaps | **FIXED 2026-08-05** — it never did; wrote inactive and reported success | `tools/verification/bootstrap_swap_probe.sh` |
 | Opt-in (`--all`) | **VERIFIED** — `course_has_tutor()` True on DemoX | `access_probe.sh` §E |
 | Shared state (rate limit, authz, LiteLLM cooldowns) | **Redis db1, VERIFIED live** — 2 limiters, one budget | `tools/ops/deploy_shared_state.sh` |
 | `require_grounding` | **True by default now** (was False — the gate was opt-in) | `docker exec ...coursemate-1 python -c` |
