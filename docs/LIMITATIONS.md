@@ -83,6 +83,51 @@ replicas, which is a real piece of work rather than a config change.
 
 ---
 
+## 3.2 Claim verification — now emitted, and it is a floor
+
+`FrameType.UNSUPPORTED_CLAIM` was in the contract from v1 and rendered by
+`tutor.js` from v1, and **nothing ever emitted it.** A UI branch that can never
+fire is the same defect `boundary/interface.py` names about declaring four tools
+while implementing one: a reader concludes the check exists.
+
+It now fires. `ai/verify.py` splits the answer into sentences and asks whether
+each sentence's content words appear in the retrieved material; those that do
+not are marked, never rewritten — the student has already read the text, and
+changing it under them is worse than saying which part to doubt.
+
+**Verified live** (`tools/verification/claim_verify_live.sh`), against the
+deployed service:
+
+```
+answer with one ungrounded sentence -> citations=1  unsupported=1
+   MARKED: Kubernetes schedules replica pods across availability zones.
+fully grounded answer (control)     -> unsupported=0
+```
+
+**Citations narrowed at the same time.** The pipeline emitted one per retrieved
+chunk, so a citation meant "we searched this" rather than "the answer used
+this" — three authoritative links under a sentence none of them supported. They
+now narrow to the chunks the answer drew on, falling back to all of them when
+nothing overlaps, because §8.5 makes citation mandatory.
+
+**The limitation, stated as plainly as the benchmark states it.** This is
+token overlap, not entailment. It catches a sentence about material we never
+retrieved — what a model produces when it falls back on its own knowledge. It
+does **not** catch a fluent contradiction built from the right words: *"deadlock
+cannot occur when locks are ordered"* and *"deadlock can occur when locks are
+ordered"* score identically. `BENCHMARKS.md` already says this about
+token-overlap groundedness; this inherits the same ceiling at inference time.
+
+The upgrade is an NLI model — `LettuceDetect` (MIT, ModernBERT, returns
+character spans with confidence) drops in behind the same frame. Deliberately
+not first: it needs torch, which is the objection `knowledge/rerank.py` already
+raises against the cross-encoder, and adding it before this floor existed would
+leave us unable to say what it bought.
+
+`claim_support_threshold` (0.4) is a starting point, not a calibrated number.
+
+---
+
 ## 4. No response cache
 
 `knowledge/cache/` contains the key derivation and the isolation policy, with

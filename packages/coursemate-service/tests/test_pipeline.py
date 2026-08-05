@@ -254,3 +254,83 @@ async def test_complete_answer_is_not_flagged_truncated(monkeypatch):
     frames = await _collect(pl.AnswerPipeline(_Grounded()), ChatRequest(question="hi"))
     assert frames[-1].truncated is False
     client.reset_router()
+
+
+def _fake_router(text: str, finish: str = "stop"):
+    """A router that streams `text` in one chunk."""
+    class _Chunk:
+        def __init__(self):
+            self.choices = [type("C", (), {
+                "delta": type("D", (), {"content": text})(),
+                "finish_reason": finish,
+            })()]
+            self.model = "test-model"
+
+    async def _stream():
+        yield _Chunk()
+
+    class _Router:
+        async def acompletion(self, **kw):  # noqa: ARG002
+            return _stream()
+
+    return _Router()
+
+
+def _grounded(text: str):
+    from coursemate_contracts.chat import Citation
+    from coursemate_service.ai.context import ContextChunk, ContextResult
+
+    class _P:
+        async def fetch(self, question, claims):  # noqa: ARG002
+            return ContextResult(
+                chunks=[ContextChunk(
+                    text=text, citation=Citation(usage_key="u1", display_name="Locks"), score=0.9,
+                )],
+                top_score=0.9,
+            )
+    return _P()
+
+
+@pytest.mark.asyncio
+async def test_unsupported_claim_frame_actually_reaches_the_stream(monkeypatch):
+    """The frame type existed in the contract and the browser rendered it since
+    v1, and NOTHING emitted it. A UI branch that can never fire is the same
+    defect as a documented tool that is not implemented."""
+    from coursemate_service.ai import client, pipeline as pl
+
+    client.reset_router()
+    monkeypatch.setattr(
+        pl, "get_router",
+        lambda: _fake_router(
+            "A deadlock occurs when two processes hold locks. "
+            "Kubernetes schedules replica pods across availability zones."
+        ),
+    )
+    ctx = "A deadlock occurs when two processes each hold a lock the other needs."
+    frames = await _collect(pl.AnswerPipeline(_grounded(ctx)), ChatRequest(question="q"))
+
+    flagged = [f for f in frames if f.type == FrameType.UNSUPPORTED_CLAIM]
+    assert len(flagged) == 1, "unsupported sentence was not marked"
+    assert "Kubernetes" in flagged[0].text
+    # Order matters: the student has already read the text, so the marker has to
+    # arrive after it rather than instead of it.
+    assert frames.index(flagged[0]) > max(
+        i for i, f in enumerate(frames) if f.type == FrameType.TOKEN
+    )
+    client.reset_router()
+
+
+@pytest.mark.asyncio
+async def test_a_grounded_answer_is_not_marked(monkeypatch):
+    """The control arm. A checker that flags everything passes the test above
+    and is useless."""
+    from coursemate_service.ai import client, pipeline as pl
+
+    client.reset_router()
+    ctx = "A deadlock occurs when two processes each hold a lock the other needs."
+    monkeypatch.setattr(pl, "get_router", lambda: _fake_router(
+        "A deadlock occurs when two processes each hold a lock the other needs."))
+    frames = await _collect(pl.AnswerPipeline(_grounded(ctx)), ChatRequest(question="q"))
+    assert [f for f in frames if f.type == FrameType.UNSUPPORTED_CLAIM] == []
+    assert [f for f in frames if f.type == FrameType.CITATION], "citation went missing"
+    client.reset_router()

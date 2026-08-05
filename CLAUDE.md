@@ -51,6 +51,7 @@ wrong; the system wins.
 | Opt-in (`--all`) | **VERIFIED** — `course_has_tutor()` True on DemoX | `access_probe.sh` §E |
 | Shared state (rate limit, authz, LiteLLM cooldowns) | **Redis db1, VERIFIED live** — 2 limiters, one budget | `tools/ops/deploy_shared_state.sh` |
 | `require_grounding` | **True by default now** (was False — the gate was opt-in) | `docker exec ...coursemate-1 python -c` |
+| Claim verification | **VERIFIED live** — ungrounded sentence marked, grounded control clean | `tools/verification/claim_verify_live.sh` |
 | Docker daemon stability | **RESTART-LOOPING** every ~2-3 min — see the warning above | `ps -eo etime,cmd \| grep dockerd` |
 
 **Done 2026-08-05:** the openedx image was rebuilt with the plugin baked in, all
@@ -99,7 +100,7 @@ upstream `edX+DemoX+Demo_Course`).
 
 ## Tests
 
-    make check        # 112 tests + 6 import-linter contracts
+    make check        # 127 tests + 6 import-linter contracts
 
 Runs on Windows against `.venv/`. No Open edX, no network, no containers.
 

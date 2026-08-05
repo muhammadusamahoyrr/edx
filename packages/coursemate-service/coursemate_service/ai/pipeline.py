@@ -25,6 +25,7 @@ from ..config import settings
 from .client import NoModelConfigured, get_router
 from .context import ContextProvider
 from .prompts import build_messages
+from .verify import supporting_chunks, unsupported_sentences
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +88,10 @@ class AnswerPipeline:
         provider_used: str | None = None
         produced_any = False
         finish_reason: str | None = None
+        # Accumulated for verification after the stream. Kept in memory for the
+        # length of one answer and never stored — §3.1 keeps conversation text
+        # with the platform, and this module holds no per-student state.
+        answer_parts: list[str] = []
 
         try:
             response = await asyncio.wait_for(
@@ -113,6 +118,7 @@ class AnswerPipeline:
                 finish_reason = getattr(choice, "finish_reason", None) or finish_reason
                 if text:
                     produced_any = True
+                    answer_parts.append(text)
                     yield StreamFrame(type=FrameType.TOKEN, text=text)
 
         except asyncio.TimeoutError:
@@ -131,12 +137,36 @@ class AnswerPipeline:
             yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.UNAVAILABLE)
             return
 
-        # --- 5. attribution -------------------------------------------------
+        # --- 5. attribution and verification ---------------------------------
+        # Both run after the stream, on the assembled answer. Streaming is
+        # already done, so this adds nothing to time-to-first-token; it costs a
+        # few milliseconds of set arithmetic before the citations appear.
+        answer = "".join(answer_parts)
+        chunk_texts = [c.text for c in context.chunks]
+
         # Citations are emitted after the text so the UI can attach them to the
         # answer it already rendered. Mandatory once retrieval exists (§8.5): an
         # answer that cannot cite must abstain rather than ship uncited.
-        for chunk in context.chunks:
-            yield StreamFrame(type=FrameType.CITATION, citation=chunk.citation)
+        #
+        # Narrowed to the chunks the answer actually drew on. Emitting all of
+        # them made a citation mean "we searched this" rather than "the answer
+        # used this" — three authoritative links under a sentence none of them
+        # support. `supporting_chunks` returns everything when nothing overlaps,
+        # so the mandatory-citation promise still holds in the worst case.
+        for idx in supporting_chunks(answer, chunk_texts):
+            yield StreamFrame(type=FrameType.CITATION, citation=context.chunks[idx].citation)
+
+        # Sentences the retrieved material does not support. The frame is marked,
+        # never rewritten: the student has already read the text, and silently
+        # changing it under them is worse than telling them which part to doubt.
+        if settings.verify_claims:
+            for claim in unsupported_sentences(
+                answer, chunk_texts, settings.claim_support_threshold
+            ):
+                log.info(
+                    "unsupported claim (coverage %.2f): %.80s", claim.coverage, claim.sentence
+                )
+                yield StreamFrame(type=FrameType.UNSUPPORTED_CLAIM, text=claim.sentence)
 
         # Surfaced so an outage reads as "answered by a fallback" rather than as
         # unexplained quality loss (§8.4 rule 3).

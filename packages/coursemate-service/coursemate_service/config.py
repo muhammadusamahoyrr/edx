@@ -32,6 +32,20 @@ class Settings(BaseSettings):
     #: than an unnecessary "not covered".
     abstain_on_tie: bool = True
 
+    # --- claim verification (§8.5) -------------------------------------------
+    #: Emit UNSUPPORTED_CLAIM for sentences whose content words are largely
+    #: absent from the retrieved material. On by default: the frame has been in
+    #: the contract and rendered by the browser since v1 with nothing sending it,
+    #: and a check that ships switched off is the same problem as a default that
+    #: ships switched off.
+    verify_claims: bool = True
+    #: Fraction of a sentence's content words that must appear in the retrieved
+    #: material. 0.4 is a starting point, not a calibrated number — like the
+    #: confidence threshold it wants tuning against logged production output, and
+    #: it errs toward marking too much, because an over-cautious tutor is
+    #: recoverable and a confidently unsupported one is not.
+    claim_support_threshold: float = 0.4
+
     # --- retrieval ------------------------------------------------------------
     retrieve_candidates: int = 20
     rerank_top_k: int = 5
