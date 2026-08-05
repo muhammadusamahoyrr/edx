@@ -74,15 +74,27 @@ after every filter was correct.
   module from `tasks/__init__.py`, without which Celery's autodiscovery
   registers nothing from a task *package*. Verified live: republishing a unit
   restored 5 blocks to the served index in under 4 seconds.
-- **The reconciliation sweep runs** — nightly at 03:30, and again on every
-  publish. Verified: a real `celery beat` process loads the entry
-  (`<ScheduleEntry: coursemate-nightly-reconcile … <crontab: 30 3 * * *>>`),
-  `reconcile_all` queues the courses the service actually serves, and each
-  per-course sweep completes. The dedicated `coursemate-beat` **container** is
-  configured in the Tutor plugin but **UNVERIFIED**: it starts from the openedx
-  image, so it needs the image rebuild that installs the package, and that build
-  had not finished at time of writing. Until it has, run the sweep from cron or
-  by hand — the schedule itself is proven. There is still **no unpublish event** in
+- **The reconciliation sweep runs, and beat dispatching it is now VERIFIED**
+  (`tools/verification/beat_probe_derived.sh`). From a container started off an
+  image carrying the package: the entry loads from plugin settings
+  (`crontab: 30 3 * * *`), beat fires it, and the CMS worker executes it —
+
+  ```
+  Scheduler: Sending due task coursemate-nightly-reconcile
+  reconcile_all succeeded: {'courses_queued': 1}
+  sweep course-v1:OpenedX+DemoX+DemoCourse: live=222 indexed=222 orphans=0
+  ```
+
+- **The `coursemate-beat` container in the Tutor plugin cannot start today, and
+  that is a real gap rather than an untested one.** Verified: the deployed
+  openedx image is stock `overhangio/openedx:21.0.8-indigo` with **no
+  `coursemate_platform` installed**, and the container has never been created.
+  Beat started from it would find no schedule entry and schedule nothing,
+  silently. The fix is the image rebuild the Tutor plugin patch already
+  describes; until then the nightly sweep must be driven by cron or by hand.
+  The probe above sidesteps the rebuild by layering a `pip install` onto the
+  stock image, which proves the *runtime* half but not that
+  `tutor images build openedx` produces the same result. There is still **no unpublish event** in
   `openedx-events`, so the sweep remains the only mechanism that can detect
   unpublished content, and a window therefore remains: between an unpublish and
   the next sweep, the tutor can still cite content students can no longer see.

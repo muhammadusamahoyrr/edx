@@ -22,7 +22,8 @@ wrong; the system wins.
 | Plugin migrations | Applied | `tools/ops/migrate.sh` |
 | Package in all 4 containers | Real pip installs | `tools/ops/check_install.sh` |
 | Celery tasks registered | Yes, in both workers | `tools/ops/check_tasks.sh` |
-| `coursemate-beat` container | **UNVERIFIED — never started** | `docker ps -a \| grep beat` |
+| Beat dispatches the sweep | **VERIFIED** from an image carrying the package | `tools/verification/beat_probe_derived.sh` |
+| `coursemate-beat` container | **CANNOT START** — deployed openedx image is stock, no package in it | `docker run --rm --entrypoint bash <img> -c 'ls .../coursemate_platform-*.dist-info'` |
 | Video transcripts | **VERIFIED end to end** on 1 video (583 chars, retrieved at score 1.000). The other 9 DemoX videos have edx-val rows with missing files | `tools/verification/add_test_transcript.sh` |
 | Block-level access filter | **VERIFIED live end to end** — 2 restricted chunks hidden from a caller without the group, served to one with it | `tools/verification/access_filter_live.sh` |
 | DemoX index | **227 chunks active, 222 blocks** (incl. 1 video), 2 carrying group tokens | `tools/ops/store_dump.sh` |
