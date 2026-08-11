@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from coursemate_contracts.auth import StudentClaims
+from coursemate_contracts.examprep import CLO, QuestionRecord
 
 from ..knowledge.store import StoredChunk
 
@@ -57,6 +58,33 @@ class CourseIntelligence(Protocol):
         """
         ...
 
+    # --- Feature B (§7) ---------------------------------------------------
+
+    def search_past_questions(
+        self,
+        offering_id: str,
+        claims: StudentClaims,
+        *,
+        query: str | None = None,
+        clo_id: str | list[str] | None = None,
+        exam_type: str | None = None,
+        year_from: int | None = None,
+        min_marks: int | None = None,
+        limit: int = 10,
+    ) -> list[QuestionRecord]:
+        """Structured search over past papers — a metadata filter, not a blob
+        search (§7.6). Keyword-only past `claims` so a caller cannot transpose
+        `clo_id` and `exam_type` positionally and get a plausible wrong answer."""
+        ...
+
+    def get_clos(self, offering_id: str, claims: StudentClaims) -> list[CLO]:
+        """The confirmed course learning outcomes (§7.3)."""
+        ...
+
+    def has_exam_pack(self, offering_id: str) -> bool:
+        """Whether past papers were loaded. Pairs with `has_index` (§5.1)."""
+        ...
+
 
 # --- Deferred tools -------------------------------------------------------
 #
@@ -74,6 +102,17 @@ class CourseIntelligence(Protocol):
 #       the tutor is placed per-unit by an instructor, so "students are stuck on
 #       X" can only surface where a tutor was already added.
 #
-#   get_exam_prep_pack(offering_id, student_id)
-#       Feature B. Contract exists in coursemate_contracts.examprep; no storage,
-#       extraction or UI behind it yet.
+# --- Deliberately NOT on this interface -----------------------------------
+#
+#   get_mastery / record_attempt
+#       Mastery is the agent's memory layer, and it is reachable without being
+#       here. READS arrive in the request payload, carried by the browser from
+#       `Scope.user_state` — the same courier §3.1 settled for chat history, for
+#       the same reason: a second copy of per-student data in the reasoning
+#       service would put it outside platform user-retirement's reach.
+#
+#       WRITES are platform-side, through the XBlock handler, and that is the
+#       load-bearing part. Putting a write on this interface would end the
+#       read-only tool surface, and §10.6's claim — "there is no prompt that
+#       makes CourseMate change what students see" — rests on it. The claim is
+#       worth more than the convenience.

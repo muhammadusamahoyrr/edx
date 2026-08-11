@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from .examprep_store import ExamPrepStore
 from .store import ChunkStore
 
 
@@ -20,4 +21,18 @@ def get_store() -> ChunkStore:
     return ChunkStore(settings.index_path)
 
 
-__all__ = ["ChunkStore", "get_store"]
+@lru_cache(maxsize=1)
+def get_examprep_store() -> ExamPrepStore:
+    """Past-paper questions. Its own file, not a second set of tables in the index.
+
+    Separate because the two have different lifecycles: a course reindex rewrites
+    the chunk index wholesale and must not be able to take a term's worth of
+    extracted past papers with it. They are also restored from different sources —
+    the modulestore rebuilds one, only the original PDFs rebuild the other.
+    """
+    from ..config import settings
+
+    return ExamPrepStore(settings.examprep_path)
+
+
+__all__ = ["ChunkStore", "ExamPrepStore", "get_examprep_store", "get_store"]

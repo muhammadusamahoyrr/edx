@@ -1,0 +1,79 @@
+"""Loading a past-paper pack — service credential only (§3.4, §7.3).
+
+**Not on the student router**, and the separation is the same one that keeps a
+leaked student token from writing to the chunk index. A student may search a pack;
+only the operator may load one.
+
+**CLOs are confirmed by the person running the loader, not by the model** (§7.3,
+§9.2 #2). Extraction is *assisted, never asserted*: a CLO list arriving with no
+`confirmed_by` is loaded and served, but every tool result carries
+`confirmed: false` so nothing presents it as the instructor's. The endpoint does
+not silently stamp confirmation on the caller's behalf — that would turn "a human
+confirmed this" into "a process ran", which is precisely the distinction §7.3
+exists to preserve.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from coursemate_contracts.examprep import ExamPrepPack
+from fastapi import APIRouter, Depends, HTTPException
+
+from ..config import settings
+from ..knowledge import get_examprep_store
+from .deps import service_credential
+
+log = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+@router.post("/load", dependencies=[Depends(service_credential)])
+async def load_pack(pack: ExamPrepPack) -> dict:
+    """Replace this offering's questions and CLOs, atomically.
+
+    Returns counts, never a bare `{"status": "ok"}`. A loader that reports success
+    without saying what landed is how this project once indexed 226 blocks and
+    served 26 — the caller has to be able to assert on a number.
+    """
+    if pack.tenant != settings.tenant:
+        # Refused rather than rewritten. Loading another tenant's pack into this
+        # deployment because the field disagreed would be a silent cross-tenant
+        # write, and the whole point of carrying `tenant` from day one is that it
+        # is checked.
+        raise HTTPException(
+            status_code=400,
+            detail=f"pack tenant {pack.tenant!r} does not match this deployment",
+        )
+    if not pack.offering_id:
+        raise HTTPException(status_code=400, detail="offering_id is required")
+
+    # Duplicate question ids would violate the store's UNIQUE constraint mid-load
+    # and roll the whole pack back. Caught here so the caller is told which id,
+    # rather than reading an IntegrityError out of a 500.
+    ids = [q.question_id for q in pack.questions]
+    if len(set(ids)) != len(ids):
+        dupes = sorted({i for i in ids if ids.count(i) > 1})
+        raise HTTPException(
+            status_code=400, detail=f"duplicate question_id(s): {', '.join(dupes[:5])}"
+        )
+
+    mismatched = [q.question_id for q in pack.questions if q.offering_id != pack.offering_id]
+    if mismatched:
+        raise HTTPException(
+            status_code=400,
+            detail=f"question(s) scoped to another offering: {', '.join(mismatched[:5])}",
+        )
+
+    counts = get_examprep_store().load_pack(pack)
+
+    unconfirmed = sum(1 for c in pack.clos if not c.confirmed_by)
+    if unconfirmed:
+        log.warning(
+            "pack for %s loaded with %d/%d unconfirmed CLOs; they will be served "
+            "labelled unconfirmed (§7.3)",
+            pack.offering_id, unconfirmed, len(pack.clos),
+        )
+
+    return {**counts, "offering_id": pack.offering_id, "unconfirmed_clos": unconfirmed}

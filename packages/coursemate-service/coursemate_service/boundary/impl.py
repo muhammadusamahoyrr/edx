@@ -17,9 +17,10 @@ from __future__ import annotations
 import logging
 
 from coursemate_contracts.auth import StudentClaims
+from coursemate_contracts.examprep import CLO, QuestionRecord
 
 from ..config import settings
-from ..knowledge import get_store
+from ..knowledge import get_examprep_store, get_store
 from ..knowledge.rerank import get_reranker
 from .authz import NotEnrolled, PlatformUnreachable, verifier
 from ..knowledge.store import StoredChunk
@@ -104,6 +105,85 @@ class CourseIntelligenceImpl:
 
     def has_index(self, offering_id: str) -> bool:
         return get_store().has_index(offering_id)
+
+    # --- Feature B: exam prep (§7) ---------------------------------------
+    #
+    # These are new tools on the SAME chokepoint, deliberately. §6.5's argument
+    # for a boundary is that "scattered across agent nodes, a new node can forget
+    # one" of the four steps — and an exam-prep agent is precisely the new node
+    # that argument predicted. So authorize/audit run here, once, and the agent's
+    # tool handlers cannot reach the store any other way (`.importlinter`
+    # contract 3 now covers `coursemate_service.agents` as well as `ai`).
+    #
+    # Read-only, like everything else on this interface. §10.6's claim that "there
+    # is no prompt that makes CourseMate change what students see" holds only
+    # while that stays true, which is why mastery *writes* are not here: they
+    # happen platform-side, through the XBlock, off the tool surface entirely.
+
+    def search_past_questions(
+        self,
+        offering_id: str,
+        claims: StudentClaims,
+        *,
+        query: str | None = None,
+        clo_id: str | list[str] | None = None,
+        exam_type: str | None = None,
+        year_from: int | None = None,
+        min_marks: int | None = None,
+        limit: int = 10,
+    ) -> list[QuestionRecord]:
+        """Structured search over past-paper questions (§7.6).
+
+        Step 3 — filter before ranking — is satisfied by `tenant` and
+        `offering_id` being part of every WHERE clause in the store, exactly as
+        they are for chunks. There is no block-level access filter here because a
+        past-paper pack is offering-wide by construction: it is loaded per
+        offering from that offering's own papers, so there is no cohort-restricted
+        subset for a group token to select.
+        """
+        self._authorize(claims, offering_id)
+        rows = get_examprep_store().search_questions(
+            tenant=settings.tenant,
+            offering_id=offering_id,
+            query=query,
+            clo_id=clo_id,
+            exam_type=exam_type,
+            year_from=year_from,
+            min_marks=min_marks,
+            limit=limit,
+        )
+        self._audit(claims, "search_past_questions", offering_id, len(rows))
+        return rows
+
+    def get_clos(self, offering_id: str, claims: StudentClaims) -> list[CLO]:
+        """The confirmed CLO list — the spine a study plan hangs on (§7.3)."""
+        self._authorize(claims, offering_id)
+        rows = get_examprep_store().clos(tenant=settings.tenant, offering_id=offering_id)
+        self._audit(claims, "get_clos", offering_id, len(rows))
+        return rows
+
+    def has_exam_pack(self, offering_id: str) -> bool:
+        """Whether past papers were ever loaded for this offering.
+
+        Unauthenticated on purpose, matching `has_index`: it reveals only that a
+        pack exists, never its content, and the caller needs it to tell "still
+        being prepared" from "nothing matched" *before* deciding what to ask for.
+        """
+        return get_examprep_store().has_pack(
+            tenant=settings.tenant, offering_id=offering_id
+        )
+
+    def exam_pack_stats(self, offering_id: str) -> dict:
+        """Counts only — how many questions, how many CLOs, the year range, and
+        how many items the extractor was unsure about.
+
+        Unauthenticated for the same reason as `has_pack`: it carries no question
+        text. The caller is already JWT-verified, and this is what lets the tab
+        say *why* it is empty instead of rendering a control that does nothing
+        (§5.1)."""
+        return get_examprep_store().stats(
+            tenant=settings.tenant, offering_id=offering_id
+        )
 
 
 boundary = CourseIntelligenceImpl()
