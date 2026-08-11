@@ -27,6 +27,25 @@ class Settings(BaseSettings):
     #: 20-30 question pilot yields ~15 negatives, which cannot calibrate this to
     #: any useful precision — so it ships as a starting point with a confidence
     #: interval, not as a settled number.
+    #:
+    #: **Know which scale this is on before tuning it.** It is compared against
+    #: the BLENDED rerank score, not the raw query-term coverage that
+    #: `knowledge/store.py` computes and documents. `LexicalReranker` overwrites
+    #: coverage with 0.60·coverage + 0.15·proximity + 0.25·title, and the gate
+    #: reads that. Measured over the 28-question gold set against the live index:
+    #:
+    #:     blended ≈ 0.855 × coverage on average  (min 0.675, lower in 19 of 28,
+    #:     higher in 1 where a title match lifted it)
+    #:     blended  = 0.600 × coverage  when proximity and title are both zero
+    #:
+    #: So 0.35 here is a coverage bar of roughly 0.41 typically, and 0.583 in the
+    #: worst case — NOT "35% of the question's words appeared". Tuning this
+    #: against logged abstentions, which the note above invites, means tuning
+    #: against the blend. With `rerank_enabled=False` it is raw coverage again.
+    #:
+    #: 0.35 measured as the optimum on that gold set: at 0.30 a false answer
+    #: appears, at 0.40 a correct answer is lost. n=28, one course, one rater —
+    #: indicative, and the interval above is still the honest caveat.
     confidence_threshold: float = 0.35
     #: We tune toward abstention: a confidently wrong answer costs a student more
     #: than an unnecessary "not covered".
@@ -60,13 +79,31 @@ class Settings(BaseSettings):
     strong_model: str = "anthropic/claude-opus-5"
     cheap_model: str = "anthropic/claude-haiku-4-5-20251001"
     model_api_key: str | None = None
+    #: Only needed by providers that are not reachable at a well-known host —
+    #: Ollama, vLLM, an OpenAI-compatible gateway. `None` leaves LiteLLM's own
+    #: default, which is right for every hosted vendor.
+    model_api_base: str | None = None
 
     #: A different *provider*, which is what survives one vendor's outage — not a
-    #: second model from the same vendor. The self-hosted local model stays
-    #: deferred (§8.4): a simultaneous outage of both hosted providers means the
-    #: tutor is unavailable and says so, rather than degrading silently.
+    #: second model from the same vendor.
+    #:
+    #: **This is where the self-hosted model goes.** §8.4 deferred it on the
+    #: grounds that a simultaneous outage of both hosted providers should make the
+    #: tutor unavailable rather than silently worse. That argument was about
+    #: *quality*, and it still holds — which is why falling back is announced by a
+    #: DEGRADED frame rather than hidden. What changed is that an Ollama host is
+    #: already running here for embeddings, so the second provider costs one
+    #: environment variable instead of a new service:
+    #:
+    #:     COURSEMATE_FALLBACK_MODEL=ollama/qwen2.5:7b
+    #:     COURSEMATE_FALLBACK_API_BASE=http://host.docker.internal:11434
+    #:
+    #: Leave it unset and the chain is `strong -> cheap` only, which shares the
+    #: primary's vendor and therefore its outage. That is a real gap, and it is
+    #: named in LIMITATIONS §2 rather than papered over.
     fallback_model: str | None = None
     fallback_api_key: str | None = None
+    fallback_api_base: str | None = None
 
     #: Per-request ceiling. Beyond this the provider is hung, not slow, and
     #: holding the student's connection open helps nobody.
@@ -97,6 +134,33 @@ class Settings(BaseSettings):
     #: Retrieval index. A file, not a service: at course scale SQLite FTS5 is
     #: faster than a network hop to a vector database would be.
     index_path: str = "/data/coursemate-index.db"
+
+    #: Past-paper questions (§7.6). A separate file from the index on purpose: a
+    #: course reindex rewrites that one wholesale, and it must not be able to take
+    #: a term's worth of extracted papers with it.
+    examprep_path: str = "/data/coursemate-examprep.db"
+
+    # --- the exam-prep agent (§6.5, §7) --------------------------------------
+    #: **Ships dark.** The kill switch is read at the API layer, not inside the
+    #: agent, so `False` means the deterministic path is reached and no agent code
+    #: runs at all — rather than an agent that starts and then declines.
+    #:
+    #: Default `False` is the inverse of the `require_grounding` lesson and the
+    #: same principle. A *safety control* that must be switched on is not a
+    #: control; a *new subsystem* that must be switched on is a subsystem nobody
+    #: enables by accident. Which default is right depends on which way the
+    #: failure runs, and here an unproven agent loop answering students is the
+    #: failure.
+    agent_enabled: bool = False
+    #: Loop ceiling. Six is enough for the deepest planned path — CLOs, mastery,
+    #: past questions, course content, one re-plan after an error, synthesis — and
+    #: a cap that is routinely hit is a budget, not a safety net, so hitting it is
+    #: logged as a defect rather than absorbed.
+    agent_max_iterations: int = 6
+    #: Wall clock across the whole loop, distinct from `model_timeout_seconds`
+    #: which bounds one provider call. Without this, six calls that each take 55s
+    #: is a five-minute request that never technically timed out.
+    agent_timeout_seconds: float = 30.0
 
     # --- authorization re-derivation (§10.1) ---------------------------------
     #: Open edX owns enrollment; we never keep our own list.

@@ -67,11 +67,19 @@ forbidden_modules =
 # check enrollment/role, apply the tenant/student filter BEFORE ranking, write an
 # audit record. Scattered across agent nodes, a new node forgets one. This makes
 # forgetting a CI failure rather than a code-review catch.
+#
+# `coursemate_service.agents` was added with the package itself, in the same
+# commit. The contract has been named for agents since the first day and had
+# covered only `ai` while no agent existed — so the exam-prep agent would have
+# arrived as the one caller free to reach the store directly, which is precisely
+# the node §6.5 predicted would forget a step.
 [importlinter:contract:agents-go-through-the-boundary]
 name = Reasoning reaches knowledge only through the CourseIntelligence boundary
 type = forbidden
 source_modules =
     coursemate_service.ai
+    coursemate_service.agents
+    coursemate_service.mcp
 forbidden_modules =
     coursemate_service.knowledge
 # agents -> boundary -> knowledge is correct and expected. The violation is a
@@ -89,6 +97,8 @@ type = forbidden
 source_modules =
     coursemate_service.api
     coursemate_service.ai
+    coursemate_service.agents
+    coursemate_service.mcp
     coursemate_service.knowledge
     coursemate_service.ingestion
 forbidden_modules =
