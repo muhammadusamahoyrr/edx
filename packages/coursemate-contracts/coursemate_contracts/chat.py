@@ -67,6 +67,18 @@ class FrameType(StrEnum):
     #: The answer came from a fallback tier. Surfaced so an outage does not read
     #: as "the tutor got worse this week" (§8.4 rule 3).
     DEGRADED = "degraded"
+    #: The agent answered, but at least one tool call failed, so the answer was
+    #: assembled over a known gap.
+    #:
+    #: Distinct from DEGRADED, which says a *different model* answered under the
+    #: same contract. This says the *evidence* was incomplete, which is the more
+    #: serious of the two and the one a student should weigh. Reusing DEGRADED
+    #: for it would have made both frames mean "something was a bit off".
+    #:
+    #: Its existence is the enforcement half of a design rule: a failed tool call
+    #: must never reach synthesis silently. Either the turn abstains, or it says
+    #: this.
+    INCOMPLETE = "incomplete"
     ERROR = "error"
     DONE = "done"
 

@@ -9,8 +9,11 @@ records, not a semantic search over blobs.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
+
+from .mastery import MasterySnapshot
 
 
 class ExamType(StrEnum):
@@ -63,6 +66,44 @@ class QuestionRecord(BaseModel):
     low_confidence_flag: bool = False
 
 
+#: Difficulty bands, as upper bounds on the 0..1 `difficulty` scale.
+#:
+#: **One definition, shared by everything that bands.** The generator picks a
+#: source question by band, and mastery will be keyed on `(clo_id,
+#: difficulty_band)` in the next phase — on the platform side, which cannot
+#: import the service. So it lives in contracts, which both sides already
+#: import, rather than being written twice and drifting.
+#:
+#: `difficulty_band` is deliberately not stored on any model: it is derived from
+#: `difficulty` here, and a stored copy is a second source of truth.
+_BANDS: tuple[tuple[float, str], ...] = ((0.34, "easy"), (0.67, "medium"), (1.01, "hard"))
+
+
+def band_of(difficulty: float | None) -> str | None:
+    """Which band a difficulty falls in. `None` in, `None` out.
+
+    An unknown difficulty is *unknown*, not "easy" — the same rule
+    `CLOMastery.accuracy` follows for an unattempted outcome. Defaulting it would
+    quietly file every unscored past question into the easiest band.
+    """
+    if difficulty is None:
+        return None
+    for upper, name in _BANDS:
+        if difficulty < upper:
+            return name
+    return _BANDS[-1][1]
+
+
+def band_range(band: str) -> tuple[float, float]:
+    """The half-open `difficulty` range a band covers, for filtering."""
+    lower = 0.0
+    for upper, name in _BANDS:
+        if name == band:
+            return (lower, upper)
+        lower = upper
+    raise ValueError(f"unknown difficulty band {band!r}")
+
+
 class CLO(BaseModel):
     clo_id: str
     text: str
@@ -108,3 +149,123 @@ class PracticeQuestion(BaseModel):
     ai_generated: bool = True
     #: The past paper or lesson this derives from (§7.6 provenance).
     derived_from: list[str] = Field(default_factory=list)
+
+    # --- fields the Feature B rubric scores (added 2026-08-11) ---------------
+    #
+    # `eval/feature_b_rubric.py` reads `marks` and `difficulty` to check that a
+    # generated question sits inside the ranges the real bank uses. This model
+    # did not carry either, and the consequence was worse than a missing number:
+    # the check reads `if marks is not None`, so an absent field made
+    # `band_plausibility` **pass**. The rubric would have reported 1.00 on every
+    # generated question — not because difficulty was calibrated, but because
+    # there was no data to judge.
+    #
+    # Found by a contract-freeze pass before any generator existed, by comparing
+    # what the rubric reads against what this model provides. Both halves were
+    # written here and had never been run together.
+    #
+    # `difficulty_band` is deliberately NOT a field: it is derived from
+    # `difficulty` by one shared helper, and storing it would be a second source
+    # of truth that can disagree with the first.
+    marks: int | None = Field(default=None, ge=0)
+    #: 0..1, the same scale as `QuestionRecord.difficulty`, so the rubric can
+    #: compare a generated question against the bank without converting.
+    difficulty: float | None = Field(default=None, ge=0.0, le=1.0)
+    #: §7.6 again: a derived difficulty stays labelled derived wherever it is
+    #: shown. A generated question's difficulty is always an estimate.
+    difficulty_is_derived: bool = True
+
+
+# --- the request wire format ------------------------------------------------
+
+
+class ExamPrepRequest(BaseModel):
+    """Browser -> service, for one exam-prep turn.
+
+    Deliberately shaped like `ChatRequest`: free-text intent plus platform-owned
+    state carried by the browser. There is no `student_id` and no `offering_id`
+    field, and their absence is the contract — scope comes from the verified JWT,
+    so a forged payload cannot widen it. The tool registry refuses those fields
+    from the model for the same reason one level down.
+    """
+
+    #: What the student asked for, verbatim. "Help me revise CLO-3", "give me a
+    #: two-hour plan for the final". Free text on purpose: the point of an agent
+    #: here is that this space is not enumerable.
+    request: str = Field(min_length=1, max_length=1000)
+
+    #: The memory layer, carried from platform-owned `Scope.user_state` (§3.1).
+    #: `None` means the browser sent none, which is a legitimate state — a new
+    #: student — and is reported to the agent as "no history", never as an error.
+    mastery: MasterySnapshot | None = None
+
+
+class PracticeRequest(BaseModel):
+    """Browser -> service, for one generated practice question.
+
+    Two fields, and the shape is the point: a student picks an outcome and a
+    level, and everything else — who they are, which course, which past paper,
+    which lesson — is derived server-side. There is no `student_id`,
+    `offering_id` or `question_id` here, so a forged payload cannot widen scope
+    or name a source; the JWT scopes the request and the generator selects the
+    source itself.
+
+    Deliberately NOT free text, unlike `ExamPrepRequest`. Generation is a fixed
+    two-stage pipeline with no planning step, so there is nothing for prose to
+    express — and an open field would invite prompt injection into a path that
+    produces content a student reads.
+    """
+
+    clo_id: str = Field(min_length=1, max_length=64)
+    #: `None` means "any level": the generator uses the source question's own
+    #: band. Not defaulted to `easy` — an absent preference is not a preference,
+    #: and guessing one would silently narrow what the student is offered.
+    difficulty_band: Literal["easy", "medium", "hard"] | None = None
+
+
+class CLOOption(BaseModel):
+    """One entry in the exam-prep tab's outcome selector.
+
+    Mirrors what the agent's `get_plan_context` tool already returns, so the UI
+    and the model see the same shape. `confirmed_by` is deliberately reduced to a
+    boolean: §7.3 wants the student to know whether a human confirmed the
+    outcome, not which human — that is an instructor's name and no part of a
+    study aid.
+    """
+
+    clo_id: str
+    text: str
+    confirmed: bool = False
+
+
+class ExamPrepStatus(BaseModel):
+    """What the XBlock renders before the student asks anything.
+
+    Exists so the tab can say *why* it is empty. Design §5.1's whole argument is
+    that "still being prepared" and "not covered" are different sentences, and a
+    tab that renders a disabled box with neither is the failure it describes.
+    """
+
+    #: False when `agent_enabled` is off. The tab then offers the deterministic
+    #: path rather than a button that does nothing.
+    agent_available: bool
+    #: Whether past papers were loaded for this offering.
+    pack_loaded: bool
+    questions: int = 0
+    clos: int = 0
+    #: Questions the extractor was unsure about (§7.6). Surfaced rather than
+    #: hidden: a student should know the bank has soft spots.
+    low_confidence: int = 0
+    earliest_year: int | None = None
+    latest_year: int | None = None
+    #: The outcomes the practice selector offers.
+    #:
+    #: Named `clo_options`, not `clos`, because `clos` above is already the COUNT
+    #: of outcomes and both are useful — the count for the "3 outcomes" summary
+    #: line, the list for the dropdown. Reusing the name would have silently
+    #: replaced an int with a list on a field the browser already reads.
+    #:
+    #: Carried on `/status` rather than behind a second endpoint: the tab already
+    #: calls this before enabling anything, and an extra round trip to fill a
+    #: dropdown is a round trip the student waits through.
+    clo_options: list[CLOOption] = Field(default_factory=list)
