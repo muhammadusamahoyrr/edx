@@ -42,6 +42,7 @@ from coursemate_contracts.chat import Mode
 
 from ..client.jwt import mint_student_token
 from .citations import clean_citations
+from .identity import roles_of
 
 log = logging.getLogger(__name__)
 loader = ResourceLoader(__name__)
@@ -50,6 +51,13 @@ loader = ResourceLoader(__name__)
 #: KB, and the alternative — the service keeping its own conversation store —
 #: would duplicate PII into a system that platform retirement does not reach.
 HISTORY_WINDOW_TURNS = 10
+
+#: Mastery entries carried per request. Matches `MasterySnapshot`'s `max_length`,
+#: which is the constraint that actually rejects an over-long payload — this is
+#: the trim that keeps a valid request from becoming an invalid one. A course with
+#: more than 64 learning outcomes is outside the MVP, and the overflow is reported
+#: rather than dropped silently.
+MASTERY_WINDOW_CLOS = 192
 
 
 
@@ -69,6 +77,13 @@ class CourseMateTutorXBlock(XBlock):
     #: which for us is the service, since this block makes no model calls at all
     #: (design §10.4, corrected in v7).
     enabled = Boolean(display_name="Enabled", default=True, scope=Scope.settings)
+    #: Feature B's tab. Per-block rather than global: an instructor who wants the
+    #: tutor in every unit does not necessarily want a revision planner in every
+    #: unit, and the service-side `agent_enabled` flag is an operator control, not
+    #: an instructor one. Both must be on for the agent path to run.
+    exam_prep_enabled = Boolean(
+        display_name="Show the exam-prep tab", default=False, scope=Scope.settings
+    )
     mode = String(
         display_name="Default mode",
         default=Mode.DIRECT.value,
@@ -101,7 +116,11 @@ class CourseMateTutorXBlock(XBlock):
         fragment = Fragment(
             loader.render_django_template(
                 "static/html/student_view.html",
-                {"display_name": self.display_name, "enabled": self.enabled},
+                {
+                    "display_name": self.display_name,
+                    "enabled": self.enabled,
+                    "exam_prep_enabled": self.exam_prep_enabled,
+                },
             )
         )
         fragment.add_css(loader.load_unicode("static/css/tutor.css"))
@@ -112,9 +131,48 @@ class CourseMateTutorXBlock(XBlock):
                 "history": self.history[-HISTORY_WINDOW_TURNS:],
                 "mode": self.mode,
                 "enabled": self.enabled,
+                "exam_prep_enabled": self.exam_prep_enabled,
+                # The memory layer, seeded for the browser to carry (§3.1). Same
+                # courier as `history`, and for the same reason: the service must
+                # hold no per-student state, so what it needs has to arrive with
+                # the request. Trimmed here rather than service-side, because the
+                # payload cost is paid on this side of the wire.
+                "mastery": self._mastery_snapshot(),
             },
         )
         return fragment
+
+    def _mastery_snapshot(self) -> dict:
+        """This student's practice counters for this offering.
+
+        Reads the platform's own database, so it is exactly what
+        `record_attempt` wrote — no cache, no second copy, nothing to go stale.
+
+        Never raises. A mastery read failing must degrade the plan's ordering,
+        not break the lesson page: the tutor renders, the plan simply treats
+        every outcome as unattempted, which is the honest fallback.
+        """
+        user = self._user()
+        if user is None:
+            return {"offering_id": self._offering_id(), "clos": [], "truncated": False}
+
+        student_id = str(user.opt_attrs.get("edx-platform.user_id", ""))
+        try:
+            from ..models import StudentMastery
+
+            rows = StudentMastery.snapshot(student_id, self._offering_id())
+        except Exception:  # noqa: BLE001
+            log.exception("coursemate: mastery snapshot failed; continuing without it")
+            rows = []
+
+        return {
+            "offering_id": self._offering_id(),
+            "clos": rows[:MASTERY_WINDOW_CLOS],
+            # Told, not silently trimmed: "no history for that outcome" and
+            # "trimmed away" are different facts, and the agent is given the
+            # difference rather than left to infer it.
+            "truncated": len(rows) > MASTERY_WINDOW_CLOS,
+        }
 
     def studio_view(self, context=None) -> Fragment:
         """Config, plus the "Index this course" button.
@@ -154,7 +212,9 @@ class CourseMateTutorXBlock(XBlock):
 
         user_id = str(user.opt_attrs.get("edx-platform.user_id", ""))
         username = user.opt_attrs.get("edx-platform.username", "") or None
-        roles = list(user.opt_attrs.get("edx-platform.user_role", "") or "")
+        # `user_role` is a STRING, not a list. See identity.roles_of — reading it
+        # with list() spelled every role out one letter at a time.
+        roles = roles_of(user.opt_attrs)
 
         if not settings.COURSEMATE_JWT_SIGNING_KEY:
             # Unset key disables the tutor; it never breaks the platform (§10.4).
@@ -167,7 +227,7 @@ class CourseMateTutorXBlock(XBlock):
             username=username,
             course_id=self._course_id(),
             offering_id=self._offering_id(),
-            roles=roles if isinstance(roles, list) else [str(roles)],
+            roles=roles,
             usage_key=str(usage_id),
             block_id=usage_id.block_id,
             # Resolved here, inside the LMS, because only the platform can answer
@@ -230,6 +290,71 @@ class CourseMateTutorXBlock(XBlock):
     def clear_history(self, data, suffix=""):  # noqa: ARG002
         self.history = []
         return {"cleared": True}
+
+    @XBlock.json_handler
+    def record_attempt(self, data, suffix=""):  # noqa: ARG002
+        """Count one practice attempt. **The only write in Feature B.**
+
+        It lives here, in the platform, and not on the agent's tool surface — and
+        that placement is doing real work. Design §10.6 claims *"the agent's
+        entire tool surface is read-only … there is no prompt that makes
+        CourseMate change what students see."* A `record_mastery` tool would end
+        that claim on the day it was added, in exchange for saving one HTTP
+        handler. The claim is worth more.
+
+        The student id comes from the platform session, never from the payload.
+        The browser carries mastery *out*; it does not get to say whose it is on
+        the way back.
+        """
+        user = self._user()
+        if user is None:
+            return {"error": "unauthenticated"}
+
+        payload = data or {}
+        clo_id = str(payload.get("clo_id", "")).strip()
+        question_id = str(payload.get("question_id", "")).strip()
+        attempt_id = str(payload.get("attempt_id", "")).strip()
+        if not (clo_id and question_id and attempt_id):
+            # `attempt_id` is required rather than defaulted, because a default
+            # would make every attempt on the same question share a key — so a
+            # student's second try at a question they got wrong would be
+            # discarded as a replay, and their record would freeze at the first
+            # answer they ever gave.
+            return {"error": "clo_id, question_id and attempt_id are all required"}
+
+        student_id = str(user.opt_attrs.get("edx-platform.user_id", ""))
+        offering_id = self._offering_id()
+        # Derived service-side from the question's difficulty and carried here;
+        # "" when the source question had no estimate. Not trusted for anything
+        # but bucketing this student's own counters.
+        band = str(payload.get("difficulty_band") or "").strip().lower()
+        if band not in ("", "easy", "medium", "hard"):
+            return {"error": "difficulty_band must be easy, medium or hard"}
+
+        from coursemate_contracts.mastery import idempotency_key
+
+        from ..models import StudentMastery
+
+        try:
+            key = idempotency_key(
+                offering_id=offering_id, student_id=student_id,
+                clo_id=clo_id, question_id=question_id, attempt_id=attempt_id,
+            )
+        except ValueError:
+            # A component containing the field separator could collide two
+            # different attempts onto one digest. Refused rather than sanitised:
+            # silently rewriting an id makes the collision harder to find, not
+            # less likely.
+            return {"error": "invalid identifier"}
+
+        return StudentMastery.record(
+            idempotency_key=key,
+            student_id=student_id,
+            offering_id=offering_id,
+            clo_id=clo_id,
+            difficulty_band=band,
+            correct=bool(payload.get("correct")),
+        )
 
     @XBlock.json_handler
     def index_course(self, data, suffix=""):  # noqa: ARG002

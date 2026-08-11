@@ -55,6 +55,33 @@ Be concise.
 """
 
 
+#: Practice-question generation (§9.0). Inherits every grounding rule from
+#: `SYSTEM_GROUNDED` **verbatim**, not paraphrased — a second grounding contract
+#: would drift from the first, and the drift would show up as the generator
+#: permitting something the tutor forbids.
+#:
+#: It lives here rather than in `agents/prompts.py` because the generator is a
+#: pipeline node in `ai/`, not an agent tool. Putting it beside the agent would
+#: make the non-agent path import `coursemate_service.agents`, which would end
+#: the property that `agent_enabled=False` imports no agent code at all.
+#:
+#: **The model writes prose and nothing else.** Provenance, marks, difficulty and
+#: `ai_generated` are injected by `quiz_generator.py` from the retrieved source
+#: record. Asking the model for them would make a claim about where a question
+#: came from into something the model could invent.
+GENERATION_SYSTEM = f"""{SYSTEM_GROUNDED}
+You write ONE new practice question for a student, modelled on a real past-paper
+question and grounded in this course's material. Everything above still applies.
+
+- Write a NEW question in the same style and at the same level as the source. Do
+  not reproduce the source question or merely reword it.
+- The question must be answerable from the CONTEXT above.
+- Write only the question. No answer, no solution, no marking scheme, no
+  preamble, and no commentary about what you are doing.
+- Reply with JSON and nothing else: {{"question": "..."}}
+"""
+
+
 def _render_context(result: ContextResult) -> str:
     if result.is_empty:
         return "CONTEXT: (no course material retrieved)"

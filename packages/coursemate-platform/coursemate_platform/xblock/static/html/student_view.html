@@ -1,11 +1,65 @@
 <div class="coursemate-tutor" data-enabled="{{ enabled }}">
   <div class="cm-header">{{ display_name }}</div>
-  <div class="cm-log" role="log" aria-live="polite"></div>
-  <div class="cm-notice" hidden></div>
-  <form class="cm-form">
-    <input class="cm-input" type="text" autocomplete="off"
-           placeholder="Ask about this lesson…" aria-label="Ask the tutor" />
-    <button class="cm-send" type="submit">Ask</button>
-  </form>
-  <p class="cm-disclaimer">AI-generated. Answers cite the lesson they come from.</p>
+
+  {% if exam_prep_enabled %}
+  <!-- Tabs, not a second block. The exam-prep planner needs this student's
+       mastery and this offering's scope, both of which the tutor block already
+       has — a separate block would mint a second token and keep a second copy of
+       the same state. -->
+  <div class="cm-tabs" role="tablist">
+    <button class="cm-tab is-active" role="tab" data-panel="chat"
+            aria-selected="true">Ask</button>
+    <button class="cm-tab" role="tab" data-panel="prep"
+            aria-selected="false">Exam prep</button>
+  </div>
+  {% endif %}
+
+  <div class="cm-panel" data-panel="chat">
+    <div class="cm-log" role="log" aria-live="polite"></div>
+    <div class="cm-notice" hidden></div>
+    <form class="cm-form">
+      <input class="cm-input" type="text" autocomplete="off"
+             placeholder="Ask about this lesson…" aria-label="Ask the tutor" />
+      <button class="cm-send" type="submit">Ask</button>
+    </form>
+    <p class="cm-disclaimer">AI-generated. Answers cite the lesson they come from.</p>
+  </div>
+
+  {% if exam_prep_enabled %}
+  <div class="cm-panel" data-panel="prep" hidden>
+    <!-- Filled from /examprep/status before anything is enabled, so the panel
+         can say WHY it is empty rather than offering a control that does
+         nothing (§5.1). -->
+    <div class="cm-prep-status" aria-live="polite">Checking the question bank…</div>
+    <div class="cm-prep-log" role="log" aria-live="polite"></div>
+    <div class="cm-prep-notice" hidden></div>
+    <form class="cm-prep-form" hidden>
+      <input class="cm-prep-input" type="text" autocomplete="off"
+             placeholder="What should I revise?" aria-label="Ask for a study plan" />
+      <button class="cm-prep-send" type="submit">Plan</button>
+    </form>
+
+    <!-- Practice generation. Separate form from the plan above because they are
+         different requests: a plan is free text, a practice question is a
+         structured pick of outcome + level (PracticeRequest). -->
+    <form class="cm-practice-form" hidden>
+      <label class="cm-practice-label" for="cm-clo">Outcome</label>
+      <select class="cm-practice-clo" id="cm-clo" aria-label="Learning outcome"></select>
+
+      <label class="cm-practice-label" for="cm-band">Level</label>
+      <select class="cm-practice-band" id="cm-band" aria-label="Difficulty">
+        <option value="">Any</option>
+        <option value="easy">Easy</option>
+        <option value="medium">Medium</option>
+        <option value="hard">Hard</option>
+      </select>
+
+      <button class="cm-practice-send" type="submit">Generate a question</button>
+    </form>
+    <p class="cm-disclaimer">
+      Past-paper questions are quoted as printed and cite their source paper.
+      Anything AI-generated is labelled as such.
+    </p>
+  </div>
+  {% endif %}
 </div>

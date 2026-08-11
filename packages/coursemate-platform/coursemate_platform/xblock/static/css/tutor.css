@@ -15,3 +15,31 @@
 .coursemate-tutor .cm-form { display: flex; gap: 6px; }
 .coursemate-tutor .cm-input { flex: 1; padding: 6px; }
 .coursemate-tutor .cm-disclaimer { font-size: 12px; color: #666; margin: 6px 0 0; }
+
+/* --- Feature B: the exam-prep tab ------------------------------------- */
+.coursemate-tutor .cm-tabs { display: flex; gap: 4px; margin-bottom: 8px; border-bottom: 1px solid #ddd; }
+.coursemate-tutor .cm-tab { background: none; border: none; padding: 6px 10px; font-size: 13px; cursor: pointer; color: #555; }
+.coursemate-tutor .cm-tab.is-active { color: #111; font-weight: 600; box-shadow: inset 0 -2px 0 #333; }
+.coursemate-tutor .cm-prep-status { font-size: 12px; color: #666; margin-bottom: 8px; }
+.coursemate-tutor .cm-prep-log { max-height: 320px; overflow-y: auto; margin-bottom: 8px; }
+.coursemate-tutor .cm-prep-notice { padding: 6px; border-radius: 4px; font-size: 13px; }
+.coursemate-tutor .cm-prep-notice.abstained { background: #eef3fa; }
+.coursemate-tutor .cm-prep-notice.preparing { background: #fdf6e3; }
+.coursemate-tutor .cm-prep-notice.unavailable { background: #fbeaea; }
+.coursemate-tutor .cm-prep-form { display: flex; gap: 6px; }
+.coursemate-tutor .cm-prep-input { flex: 1; padding: 6px; }
+/* Distinct from .cm-degraded: that says a different MODEL answered, this says
+   the EVIDENCE was incomplete — the more serious of the two, so it is louder. */
+.coursemate-tutor .cm-incomplete { font-size: 12px; color: #a94442; background: #fbeaea; padding: 4px 6px; border-radius: 3px; margin-top: 4px; }
+
+/* --- Phase 1C: generated practice questions --------------------------- */
+.coursemate-tutor .cm-practice-form { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.coursemate-tutor .cm-practice-label { font-size: 12px; color: #555; }
+.coursemate-tutor .cm-practice-clo { flex: 1; min-width: 160px; padding: 5px; }
+.coursemate-tutor .cm-practice-band { padding: 5px; }
+.coursemate-tutor .cm-practice-card { border: 1px solid #d8d8d8; border-radius: 4px; padding: 8px; margin: 8px 0; background: #fcfcfc; }
+/* The badge is the claim 9.0 depends on, not decoration. Always visible, never
+   subtle enough to miss. */
+.coursemate-tutor .cm-ai-badge { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: #6b4d00; background: #fdf0c8; border: 1px solid #e8d38a; border-radius: 3px; padding: 2px 6px; margin-bottom: 6px; }
+.coursemate-tutor .cm-practice-text { white-space: pre-wrap; }
+.coursemate-tutor .cm-provenance { font-size: 12px; color: #555; margin-top: 6px; }

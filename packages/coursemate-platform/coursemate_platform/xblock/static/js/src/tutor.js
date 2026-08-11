@@ -35,6 +35,14 @@ function CourseMateTutor(runtime, element, initArgs) {
     truncated: "That answer was cut short. Try asking for a smaller piece of it."
   };
 
+  /* Exam prep reuses every notice above, and overrides the two whose wording
+   * would be wrong here — "not covered in this course" is about a lesson, and a
+   * revision planner's version of the same state is about the question bank. */
+  var PREP_NOTICES = {
+    abstained: "There isn't enough in this course's material to plan that reliably.",
+    preparing: "Past papers for this course haven't been loaded yet."
+  };
+
   function el(tag, cls, text) {
     var node = document.createElement(tag);
     if (cls) { node.className = cls; }
@@ -149,7 +157,14 @@ function CourseMateTutor(runtime, element, initArgs) {
             if (line.indexOf("data:") !== 0) { return; }
             var payload = line.slice(5).trim();
             if (!payload) { return; }
-            try { onFrame(JSON.parse(payload)); } catch (e) { /* ignore keep-alives */ }
+            /* Only the PARSE may fail silently — a keep-alive or a partial
+             * line is not an error. Wrapping the HANDLER in the same catch
+             * swallowed rendering exceptions, so a bug in a frame branch left a
+             * half-drawn card on screen with nothing logged anywhere. Found by
+             * the JS harness, where a missing DOM method vanished without trace. */
+            var frame;
+            try { frame = JSON.parse(payload); } catch (e) { return; }
+            onFrame(frame);
           });
         });
         return pump();
@@ -211,6 +226,15 @@ function CourseMateTutor(runtime, element, initArgs) {
                 el("div", "cm-degraded", "Answered by a fallback model (" + (frame.provider || "") + ")")
               );
               break;
+            case "incomplete":
+              // Distinct from "degraded", which says a different MODEL answered.
+              // This says the EVIDENCE was incomplete, which is the more serious
+              // of the two and the one a student should weigh.
+              answerNode.appendChild(
+                el("div", "cm-incomplete",
+                   "Some information could not be checked (" + (frame.text || "") + ").")
+              );
+              break;
             case "error":
               showNotice(frame.error_code || "unavailable");
               break;
@@ -249,4 +273,285 @@ function CourseMateTutor(runtime, element, initArgs) {
   });
 
   renderHistory();
+
+  /* ------------------------------------------------------------------ *
+   * Exam prep (Feature B). Present only when the instructor enabled the
+   * tab, so everything below is guarded on the panel existing.
+   * ------------------------------------------------------------------ */
+
+  var prepPanel = root.querySelector('.cm-panel[data-panel="prep"]');
+  if (!prepPanel) { return; }
+
+  var prepStatus = prepPanel.querySelector(".cm-prep-status");
+  var prepLog = prepPanel.querySelector(".cm-prep-log");
+  var prepNotice = prepPanel.querySelector(".cm-prep-notice");
+  var prepForm = prepPanel.querySelector(".cm-prep-form");
+  var practiceForm = prepPanel.querySelector(".cm-practice-form");
+  var practiceClo = prepPanel.querySelector(".cm-practice-clo");
+  var practiceBand = prepPanel.querySelector(".cm-practice-band");
+  var practiceSend = prepPanel.querySelector(".cm-practice-send");
+  var prepInput = prepPanel.querySelector(".cm-prep-input");
+  var prepSend = prepPanel.querySelector(".cm-prep-send");
+
+  /* The memory layer, carried rather than stored (§3.1). The platform owns it;
+   * this script is the courier, exactly as it is for chat history. A student can
+   * edit it in their own browser — what that buys them is worse study
+   * recommendations for themselves, and the service re-checks the offering
+   * against the token before it shapes anything. */
+  var mastery = (initArgs && initArgs.mastery) || null;
+
+  root.querySelectorAll(".cm-tab").forEach(function (tab) {
+    tab.addEventListener("click", function () {
+      var wanted = tab.getAttribute("data-panel");
+      root.querySelectorAll(".cm-tab").forEach(function (t) {
+        var on = t === tab;
+        t.classList.toggle("is-active", on);
+        t.setAttribute("aria-selected", on ? "true" : "false");
+      });
+      root.querySelectorAll(".cm-panel").forEach(function (p) {
+        p.hidden = p.getAttribute("data-panel") !== wanted;
+      });
+      if (wanted === "prep") { loadPrepStatus(); }
+    });
+  });
+
+  function showPrepNotice(code) {
+    prepNotice.textContent = PREP_NOTICES[code] || NOTICES[code] || "Something went wrong.";
+    prepNotice.className = "cm-prep-notice " + code;
+    prepNotice.hidden = false;
+  }
+
+  /* Ask the service what it can actually offer BEFORE enabling the form. A tab
+   * that renders an input which turns out to do nothing is the failure §5.1
+   * describes: it looks broken rather than telling you what is happening. */
+  var statusLoaded = false;
+  function loadPrepStatus() {
+    if (statusLoaded) { return; }
+    statusLoaded = true;
+
+    mintToken().then(function (token) {
+      if (token.error) { prepStatus.textContent = NOTICES[token.error] || ""; return; }
+      var base = token.stream_path.replace(/\/chat$/, "/examprep");
+      prepPanel.dataset.base = base;
+
+      return fetch(base + "/status", {
+        headers: { Authorization: "Bearer " + token.token }
+      }).then(function (r) { return r.ok ? r.json() : null; }).then(function (status) {
+        if (!status) { prepStatus.textContent = NOTICES.unavailable; return; }
+        if (!status.pack_loaded) {
+          prepStatus.textContent = PREP_NOTICES.preparing;
+          return;
+        }
+        var parts = [status.questions + " past-paper questions",
+                     status.clos + " learning outcomes"];
+        if (status.earliest_year && status.latest_year) {
+          parts.push(status.earliest_year + "–" + status.latest_year);
+        }
+        /* Soft spots are shown, not hidden. A student who knows some items were
+         * hard to extract can discount them; one who does not will read every
+         * one as exact. */
+        if (status.low_confidence) {
+          parts.push(status.low_confidence + " flagged for low extraction confidence");
+        }
+        prepStatus.textContent = parts.join(" · ");
+        prepForm.hidden = false;
+
+        /* The outcome selector. Only enabled when the course actually declares
+         * outcomes — an empty dropdown is a control that cannot work, which is
+         * the failure §5.1 is about. */
+        var options = status.clo_options || [];
+        if (options.length && practiceForm) {
+          options.forEach(function (c) {
+            var opt = document.createElement("option");
+            opt.value = c.clo_id;
+            /* §7.3: an unconfirmed outcome is usable but must not be presented
+             * as the instructor's. Marked, not hidden. */
+            opt.textContent = c.clo_id + " — " + c.text + (c.confirmed ? "" : "  (unconfirmed)");
+            practiceClo.appendChild(opt);
+          });
+          practiceForm.hidden = false;
+        }
+      });
+    }).catch(function () { prepStatus.textContent = NOTICES.unavailable; });
+  }
+
+  function requestPlan(text) {
+    prepNotice.hidden = true;
+    prepInput.disabled = true;
+    prepSend.disabled = true;
+
+    var planNode = el("div", "cm-turn tutor", "");
+    prepLog.appendChild(planNode);
+    var answer = "";
+
+    mintToken().then(function (token) {
+      if (token.error) { showPrepNotice(token.error); return; }
+      var base = prepPanel.dataset.base || token.stream_path.replace(/\/chat$/, "/examprep");
+
+      return fetch(base + "/plan", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + token.token
+        },
+        /* No student id and no offering id in this payload, deliberately: the
+         * request contract has no field for either, and scope comes from the
+         * token the service verifies. */
+        body: JSON.stringify({ request: text, mastery: mastery })
+      }).then(function (response) {
+        if (!response.ok || !response.body) { showPrepNotice("unavailable"); return; }
+        return readStream(response, function (frame) {
+          switch (frame.type) {
+            case "token":
+              answer += frame.text || "";
+              planNode.textContent = answer;
+              prepLog.scrollTop = prepLog.scrollHeight;
+              break;
+            case "citation":
+              planNode.appendChild(citationNode(frame.citation));
+              break;
+            case "incomplete":
+              planNode.appendChild(
+                el("div", "cm-incomplete",
+                   "Some information could not be checked (" + (frame.text || "") + ").")
+              );
+              break;
+            case "degraded":
+              planNode.appendChild(
+                el("div", "cm-degraded", "Answered by a fallback model (" + (frame.provider || "") + ")")
+              );
+              break;
+            case "error":
+              showPrepNotice(frame.error_code || "unavailable");
+              break;
+            case "done":
+              if (frame.truncated) { showPrepNotice("truncated"); }
+              break;
+          }
+        });
+      });
+    }).catch(function () {
+      showPrepNotice("unavailable");
+    }).then(function () {
+      prepInput.disabled = false;
+      prepSend.disabled = false;
+    });
+  }
+
+  /* --- practice generation ------------------------------------------- *
+   * One generated question, streamed. Renders the AI-generated badge and the
+   * provenance line from the CITATION frames the service emits — the badge is
+   * not a UI decoration, it is the claim §9.0 depends on, so it is attached to
+   * the answer node itself rather than sitting statically in the panel. */
+  function requestPractice(cloId, band) {
+    prepNotice.hidden = true;
+    practiceClo.disabled = true;
+    practiceBand.disabled = true;
+    practiceSend.disabled = true;
+
+    /* Removing a node twice throws NotFoundError, and here that would be worse
+     * than the original failure: the throw happens inside .catch(), which skips
+     * the .then() that re-enables the controls, so the form stays permanently
+     * disabled and the student cannot retry. Reachable whenever the connection
+     * drops AFTER an error frame has already cleared the card. */
+    function discardCard() {
+      if (card && card.parentNode) { card.parentNode.removeChild(card); }
+    }
+
+    var card = el("div", "cm-practice-card", "");
+    var badge = el("div", "cm-ai-badge", "AI-generated practice question");
+    card.appendChild(badge);
+    var body = el("div", "cm-practice-text", "");
+    card.appendChild(body);
+    prepLog.appendChild(card);
+
+    var answer = "";
+    var sources = [];
+
+    mintToken().then(function (token) {
+      if (token.error) { showPrepNotice(token.error); return; }
+      var base = prepPanel.dataset.base || token.stream_path.replace(/\/chat$/, "/examprep");
+
+      return fetch(base + "/practice/stream", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + token.token
+        },
+        /* PracticeRequest carries no identity: the JWT scopes it, and the
+         * service picks the source question itself. */
+        body: JSON.stringify({ clo_id: cloId, difficulty_band: band || null })
+      }).then(function (response) {
+        if (!response.ok || !response.body) { showPrepNotice("unavailable"); return; }
+        return readStream(response, function (frame) {
+          switch (frame.type) {
+            case "token":
+              answer += frame.text || "";
+              body.textContent = answer;
+              prepLog.scrollTop = prepLog.scrollHeight;
+              break;
+            case "citation":
+              sources.push(frame.citation);
+              break;
+            case "incomplete":
+              card.appendChild(el("div", "cm-incomplete",
+                "Some information could not be checked (" + (frame.text || "") + ")."));
+              break;
+            case "degraded":
+              card.appendChild(el("div", "cm-degraded",
+                "Answered by a fallback model (" + (frame.provider || "") + ")"));
+              break;
+            case "error":
+              /* The card holds nothing yet — remove it so an abstention does not
+               * leave an empty AI-generated badge on screen claiming a question
+               * that was never written. */
+              if (!answer) { discardCard(); }
+              showPrepNotice(frame.error_code || "unavailable");
+              break;
+            case "done":
+              if (frame.truncated) { showPrepNotice("truncated"); }
+              /* Provenance line. §9.0 permits this question to reach the student
+               * ungated BECAUSE it is labelled and cited, so a question that
+               * arrived with no citation says so rather than looking sourced. */
+              var prov = el("div", "cm-provenance", sources.length ? "Derived from: " : "");
+              if (sources.length) {
+                sources.forEach(function (c, i) {
+                  if (i) { prov.appendChild(document.createTextNode(", ")); }
+                  var link = el("a", null, c.display_name || c.usage_key);
+                  link.href = safeHref(c.url);
+                  prov.appendChild(link);
+                });
+              } else {
+                prov.textContent = "Source unavailable for this question.";
+              }
+              card.appendChild(prov);
+              break;
+          }
+        });
+      });
+    }).catch(function () {
+      if (!answer) { discardCard(); }
+      showPrepNotice("unavailable");
+    }).then(function () {
+      practiceClo.disabled = false;
+      practiceBand.disabled = false;
+      practiceSend.disabled = false;
+    });
+  }
+
+  if (practiceForm) {
+    practiceForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      if (!practiceClo.value) { return; }
+      requestPractice(practiceClo.value, practiceBand.value);
+    });
+  }
+
+  prepForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    var text = prepInput.value.trim();
+    if (!text) { return; }
+    prepInput.value = "";
+    requestPlan(text);
+  });
 }
