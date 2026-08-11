@@ -1,4 +1,4 @@
-﻿"""Cache invalidation notices to the service (design Â§3.4 hop 2)."""
+"""Cache invalidation notices to the service (design §3.4 hop 2)."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ log = logging.getLogger(__name__)
 def post_invalidation(self, reason: str, course_id: str, student_id: str, trace_id: str):
     """Thin: forward and return.
 
-    Uses the SERVICE credential, not a student token â€” a leaked student-path
-    token must not be able to invalidate or write anything (Â§3.4).
+    Uses the SERVICE credential, not a student token — a leaked student-path
+    token must not be able to invalidate or write anything (§3.4).
     """
     from django.conf import settings
 

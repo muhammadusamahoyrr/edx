@@ -24,4 +24,4 @@ directly and never goes near Celery.
 no tasks, so importing it here would say something untrue about its role.
 """
 
-from . import bootstrap, ingest, reconcile  # noqa: F401
+from . import bootstrap, ingest, invalidate, reconcile  # noqa: F401

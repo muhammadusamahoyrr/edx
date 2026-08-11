@@ -48,9 +48,12 @@ def bootstrap_course(self, course_id: str):
         # resumed tail would activate a fraction of the course while reporting a
         # complete run — the 226-indexed-26-served failure, arriving through the
         # resume path instead of the batch path.
+        is_new_run = not state.run_id
         run_id = state.run_id or trace_id
         state.run_id = run_id
-        state.save(update_fields=["block_count", "run_id"])
+        if is_new_run:
+            state.blocks_indexed = 0
+        state.save(update_fields=["block_count", "run_id", "blocks_indexed"])
 
         # Resume: skip everything already done in a previous interrupted run.
         if state.last_usage_key:

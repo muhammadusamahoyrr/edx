@@ -20,6 +20,43 @@ import uuid
 log = logging.getLogger(__name__)
 
 
+def student_identifier(user) -> str:
+    """The value the service caches entitlements under — `user.pii.username`.
+
+    **Username is not an attribute of the event's user object.** openedx-events
+    passes `UserData`, whose fields are `id`, `is_active` and `pii`; the username
+    lives on the nested `UserPersonalData` as `pii.username`. `user.username`
+    does not exist and a `getattr` for it returns the default, silently.
+
+    That distinction is the whole correctness of this function. The service
+    writes its authz cache under the username — `boundary/impl.py` passes
+    `claims.username or claims.sub` to `require_enrolled`, which keys
+    `cm:authz:{username}:{offering}`. Sending the numeric id instead builds
+    `cm:authz:12345:{offering}`, which matches nothing: the notice returns 200,
+    `dropped=0` is not an error, nothing is logged, and the unenrolled student
+    keeps their access until the 60s TTL runs out. An invalidation that cannot
+    match is indistinguishable from one that had nothing to clear.
+
+    **Returning "" is deliberate, and it fails safe.** An empty student widens
+    the notice to the whole offering (`verifier.invalidate` treats a missing
+    user as "every user in this course"), which costs those students one
+    platform round-trip each and guarantees the revocation lands. Blunt, and the
+    right direction to be blunt in: the alternative is an identifier known not
+    to match, which is a no-op reporting success.
+    """
+    pii = getattr(user, "pii", None)
+    username = str(getattr(pii, "username", "") or "")
+    if username:
+        return username
+
+    log.error(
+        "coursemate: unenrollment event carried no pii.username (user id=%r); "
+        "falling back to invalidating the whole offering",
+        getattr(user, "id", None),
+    )
+    return ""
+
+
 def on_unenrollment(signal, sender, enrollment, **kwargs):  # noqa: ARG001
     """COURSE_UNENROLLMENT_COMPLETED.
 
@@ -35,7 +72,7 @@ def on_unenrollment(signal, sender, enrollment, **kwargs):  # noqa: ARG001
     post_invalidation.delay(
         reason="unenrolled",
         course_id=str(getattr(course, "course_key", "") or ""),
-        student_id=str(getattr(user, "id", "") or ""),
+        student_id=student_identifier(user),
         trace_id=str(uuid.uuid4()),
     )
     log.info("coursemate: enqueued unenrollment invalidation")
