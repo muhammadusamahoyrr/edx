@@ -22,7 +22,8 @@ from coursemate_contracts.chat import ChatRequest, FrameType, StreamFrame
 from coursemate_contracts.errors import ErrorCode
 
 from ..config import settings
-from .client import NoModelConfigured, get_router
+from . import gate
+from .client import PRIMARY_DEPLOYMENT, NoModelConfigured, deployment_of, get_router
 from .context import ContextProvider
 from .prompts import build_messages
 from .verify import supporting_chunks, unsupported_sentences
@@ -60,13 +61,16 @@ class AnswerPipeline:
         # --- 2. confidence gate, BEFORE generating a token (§8.5) ----------
         # Free, and it is why abstention costs no latency: nothing streams that
         # already failed the retrieval bar.
-        if settings.require_grounding:
-            if context.index_missing:
-                yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.PREPARING)
-                return
-            if context.is_empty or context.top_score < settings.confidence_threshold:
-                yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.ABSTAINED)
-                return
+        #
+        # The decision moved to `gate.evaluate` when the exam-prep agent needed to
+        # run the same gate per tool call. Behaviour is identical — the threshold,
+        # the comparison and the check order are unchanged, and the tests that
+        # pinned this path pass untouched. What changed is that there is now one
+        # implementation instead of the two a copy-paste would have produced.
+        outcome = gate.evaluate(context)
+        if (code := gate.ERROR_CODE[outcome]) is not None:
+            yield StreamFrame(type=FrameType.ERROR, error_code=code)
+            return
 
         # --- 3. build messages --------------------------------------------
         messages = build_messages(
@@ -86,6 +90,10 @@ class AnswerPipeline:
             return
 
         provider_used: str | None = None
+        #: Which of the Router's OWN deployments answered — "strong", "fallback"
+        #: or "cheap". Distinct from `provider_used`, which is the model string
+        #: the vendor echoed back and is for display only.
+        deployment: str | None = None
         produced_any = False
         finish_reason: str | None = None
         # Accumulated for verification after the stream. Kept in memory for the
@@ -113,6 +121,8 @@ class AnswerPipeline:
                 text = getattr(delta, "content", None) if delta else None
                 if provider_used is None:
                     provider_used = getattr(part, "model", None) or "unknown"
+                if deployment is None:
+                    deployment = deployment_of(part)
                 # Carried from whichever chunk sets it — providers put it on the
                 # last one, but not all of them agree on which.
                 finish_reason = getattr(choice, "finish_reason", None) or finish_reason
@@ -170,7 +180,21 @@ class AnswerPipeline:
 
         # Surfaced so an outage reads as "answered by a fallback" rather than as
         # unexplained quality loss (§8.4 rule 3).
-        if provider_used and settings.strong_model and provider_used not in settings.strong_model:
+        #
+        # Decided on the Router's deployment name, never on the model string.
+        # The old test — `provider_used not in settings.strong_model` — was a
+        # substring match against configuration, and providers return versioned
+        # ids, so a healthy `claude-opus-5-20260514` answering a configured
+        # `anthropic/claude-opus-5` would have marked EVERY answer degraded.
+        #
+        # `None` means the deployment could not be identified, and it is not
+        # treated as degradation: a warning the student cannot act on, raised
+        # because we failed to look something up, is worse than none.
+        if deployment is not None and deployment != PRIMARY_DEPLOYMENT:
+            log.warning(
+                "answered by the %s deployment (%s), not the primary",
+                deployment, provider_used,
+            )
             yield StreamFrame(type=FrameType.DEGRADED, provider=provider_used)
 
         # `length` means the model was cut off at max_output_tokens, not that it

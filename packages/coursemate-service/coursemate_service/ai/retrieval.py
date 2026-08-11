@@ -43,20 +43,35 @@ class CourseContextProvider:
         self.limit = limit or settings.rerank_top_k
 
     async def fetch(self, question: str, claims: StudentClaims) -> ContextResult:
+        """Async wrapper. SQLite is blocking, so the whole retrieval runs in a
+        worker thread — one slow query must not stall every other student's
+        stream."""
+        return await asyncio.to_thread(self.fetch_sync, question, claims)
+
+    def fetch_sync(
+        self, question: str, claims: StudentClaims, limit: int | None = None
+    ) -> ContextResult:
+        """The retrieval itself, synchronous.
+
+        Split out from `fetch` when the exam-prep agent needed it: the agent's
+        tool handlers already run in a worker thread, so wrapping this in a
+        coroutine only to await it from inside that thread would need a second
+        event loop. Same code, same boundary call, same gate input — the async
+        path is now a two-line wrapper rather than a parallel implementation.
+        """
+        limit = limit or self.limit
         offering_id = claims.offering_id
 
         # Distinguish "no index" from "nothing matched" BEFORE searching. They
         # produce different messages to the student and only one of them means
         # "come back later" (§5.1).
-        if not await asyncio.to_thread(boundary.has_index, offering_id):
+        if not boundary.has_index(offering_id):
             log.info("no index for offering %s", offering_id)
             return ContextResult(chunks=[], top_score=0.0, index_missing=True)
 
         try:
-            # SQLite is blocking; keep the event loop free so one slow retrieval
-            # cannot stall every other student's stream.
-            chunks = await asyncio.to_thread(
-                boundary.retrieve_course_context, question, offering_id, claims, self.limit
+            chunks = boundary.retrieve_course_context(
+                question, offering_id, claims, limit
             )
         except AuthorizationError as exc:
             # Denied scope returns EMPTY, never someone else's content. The
