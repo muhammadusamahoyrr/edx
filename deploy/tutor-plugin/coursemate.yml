@@ -43,6 +43,28 @@ config:
     # frame can never fire and there is no failover at all.
     FALLBACK_MODEL: ""
     FALLBACK_API_KEY: ""
+    # Base URLs for providers that are not at a well-known host: Ollama, vLLM, an
+    # OpenAI-compatible gateway. Empty for hosted vendors, which need none.
+    #
+    # `OLLAMA_API_BASE` below already covers `ollama/*` because LiteLLM reads that
+    # variable itself. These two are the provider-agnostic form, and they are the
+    # ones `config.py` documents — so they have to exist here or that recipe is a
+    # doc describing something the deployment cannot do.
+    #
+    # From a container, the host's Ollama is NOT `localhost`. Use
+    # `http://host.docker.internal:11434` together with the `extra_hosts` entry
+    # below, which is what makes that name resolve on Linux/WSL.
+    MODEL_API_BASE: ""
+    FALLBACK_API_BASE: ""
+    # --- the exam-prep agent (Feature B) -------------------------------------
+    # **Ships dark.** Read at the API layer, so `false` routes exam prep to the
+    # deterministic study plan and no agent code is imported at all.
+    #
+    # It is exposed here because a kill switch nobody can reach is not a switch.
+    # Turning it on required editing the generated docker-compose until this
+    # existed, which is exactly the "control that must be switched on" problem
+    # REQUIRE_GROUNDING already taught us, arriving from the other direction.
+    AGENT_ENABLED: false
     # Shared state across replicas: rate limit, authz cache, LiteLLM cooldowns.
     # Points at the Redis every Tutor deployment already runs for Celery, so it
     # costs no new infrastructure. Empty falls back to per-process state, which
@@ -92,10 +114,19 @@ patches:
         COURSEMATE_MODEL_API_KEY: "{{ COURSEMATE_MODEL_API_KEY }}"
         COURSEMATE_FALLBACK_MODEL: "{{ COURSEMATE_FALLBACK_MODEL }}"
         COURSEMATE_FALLBACK_API_KEY: "{{ COURSEMATE_FALLBACK_API_KEY }}"
+        COURSEMATE_MODEL_API_BASE: "{{ COURSEMATE_MODEL_API_BASE }}"
+        COURSEMATE_FALLBACK_API_BASE: "{{ COURSEMATE_FALLBACK_API_BASE }}"
+        COURSEMATE_AGENT_ENABLED: "{{ COURSEMATE_AGENT_ENABLED }}"
         COURSEMATE_REDIS_URL: "{{ COURSEMATE_REDIS_URL }}"
         COURSEMATE_MOCK_RESPONSE: "{{ COURSEMATE_MOCK_RESPONSE }}"
         COURSEMATE_REQUIRE_GROUNDING: "{{ COURSEMATE_REQUIRE_GROUNDING }}"
         COURSEMATE_INDEX_PATH: "/data/coursemate-index.db"
+        # Explicit, not left to the default. The default happens to land in the
+        # same mounted volume, but a past-paper pack cannot be rebuilt from the
+        # modulestore the way the index can — only from the original PDFs — so
+        # "it persists because a default coincides with a mount" is not a
+        # property worth relying on silently.
+        COURSEMATE_EXAMPREP_PATH: "/data/coursemate-examprep.db"
         COURSEMATE_LMS_URL: "{{ COURSEMATE_LMS_URL }}"
         COURSEMATE_ENFORCE_ENROLLMENT: "{{ COURSEMATE_ENFORCE_ENROLLMENT }}"
         COURSEMATE_LMS_CLIENT_ID: "{{ COURSEMATE_LMS_CLIENT_ID }}"
@@ -109,7 +140,17 @@ patches:
         # it can be rebuilt from the modulestore -- but an empty index makes the
         # tutor answer "still being prepared" for every question until someone
         # notices and re-runs the bootstrap.
+        #
+        # The exam-prep store lives here too, and for it the stakes are higher:
+        # a past-paper pack CANNOT be rebuilt from the modulestore, only from the
+        # original PDFs. This mount is the only thing keeping it.
         - ../../data/coursemate:/data
+      # `host.docker.internal` does not resolve on Linux/WSL without this. It is
+      # how the container reaches an Ollama running on the HOST, which is the
+      # normal development setup -- the model is on the host so it can use the
+      # host's memory and stay warm across container restarts.
+      extra_hosts:
+        - "host.docker.internal:host-gateway"
 
     # --- the nightly sweep needs something to schedule it ---------------------
     # Tutor runs no beat process. A CELERY_BEAT_SCHEDULE entry with no scheduler
