@@ -187,7 +187,7 @@ a unit, publish. Full walkthrough: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ```bash
 make install     # venv + editable installs
-make check       # architecture contracts + 127 tests, no Open edX required
+make check       # architecture contracts + 311 tests, no Open edX required
 ```
 
 Tests are self-contained — a clean checkout runs green with no environment setup.
@@ -238,12 +238,17 @@ than this section:
    cross-vendor failover are implemented and untested against a real outage.
 3. **One service replica only.** Rate limiting, the authz cache and LiteLLM
    cooldowns are shared through Redis; the SQLite index is still a local file.
-4. **Feature B (exam prep) is data shapes only** — cut deliberately, against a
-   list written in week one so the decision was not made under deadline.
+4. **Feature B and the agent layer ship dark.** Both are built and tested — the
+   tool registry, the loop's failure rules, the past-paper store, the mastery
+   memory layer, the MCP server, the exam-prep tab. `agent_enabled` defaults to
+   `False`, so a default install serves the deterministic study plan instead. The
+   reason is (2): the loop has never run against a real model, so tool-selection
+   accuracy and time-to-first-token are unmeasured, and `make agent-eval` says so
+   rather than printing a number a stub produced.
 
-The evaluation is 22 covered questions on two courses, scored by one person who
-also wrote the retriever. It is indicative, not settled, and it is reported that
-way throughout.
+The evaluation is 22 covered questions on two courses, plus 10 agent scenarios,
+scored by one person who also wrote the retriever. It is indicative, not settled,
+and it is reported that way throughout.
 
 ## License
 

@@ -40,6 +40,35 @@ Verified only against local `qwen2.5:7b` on CPU: **24 s to first token against a
 but no hosted provider has been exercised, which means retries, cooldowns and
 cross-vendor fallback are **implemented and untested against a real outage**.
 
+**And "untested" was doing more work than it looked like.** Two defects sat in
+that untested path until 2026-08-10, both found by driving a real LiteLLM Router
+with mocked completions rather than by reading the code:
+
+- **The fallback provider was serving half of all healthy traffic.**
+  `fallback_model` was registered as a second deployment named `strong`, and
+  deployments sharing a `model_name` are load-balanced, not chained. Measured
+  against litellm 1.94.1: **20 of 40 calls went to the secondary vendor** with
+  both providers up. Nothing failed — two working providers both answer — so
+  quality and spend split between vendors invisibly, and the setting did not do
+  the one job it existed for. A fallback is now its own deployment name reached
+  through `fallbacks=`, with the different-vendor entry ahead of `cheap`, which
+  shares the primary's vendor and therefore its outage.
+
+- **Every healthy answer would have been flagged DEGRADED.** The check was
+  `provider_used not in settings.strong_model` — a substring test against the
+  configured string. Providers return versioned ids, so a healthy
+  `claude-opus-5-20260514` answering a configured `anthropic/claude-opus-5` is
+  not a substring. It now reads the Router's own deployment id, which survives
+  streaming, and treats "could not identify" as unknown rather than as degraded.
+
+Both are the failure shape this project keeps finding, in the one area nobody
+could see: **a green path doing the wrong thing.** Neither is reachable by
+reading this repository alone — they only appear when a real Router runs, which
+is why `tests/test_model_routing.py` builds one.
+
+What remains genuinely untested is the real thing: an actual vendor outage,
+against actual credentials.
+
 ---
 
 ## 3. Single-replica assumptions — mostly closed
@@ -368,11 +397,152 @@ enrollment — which is still re-derived per call and still fails closed.
 
 ---
 
+## 5.2 The exam-prep agent — built, and shipping dark
+
+Feature B and the agent layer landed on 2026-08-10. What is real, and what is not:
+
+**Real, and tested offline:** the tool registry (identity refused rather than
+overridden, strict schemas, three outcomes not two), the agent loop's failure
+rules, the per-tool confidence gate, the past-paper store, the mastery memory
+layer with idempotent writes, the deterministic study plan, the local stdio MCP
+server, and the exam-prep tab. 311 tests, 6 contracts.
+
+**`agent_enabled` defaults to `False`**, so a default install routes exam prep to
+the deterministic path and no agent code runs. That is the inverse of the
+`require_grounding` lesson in §3.1 and the same principle applied the other way: a
+*safety control* that must be switched on is not a control, and a *new subsystem*
+that must be switched on is one nobody enables by accident.
+
+**Now run against a real model, once — and the news is mixed.** On 2026-08-11,
+after repairing the local Ollama install, the real `ExamPrepAgent` ran end to end
+against `qwen2.5:7b` on CPU, with a real exam pack (2 CLOs, 1 question).
+
+*Tool selection is good.* The model issued four distinct, well-formed calls and
+built a genuinely structured filter — exactly what §7.6 argues records are for:
+
+```
+get_clos               {}
+get_mastery            {clo_id: CLO-1}
+get_mastery            {clo_id: CLO-2}
+search_past_questions  {clo_id: CLO-1, exam_type: final, year_from: 2023,
+                        min_marks: 10, limit: 5}
+```
+
+No repeated calls, no invented `student_id`/`offering_id`, no malformed
+arguments, and the answer correctly said mastery was unknown rather than
+inventing it. **n=1, one course, one model** — indicative, not a measurement.
+
+*Latency is catastrophic on CPU, far worse than predicted.*
+
+| | |
+|---|---|
+| Time to first token | **301.5 s** (target: < 2 s) |
+| Total turn | **342.7 s** |
+| One planning call | ~20–50 s |
+| Chat, single token | 25 s cold / 2.3 s warm |
+
+The pre-build flag said "5–15 s realistically on a hosted model". On a local 7B
+CPU model it is **150× the target**. The fast path is untouched — abstention still
+costs milliseconds, because the gate fires before any tool loop — but the answered
+path is unusable for a live demo on this hardware. It needs a hosted provider, and
+that is the measurement still missing.
+
+### Run against a hosted provider (Groq, 2026-08-11) — and the bug it exposed
+
+Pointing the agent at `groq/llama-3.3-70b-versatile` changed the picture
+completely, but only after it surfaced a defect that had made the whole
+strict-schema story false.
+
+**The tool schemas never reached any provider.** `Tool.json_schema()` emitted the
+schema under `input_schema` — Anthropic's key — while the runner wrapped it in
+OpenAI's `{"type": "function", "function": …}` envelope, where the key must be
+`parameters`. Every provider therefore saw tools declared with **no parameters at
+all**. Groq validates server-side and rejected every call with
+`additionalProperties 'clo_id', 'exam_type', … not allowed`, naming the very
+fields the schema was meant to declare. Ollama does not validate, so locally it
+looked like the model was inventing argument names — which is exactly what it was
+doing, because it had nothing to follow.
+
+That also retracts an earlier diagnosis in this file: the invented
+`learning_outcome` / list-valued `clo_id` were **not** model weakness. They were
+the absence of a schema. `registry.py` carries the full note.
+
+**After the fix**, over seven runs (one transient provider failure, six clean):
+
+| | local `qwen2.5:7b` | `groq/llama-3.3-70b` |
+|---|---|---|
+| iterations | 6 (always capped) | **2–3** |
+| time to first token | 187–301 s | **13.3–15.2 s** |
+| total turn | 222–419 s | **13.8–15.7 s** |
+| LLM planning | 145–310 s | **~4.4 s** |
+
+Of that ~14 s, **~9.5 s is one-time LiteLLM Router construction** paid at process
+start, not per turn — so a warm service is roughly **4–5 s to first token**. Still
+over the < 2 s target, but a usable demo rather than an unusable one.
+
+Batching also works on this model: one run issued two `search_past_questions`
+calls in a single planning turn, which the runner's existing `for call in calls`
+handled unchanged.
+
+**Two caveats, both real.** `--live` tool-selection accuracy came back **0.44**,
+but that run exhausted Groq's free-tier daily cap (98,716 of 100,000 tokens) and
+rate-limited cases counted as misses — it is a contaminated floor, not a
+measurement, and it needs re-running with headroom. And one run in seven failed
+on a transient provider error, which is why `run_agent_eval.py` and the profiler
+now report provider failures loudly instead of showing a suspiciously fast run
+with zero iterations.
+
+**The model expands to fill `max_iterations`. Measured on the local model.**
+
+`qwen2.5:7b` emits one tool call per planning turn — proven directly: asked
+*"Call BOTH get_clos AND get_mastery now, in a single message, as two tool calls
+together"*, it returns exactly one. So six iterations buys six tool calls, and the
+runner's existing `for call in calls` (what frontier models exercise) never fires.
+
+The obvious fix was to need fewer calls, so `get_clos` and `get_mastery` were
+merged into `get_plan_context`, and `search_past_questions.clo_id` was widened to
+accept a list. Both work. **Neither reduced the round trips**, because the model
+simply spent the freed rounds on something else:
+
+| Run | Iterations | What the spare rounds did |
+|---|---|---|
+| before merge | 6 | one search per outcome |
+| after, run 1 | **3** | (sent a CLO list to a `str` field → turn died; fixed) |
+| after, run 2 | 6 | called `get_plan_context` twice more, identically |
+| after, run 3 | 6 | relaxed `min_marks` 10 → 5 → 0 on an outcome with no questions |
+
+In runs 2 and 3 the **last two rounds returned nothing new** — a duplicate call,
+and three empty searches. That is ~50–100 s of the turn buying zero information.
+
+So the binding constraint is the cap, not the tool count. The merge is still worth
+keeping — it is strictly fewer calls for the same information on any model, and it
+is what made run 1's 3 iterations possible — but on this model the honest
+conclusion is that `agent_max_iterations = 6` is a budget the planner will always
+spend. Lowering it to 3–4 is the change the profile actually supports; it has not
+been made, because it should be calibrated against a hosted model rather than
+against a 7B that cannot batch.
+
+`eval/run_agent_eval.py` still reports tool-selection accuracy as **NOT MEASURED**
+by default; `--live` now has a working model behind it.
+
+**Mastery is not a grade.** The snapshot is carried by the browser, exactly as
+chat history is (§3.1), so a student can forge their own. What that buys them is
+worse study recommendations for themselves: it never reaches another student, it
+cannot widen retrieval scope, and enrollment is still re-derived at the boundary
+on every call. It must never be read as an assessment record.
+
+**Not built for Feature B:** PDF extraction and OCR/VLM (a pack is loaded as JSON
+through a service-credentialed endpoint; producing that JSON from real papers is
+manual), automated CLO tagging (the prompt exists, nothing calls it), and the
+instructor correction UI for a mis-tagged question.
+
+---
+
 ## 6. Not built at all
 
 | Feature | Status |
 |---|---|
-| **Feature B — exam prep** | Contracts only. No storage, extraction, CLO tagging, or UI |
+| **Feature B — PDF/OCR extraction** | The store, agent, rubric and UI exist; turning real past papers into a pack is manual. See §5.2 |
 | **Instructor loop** | Proposal queue schema exists, dormant. No struggle signals, review UI, or notifications |
 | **XBlockAside** | Tutor must be added per-unit by hand. The aside would auto-attach, filtered to `vertical` |
 | Instructor-visible opt-in state | `coursemate_reindex --all` now indexes only courses carrying the tutor block, matching what the sweep already required. There is no UI showing an admin which courses opted in — `--all` prints the counts and nothing else |
@@ -394,6 +564,18 @@ enrollment — which is still re-derived per call and still fails closed.
 - **Latency figures are not comparable across runs** — model cache state and the
   answer/abstain mix both move the medians.
 - **One course, one model.**
+- **The agent gold set (n=10) measures the loop, not the model.** Its four
+  regression gates are decided entirely by tool outcomes, so a scripted router
+  measures them exactly. Tool-selection accuracy is not measured at all until a
+  provider is configured, and is reported as such.
+- **The Feature B rubric detects reprinting, not rewording.** It is token overlap,
+  the same honest floor `verify.py` uses. A practice question paraphrased from a
+  past paper passes the duplicate check. The threshold (0.6) is calibrated on one
+  course.
+- **Coverage is gated on the service and contracts only** (81%). `coursemate_platform`
+  sits at 26% because most of it needs a live Open edX to execute; blending the two
+  produced a figure that measured how much of the code needs a platform rather than
+  how well tested it is.
 
 ---
 
@@ -408,7 +590,11 @@ enrollment — which is still re-derived per call and still fails closed.
 5. **Cross-encoder reranking**, now measurable against the lexical baseline.
 6. **Shorten the unpublish window** by subscribing to a platform unpublish event
    — which means proposing one upstream, since none exists.
-7. **Feature B**, which is a project of its own.
+7. **Turn the agent on against a real model** and measure the two things a stub
+   cannot: tool-selection accuracy, and time to first token. Both are why
+   `agent_enabled` ships `False` (§5.2).
+8. **PDF extraction for Feature B.** Everything downstream of a loaded pack works;
+   producing the pack is manual.
 
 ---
 

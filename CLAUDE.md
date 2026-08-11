@@ -79,6 +79,30 @@ one thing left unhealthy is the host, not CourseMate — see the warning above.
 
 Rebuilding the *service* image is fine — ~20s, offline, no dependencies.
 
+## Ollama (host-side, 2026-08-11)
+
+Both models live on **`D:\ollama\models`** — moved off C, which was down to 45 GB.
+
+    nomic-embed-text  0.26 GB   embeddings, 768-dim, ~1.4 s
+    qwen2.5:7b        4.36 GB   chat, 25 s cold / 2.3 s warm on CPU
+
+Two traps, both of which cost time on 2026-08-11:
+
+1. **`OLLAMA_MODELS` is NOT authoritative on Windows.** Ollama 0.32.7 stores the
+   path in its own settings DB — `%LOCALAPPDATA%\Ollama\db.sqlite`, table
+   `settings`, column `models` — and that value **overrides the environment
+   variable**. Setting the env var and restarting looks like it works and changes
+   nothing; the server logs `OLLAMA_MODELS:<the db value>` regardless. Check the
+   `server config` line in `%LOCALAPPDATA%\Ollama\server.log` to see what the
+   server actually opened. The installer also resets the env var.
+2. **An interrupted auto-update leaves inference broken but downloads working.**
+   The 0.32.6→0.32.7 updater was killed mid-run, which emptied
+   `AppData\Local\Programs\Ollama\lib\` of every runner binary. `ollama pull` and
+   `ollama list` kept working — they need no runner — so the break was invisible
+   until a generation failed with `llama-server binary not found`. Fixed by
+   re-running the full installer (1.49 GB). If inference dies after an update,
+   check `lib\ollama\llama-server.exe` exists before debugging anything else.
+
 ## Verify, don't assume
 
 Claims get labelled **VERIFIED** (observed), **INFERRED** (from source), or
@@ -102,9 +126,21 @@ upstream `edX+DemoX+Demo_Course`).
 
 ## Tests
 
-    make check        # 127 tests + 6 import-linter contracts
+    make check        # 311 tests + 6 import-linter contracts
+    make coverage     # gated at 80% for service+contracts; platform reported ungated
+    make agent-eval   # the 4 agent regression gates — needs no provider
+    make openapi      # regenerate docs/openapi.json from the routes
 
 Runs on Windows against `.venv/`. No Open edX, no network, no containers.
+
+`make install` now also pulls **django, XBlock and web_fragments**. They are not
+the Open edX runtime — they are the two libraries the plugin's models and block
+are built on, and without them the mastery idempotency guarantee and the
+exam-prep handler are untestable outside a container, which in practice means
+untested. **Do not add `pytest-django`**: it calls `setup_test_environment()` at
+session start and collides with the fixture in
+`packages/coursemate-platform/tests/unit/conftest.py`, which has to own that
+lifecycle to keep the in-memory database isolated per test.
 
 ## Running anything in WSL
 
@@ -159,6 +195,41 @@ Do not break these without saying so explicitly:
    would hide paid content from the students who paid for it.
 7. Indexing is opt-in: a course qualifies by containing the tutor block.
    `--force-all` exists and says what it is doing.
+8. **The agent's tool surface is read-only.** §10.6's claim — *"there is no prompt
+   that makes CourseMate change what students see"* — is structural, not
+   aspirational. The only write in Feature B is `record_attempt`, and it lives on
+   the XBlock, platform-side, deliberately off the tool surface. Adding a write
+   tool ends the claim on the day it is added.
+9. **Identity is injected, never accepted.** The tool registry refuses
+   model-supplied `offering_id`/`student_id` rather than overriding them —
+   overriding hides the attempt. No tool schema declares an identity field, so a
+   cross-offering request cannot be expressed, only refused.
+10. **One confidence gate, one implementation** (`ai/gate.py`). Chat and every
+    retrieval tool call it. A second copy would compare against the wrong scale —
+    the gate reads the *blended* rerank score, not raw coverage — and both paths
+    would look correct in isolation.
 
 The six import-linter contracts in `.importlinter` enforce the structural half of
-this and do fail when violated.
+this and do fail when violated. Contracts 3 and 4 were widened on 2026-08-10 to
+cover `coursemate_service.agents` and `coursemate_service.mcp`; verified by
+deliberate violation.
+
+## The agent layer (2026-08-10)
+
+Built, tested offline, **shipping dark**. `agent_enabled` defaults to `False` and
+is read at the API layer, so a default install routes `/examprep/plan` to the
+deterministic path in `api/plan.py` and no agent code is even imported.
+
+What a fresh session most needs to know:
+
+- **`api/plan.py` is not a stub.** It is the exam-prep feature with the flag off,
+  and it has to keep working — a kill switch that routes to something broken is a
+  switch nobody dares use. It is also the baseline the agent must beat.
+- **Mastery is platform-owned and browser-carried**, the same courier §3.1
+  settled for chat history. It is **not in Redis**: this deployment's Redis is
+  `maxmemory-policy allkeys-lru`, which evicts keys with no TTL, AOF persists the
+  eviction, and nothing logs it. Measured, not assumed.
+- **Nothing has run against a real model.** Every agent test drives the real loop
+  against a scripted router. `make agent-eval` measures the four regression gates
+  and reports tool-selection accuracy as NOT MEASURED. Do not report a number
+  from a stub. See LIMITATIONS §5.2.

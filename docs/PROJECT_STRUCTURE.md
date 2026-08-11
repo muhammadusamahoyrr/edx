@@ -119,20 +119,32 @@ coursemate_service/
 ├── api/
 │   ├── deps.py          # JWT verify, rate limit
 │   ├── chat.py          # SSE encoding — NO AI logic
+│   ├── examprep.py      # the kill switch is read HERE, not inside the agent
+│   ├── plan.py          # deterministic study plan — what ships with the flag off
 │   ├── ingest.py        # service credential only
+│   ├── packs.py         # load past papers; service credential only
 │   └── invalidation.py  # immediate revocation
 ├── ai/
 │   ├── pipeline.py      # retrieve → gate → generate → cite. Never raises
+│   ├── gate.py          # the confidence gate — ONE implementation, every caller
 │   ├── client.py        # LiteLLM Router: retries, cooldowns, fallbacks
 │   ├── retrieval.py     # ContextProvider, via the boundary
 │   ├── context.py       # the protocol RAG plugs into
 │   └── prompts.py       # trust tiers; retrieved text is quoted data
+├── agents/              # SHIPS DARK — agent_enabled defaults False
+│   ├── registry.py      # identity refused, not overridden; ok/gated/error
+│   ├── schemas.py       # strict args; no schema declares an identity field
+│   ├── tools.py         # three tools, all read-only, gate runs per call
+│   ├── runner.py        # plan → decide → synthesise; abandon, never resume
+│   └── prompts.py       # tool results in their own blocks, never the system role
+├── mcp/server.py        # local stdio, one pinned offering, instructor-scoped
 ├── boundary/
 │   ├── interface.py     # the contract — states only what is implemented
 │   ├── impl.py          # identity → scope → filter → audit, every call
 │   └── authz.py         # enrollment re-derivation; fails closed
 ├── knowledge/
 │   ├── store.py         # FTS5 index; write → verify → swap
+│   ├── examprep_store.py# past-paper RECORDS — a metadata filter, not a blob search
 │   ├── rerank.py        # coverage + proximity + title
 │   └── cache/           # SPECIFIED, NOT WIRED — see its README
 ├── ingestion/chunking.py
@@ -147,7 +159,28 @@ wider set than the student may see. Contract 3 makes forgetting a CI failure.
 
 **Why `api/chat.py` contains no AI logic.** The pipeline yields frames; the route
 encodes them. That split is what let retrieval land in Phase 6 without the API
-changing shape.
+changing shape — and it paid off a third time for the agent: `ExamPrepAgent.stream`
+and `deterministic_plan` have the same signature and yield the same frames, so the
+kill switch is a routing decision rather than a second code path with its own bugs.
+
+**Why `agents/` cannot import `knowledge/`.** Same reason `ai/` cannot, and it is
+the case §6.5 actually predicted: *"scattered across agent nodes, a new node can
+forget one"* of the four steps. The exam-prep agent is that new node. Contracts 3
+and 4 were widened to cover `agents` and `mcp` in the commit that created them,
+rather than after — a contract added later is a contract that once had a hole.
+
+**Why the confidence gate is its own module.** It was three lines inline in
+`pipeline.py` while there was one retrieval path. Per-tool gating needed the same
+decision in a second place, and a copy would have been a real risk rather than a
+stylistic one: the gate compares against the *blended* rerank score, not the raw
+coverage the store computes, and a reimplementation that compared the wrong number
+would abstain differently on questions nobody tested — with both paths looking
+correct in isolation.
+
+**Why `mcp/` is a thin adapter and nothing more.** It exposes
+`agents.registry`'s tools unchanged, so the gate, the authz checks and the
+read-only surface hold identically. It is also the designated cut candidate, and a
+thin adapter is what makes dropping it strand nothing.
 
 ---
 
@@ -186,5 +219,5 @@ design it was defending. Contract 2 stays transitive, because an indirect import
 still drags an AI library into the LMS image.
 
 ```bash
-make check     # contracts + 66 tests, seconds, no Open edX required
+make check     # contracts + 311 tests, seconds, no Open edX required
 ```

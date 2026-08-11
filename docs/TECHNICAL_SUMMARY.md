@@ -121,13 +121,16 @@ tell you whether your retrieval changed or the judge did.
 
 | | |
 |---|---|
-| recall@3 / recall@5 | **1.000** / 1.000 |
+| recall@3 (original arm / paraphrase arm) | **1.000** / **0.300** |
 | MRR (reranker off → on) | 0.644 → **0.833** |
 | Retrieval p95 | **12 ms** |
 | False-answer rate | **0.000** (was 1.000) |
 | Citation correctness | 1.000 |
 | Authorization matrix | 4/4 |
-| Tests / contracts | 66 / 6 |
+| Agent regression gates | **4/4** (n=10 scenarios; measures the loop, not the model) |
+| Tool-selection accuracy | **NOT MEASURED** — needs a provider; a stub would measure the stub |
+| Coverage (service + contracts) | **81%**, gated. Platform 26%, reported ungated — most of it needs Open edX to execute |
+| Tests / contracts | 311 / 6 |
 
 ---
 
@@ -229,9 +232,7 @@ limitations document exists for the same reason.
 
 1. **Redis for the rate limiter and authz cache** — both are per-process and fail
    silently on a second replica.
-2. **Paraphrase questions in the gold set** — recall@3 is 1.000, so the benchmark
-   is saturated and cannot justify embeddings yet.
-3. **Then** embeddings, merged with BM25 rather than replacing it.
+2. **Add embeddings as a second retriever**, merged with BM25 (hybrid retrieval).
 
 ---
 
