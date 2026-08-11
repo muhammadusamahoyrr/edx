@@ -85,6 +85,7 @@ async def ingest_blocks(request: IngestRequest) -> IngestAccepted:
         store.activate_usage_keys(
             request.offering_id, version, [b.usage_key for b in request.blocks]
         )
+        ok = False   # no swap happened; topup activated specific blocks only
     elif request.is_final:
         ok = store.verify_run(request.offering_id, version)
         if ok:
@@ -111,20 +112,8 @@ async def ingest_blocks(request: IngestRequest) -> IngestAccepted:
 async def delete_blocks(request: DeleteRequest) -> dict:
     """XBLOCK_DELETED, or an orphan found by the reconciliation sweep (§5.4)."""
     store = get_store()
-    with store._lock:  # noqa: SLF001 - single-writer store, deliberate
-        ids = [
-            r["id"] for r in store._conn.execute(  # noqa: SLF001
-                "SELECT id FROM chunks WHERE offering_id=? AND usage_key LIKE ?",
-                (request.offering_id, request.usage_key + "%"),
-            )
-        ]
-        if ids:
-            marks = ",".join("?" * len(ids))
-            store._conn.execute(f"DELETE FROM chunks_fts WHERE rowid IN ({marks})", ids)  # noqa: SLF001
-            store._conn.execute(f"DELETE FROM chunk_groups WHERE chunk_id IN ({marks})", ids)  # noqa: SLF001
-            store._conn.execute(f"DELETE FROM chunks WHERE id IN ({marks})", ids)  # noqa: SLF001
-            store._conn.commit()  # noqa: SLF001
-    return {"deleted_chunks": len(ids)}
+    deleted = store.delete_by_prefix(request.offering_id, request.usage_key)
+    return {"deleted_chunks": deleted}
 
 
 @router.get("/manifest/{offering_id:path}")

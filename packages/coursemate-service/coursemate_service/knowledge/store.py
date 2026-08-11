@@ -10,7 +10,7 @@ retrievers.
 What that buys, concretely:
 
 * **No new infrastructure.** FTS5 and `bm25()` are in the Python standard
-  library. At 413 blocks a vector database would be a container, a client and a
+  library. At 282 chunks a vector database would be a container, a client and a
   failure mode in exchange for nothing measurable.
 * **Deterministic, therefore verifiable.** The same query returns the same ranked
   set every run, so retrieval quality can be asserted in a test rather than
@@ -345,6 +345,22 @@ class ChunkStore:
         # words the chunk actually contains — is bounded 0..1, comparable across
         # queries, and directly interpretable: 0.5 means "half the question's
         # substantive words appear here".
+        #
+        # **But that reading only holds while reranking is OFF, and it is on by
+        # default.** `LexicalReranker` overwrites this score with a blend —
+        # 0.60·coverage + 0.15·proximity + 0.25·title — before the confidence
+        # gate ever sees it (`knowledge/rerank.py`, then `ai/retrieval.py` takes
+        # the max as `top_score`). So the number this function produces is what
+        # the RETRIEVER means by confidence; the number the GATE compares against
+        # `confidence_threshold` is the reranker's. With `rerank_enabled=False`
+        # the two are the same and the sentence above is literally true.
+        #
+        # This is documented rather than changed because it was measured and the
+        # blend is not the weaker signal: over the 28-question gold set the two
+        # scorings answer the same 10 questions correctly, and the blend returns
+        # 0 false answers against coverage-only's 2 — it catches the adversarial
+        # q17/q18 that coverage alone answers. See config.confidence_threshold
+        # for the measured relationship between the two scales.
         query_terms = _content_terms(query)
         results: list[StoredChunk] = []
         for r in rows:
@@ -450,6 +466,35 @@ class ChunkStore:
             self._conn.commit()
         log.info("sweep removed %d chunks across %d blocks from %s",
                  len(ids), len(usage_keys), offering_id)
+        return len(ids)
+
+    def delete_by_prefix(self, offering_id: str, usage_key_prefix: str) -> int:
+        """Delete chunks whose usage_key starts with usage_key_prefix.
+
+        XBLOCK_DELETED (§5.4): removes matching chunks, updates chunk_count in offering_state.
+        """
+        with self._lock:
+            ids = [
+                r["id"]
+                for r in self._conn.execute(
+                    "SELECT id FROM chunks WHERE offering_id=? AND usage_key LIKE ?",
+                    (offering_id, usage_key_prefix + "%"),
+                )
+            ]
+            if not ids:
+                return 0
+            id_marks = ",".join("?" * len(ids))
+            self._conn.execute(f"DELETE FROM chunks_fts WHERE rowid IN ({id_marks})", ids)
+            self._conn.execute(f"DELETE FROM chunk_groups WHERE chunk_id IN ({id_marks})", ids)
+            self._conn.execute(f"DELETE FROM chunks WHERE id IN ({id_marks})", ids)
+            self._conn.execute(
+                "UPDATE offering_state SET chunk_count = "
+                "(SELECT COUNT(*) FROM chunks WHERE offering_id=? AND active=1), "
+                "updated_at = datetime('now') WHERE offering_id=?",
+                (offering_id, offering_id),
+            )
+            self._conn.commit()
+        log.info("deleted %d chunks matching prefix %s from %s", len(ids), usage_key_prefix, offering_id)
         return len(ids)
 
     def stats(self, offering_id: str) -> dict:

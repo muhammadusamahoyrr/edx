@@ -10,10 +10,11 @@ worker pool is exhausted by **occupancy**, not by computation. Two hundred stude
 streaming concurrently would be two hundred occupied workers, which is exactly the
 incident the topology exists to prevent.
 
-Phase 4 scope: plumbing only. The stream emits a scripted response so the
-transport, auth and streaming behaviour can be verified independently of any
-model. Phase 5 replaces `_scripted_answer` with a real LiteLLM call and nothing
-else about this file changes — which is the point of building it this way.
+**This file is transport, and nothing else.** Authentication, rate limiting and
+SSE encoding happen here; what to say is decided entirely by `ai/pipeline.py`.
+That split has now been paid off twice — Phase 5 replaced a scripted answer with
+a real LiteLLM call, and Phase 6 added retrieval, the confidence gate, reranking
+and claim verification, and neither touched this file.
 """
 
 from __future__ import annotations
@@ -63,12 +64,20 @@ async def chat(
 ) -> StreamingResponse:
     """Stream an answer to the browser.
 
-    Authorization note, stated plainly because it is not finished: the JWT is
-    verified here (signature, expiry, audience), but enrollment and role are
-    **not yet re-checked against the platform**. §10.1 requires that on every
-    call, and it lands with the boundary in Phase 6. Until then this endpoint
-    trusts the token's scope, which is acceptable only because it serves no real
-    course content yet.
+    Authorization happens in two places, and this route is only the first of
+    them. `rate_limited` verifies the JWT's signature, expiry and audience, and
+    rejects a service credential presented on the student path — which
+    establishes *who is asking* and nothing more.
+
+    Entitlement is re-derived deeper in, at the CourseIntelligence boundary
+    (`boundary/impl.py`), which asks the platform whether this user is still
+    enrolled before any content is a retrieval candidate. §10.1 requires that on
+    every call, because a signed token outlives the enrollment it was minted
+    under: unenroll a student and their unexpired token still verifies here.
+
+    It is deliberately not done in this route. Putting it at the boundary is
+    what makes it unskippable — every path to course content goes through that
+    one method, so a future endpoint cannot forget it.
     """
     log.info(
         "chat: user=%s offering=%s block=%s q=%r",
