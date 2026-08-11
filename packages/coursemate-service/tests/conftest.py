@@ -24,6 +24,11 @@ _TEST_ENV = {
     "COURSEMATE_ENFORCE_ENROLLMENT": "false",
     # Never write to the real index path from a test run.
     "COURSEMATE_INDEX_PATH": ":memory:",
+    "COURSEMATE_EXAMPREP_PATH": ":memory:",
+    # The agent ships dark and the default is False, so this is belt and braces —
+    # but a test suite whose behaviour depends on an inherited environment
+    # variable is a suite that passes on one machine and fails on another.
+    "COURSEMATE_AGENT_ENABLED": "false",
 }
 
 for _key, _value in _TEST_ENV.items():

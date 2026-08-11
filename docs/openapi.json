@@ -1,0 +1,1672 @@
+{
+  "components": {
+    "schemas": {
+      "CLO": {
+        "properties": {
+          "clo_id": {
+            "title": "Clo Id",
+            "type": "string"
+          },
+          "confirmed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed By"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "clo_id",
+          "text"
+        ],
+        "title": "CLO",
+        "type": "object"
+      },
+      "CLOMastery": {
+        "description": "Counters for one course learning outcome.\n\nCounters rather than a score. Turning `(attempts, correct)` into a single\nnumber is a calibration question \u2014 spaced repetition, decay, difficulty\nweighting \u2014 and picking a formula now would bake an unvalidated one into\nstored data. Counters can be rescored later; a stored score cannot be\nun-rounded.",
+        "properties": {
+          "attempts": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "clo_id": {
+            "title": "Clo Id",
+            "type": "string"
+          },
+          "correct": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Correct",
+            "type": "integer"
+          },
+          "difficulty_band": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difficulty Band"
+          }
+        },
+        "required": [
+          "clo_id"
+        ],
+        "title": "CLOMastery",
+        "type": "object"
+      },
+      "CLOOption": {
+        "description": "One entry in the exam-prep tab's outcome selector.\n\nMirrors what the agent's `get_plan_context` tool already returns, so the UI\nand the model see the same shape. `confirmed_by` is deliberately reduced to a\nboolean: \u00a77.3 wants the student to know whether a human confirmed the\noutcome, not which human \u2014 that is an instructor's name and no part of a\nstudy aid.",
+        "properties": {
+          "clo_id": {
+            "title": "Clo Id",
+            "type": "string"
+          },
+          "confirmed": {
+            "default": false,
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "clo_id",
+          "text"
+        ],
+        "title": "CLOOption",
+        "type": "object"
+      },
+      "ChatRequest": {
+        "properties": {
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/Turn"
+            },
+            "maxItems": 20,
+            "title": "History",
+            "type": "array"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/Mode",
+            "default": "direct"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          },
+          "usage_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage Key"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "ChatRequest",
+        "type": "object"
+      },
+      "ContentType": {
+        "enum": [
+          "lesson",
+          "problem",
+          "transcript",
+          "slide",
+          "past_paper",
+          "clo_doc",
+          "student_note"
+        ],
+        "title": "ContentType",
+        "type": "string"
+      },
+      "DeleteRequest": {
+        "description": "XBLOCK_DELETED, or an orphan found by the reconciliation sweep (\u00a75.4).",
+        "properties": {
+          "offering_id": {
+            "title": "Offering Id",
+            "type": "string"
+          },
+          "tenant": {
+            "title": "Tenant",
+            "type": "string"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "usage_key": {
+            "title": "Usage Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant",
+          "offering_id",
+          "usage_key",
+          "trace_id"
+        ],
+        "title": "DeleteRequest",
+        "type": "object"
+      },
+      "ExamPrepPack": {
+        "properties": {
+          "clos": {
+            "items": {
+              "$ref": "#/components/schemas/CLO"
+            },
+            "title": "Clos",
+            "type": "array"
+          },
+          "offering_id": {
+            "title": "Offering Id",
+            "type": "string"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionRecord"
+            },
+            "title": "Questions",
+            "type": "array"
+          },
+          "tenant": {
+            "title": "Tenant",
+            "type": "string"
+          }
+        },
+        "required": [
+          "offering_id",
+          "tenant"
+        ],
+        "title": "ExamPrepPack",
+        "type": "object"
+      },
+      "ExamPrepRequest": {
+        "description": "Browser -> service, for one exam-prep turn.\n\nDeliberately shaped like `ChatRequest`: free-text intent plus platform-owned\nstate carried by the browser. There is no `student_id` and no `offering_id`\nfield, and their absence is the contract \u2014 scope comes from the verified JWT,\nso a forged payload cannot widen it. The tool registry refuses those fields\nfrom the model for the same reason one level down.",
+        "properties": {
+          "mastery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MasterySnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Request",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request"
+        ],
+        "title": "ExamPrepRequest",
+        "type": "object"
+      },
+      "ExamPrepStatus": {
+        "description": "What the XBlock renders before the student asks anything.\n\nExists so the tab can say *why* it is empty. Design \u00a75.1's whole argument is\nthat \"still being prepared\" and \"not covered\" are different sentences, and a\ntab that renders a disabled box with neither is the failure it describes.",
+        "properties": {
+          "agent_available": {
+            "title": "Agent Available",
+            "type": "boolean"
+          },
+          "clo_options": {
+            "items": {
+              "$ref": "#/components/schemas/CLOOption"
+            },
+            "title": "Clo Options",
+            "type": "array"
+          },
+          "clos": {
+            "default": 0,
+            "title": "Clos",
+            "type": "integer"
+          },
+          "earliest_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earliest Year"
+          },
+          "latest_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Year"
+          },
+          "low_confidence": {
+            "default": 0,
+            "title": "Low Confidence",
+            "type": "integer"
+          },
+          "pack_loaded": {
+            "title": "Pack Loaded",
+            "type": "boolean"
+          },
+          "questions": {
+            "default": 0,
+            "title": "Questions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "agent_available",
+          "pack_loaded"
+        ],
+        "title": "ExamPrepStatus",
+        "type": "object"
+      },
+      "ExamType": {
+        "enum": [
+          "mid",
+          "final",
+          "quiz",
+          "assignment"
+        ],
+        "title": "ExamType",
+        "type": "string"
+      },
+      "ExtractionMethod": {
+        "enum": [
+          "digital",
+          "ocr",
+          "vlm"
+        ],
+        "title": "ExtractionMethod",
+        "type": "string"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "IngestAccepted": {
+        "description": "What the service reports back after write-verify-swap (\u00a75.3).",
+        "properties": {
+          "blocks_received": {
+            "title": "Blocks Received",
+            "type": "integer"
+          },
+          "blocks_written": {
+            "title": "Blocks Written",
+            "type": "integer"
+          },
+          "chunks_written": {
+            "title": "Chunks Written",
+            "type": "integer"
+          },
+          "failed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Failed",
+            "type": "array"
+          },
+          "swapped": {
+            "title": "Swapped",
+            "type": "boolean"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trace_id",
+          "blocks_received",
+          "blocks_written",
+          "chunks_written",
+          "swapped"
+        ],
+        "title": "IngestAccepted",
+        "type": "object"
+      },
+      "IngestRequest": {
+        "description": "A batch of leaves for one course, from one bootstrap run or one publish.",
+        "properties": {
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/LeafBlock"
+            },
+            "title": "Blocks",
+            "type": "array"
+          },
+          "course_id": {
+            "title": "Course Id",
+            "type": "string"
+          },
+          "course_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Version"
+          },
+          "is_final": {
+            "default": false,
+            "title": "Is Final",
+            "type": "boolean"
+          },
+          "offering_id": {
+            "title": "Offering Id",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "tenant": {
+            "title": "Tenant",
+            "type": "string"
+          },
+          "topup": {
+            "default": false,
+            "title": "Topup",
+            "type": "boolean"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant",
+          "course_id",
+          "offering_id",
+          "blocks",
+          "trace_id",
+          "run_id"
+        ],
+        "title": "IngestRequest",
+        "type": "object"
+      },
+      "InvalidationNotice": {
+        "properties": {
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id"
+          },
+          "offering_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offering Id"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/InvalidationReason"
+          },
+          "student_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Id"
+          },
+          "tenant": {
+            "title": "Tenant",
+            "type": "string"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant",
+          "reason",
+          "trace_id"
+        ],
+        "title": "InvalidationNotice",
+        "type": "object"
+      },
+      "InvalidationReason": {
+        "enum": [
+          "enrollment_changed",
+          "unenrolled",
+          "clo_edited",
+          "course_version_bumped"
+        ],
+        "title": "InvalidationReason",
+        "type": "string"
+      },
+      "LeafBlock": {
+        "description": "One published leaf block, extracted in-platform.",
+        "properties": {
+          "block_id": {
+            "title": "Block Id",
+            "type": "string"
+          },
+          "block_type": {
+            "title": "Block Type",
+            "type": "string"
+          },
+          "content_type": {
+            "$ref": "#/components/schemas/ContentType"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "group_tokens": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Group Tokens",
+            "type": "array"
+          },
+          "publish_time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publish Time"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "usage_key": {
+            "title": "Usage Key",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          },
+          "week": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Week"
+          }
+        },
+        "required": [
+          "usage_key",
+          "block_id",
+          "block_type",
+          "version",
+          "text",
+          "content_type"
+        ],
+        "title": "LeafBlock",
+        "type": "object"
+      },
+      "MasterySnapshot": {
+        "description": "What the browser carries into one exam-prep request.\n\nBounded like `ChatRequest.history` and for the same reason: an unbounded\npayload is a denial-of-service the student pays for. A course with more than\n64 CLOs is outside the MVP, and truncation is visible in `truncated`.",
+        "properties": {
+          "clos": {
+            "items": {
+              "$ref": "#/components/schemas/CLOMastery"
+            },
+            "maxItems": 192,
+            "title": "Clos",
+            "type": "array"
+          },
+          "offering_id": {
+            "title": "Offering Id",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "offering_id"
+        ],
+        "title": "MasterySnapshot",
+        "type": "object"
+      },
+      "Mode": {
+        "enum": [
+          "direct",
+          "socratic"
+        ],
+        "title": "Mode",
+        "type": "string"
+      },
+      "PracticeRequest": {
+        "description": "Browser -> service, for one generated practice question.\n\nTwo fields, and the shape is the point: a student picks an outcome and a\nlevel, and everything else \u2014 who they are, which course, which past paper,\nwhich lesson \u2014 is derived server-side. There is no `student_id`,\n`offering_id` or `question_id` here, so a forged payload cannot widen scope\nor name a source; the JWT scopes the request and the generator selects the\nsource itself.\n\nDeliberately NOT free text, unlike `ExamPrepRequest`. Generation is a fixed\ntwo-stage pipeline with no planning step, so there is nothing for prose to\nexpress \u2014 and an open field would invite prompt injection into a path that\nproduces content a student reads.",
+        "properties": {
+          "clo_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Clo Id",
+            "type": "string"
+          },
+          "difficulty_band": {
+            "anyOf": [
+              {
+                "enum": [
+                  "easy",
+                  "medium",
+                  "hard"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difficulty Band"
+          }
+        },
+        "required": [
+          "clo_id"
+        ],
+        "title": "PracticeRequest",
+        "type": "object"
+      },
+      "QuestionRecord": {
+        "description": "One past-paper question. A record, not a blob (\u00a77.6).",
+        "properties": {
+          "clo_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clo Id"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "difficulty": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difficulty"
+          },
+          "difficulty_is_derived": {
+            "default": true,
+            "title": "Difficulty Is Derived",
+            "type": "boolean"
+          },
+          "exam_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExamType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "extraction_method": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExtractionMethod"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "low_confidence_flag": {
+            "default": false,
+            "title": "Low Confidence Flag",
+            "type": "boolean"
+          },
+          "marks": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marks"
+          },
+          "offering_id": {
+            "title": "Offering Id",
+            "type": "string"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "question_id": {
+            "title": "Question Id",
+            "type": "string"
+          },
+          "question_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question Number"
+          },
+          "source_doc_id": {
+            "title": "Source Doc Id",
+            "type": "string"
+          },
+          "tenant": {
+            "title": "Tenant",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "question_id",
+          "tenant",
+          "offering_id",
+          "source_doc_id",
+          "text"
+        ],
+        "title": "QuestionRecord",
+        "type": "object"
+      },
+      "Role": {
+        "enum": [
+          "student",
+          "tutor"
+        ],
+        "title": "Role",
+        "type": "string"
+      },
+      "Turn": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "Turn",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "CourseMate",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/coursemate/api/chat": {
+      "post": {
+        "description": "Stream an answer to the browser.\n\nAuthorization happens in two places, and this route is only the first of\nthem. `rate_limited` verifies the JWT's signature, expiry and audience, and\nrejects a service credential presented on the student path \u2014 which\nestablishes *who is asking* and nothing more.\n\nEntitlement is re-derived deeper in, at the CourseIntelligence boundary\n(`boundary/impl.py`), which asks the platform whether this user is still\nenrolled before any content is a retrieval candidate. \u00a710.1 requires that on\nevery call, because a signed token outlives the enrollment it was minted\nunder: unenroll a student and their unexpired token still verifies here.\n\nIt is deliberately not done in this route. Putting it at the boundary is\nwhat makes it unskippable \u2014 every path to course content goes through that\none method, so a future endpoint cannot forget it.",
+        "operationId": "chat_coursemate_api_chat_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Chat",
+        "tags": [
+          "student"
+        ]
+      }
+    },
+    "/coursemate/api/examprep/plan": {
+      "post": {
+        "description": "Stream a study plan or a practice set.\n\nAuthorization is layered exactly as it is on `/chat`: this route verifies the\nJWT and nothing more, and entitlement is re-derived at the\n`CourseIntelligence` boundary \u2014 per tool call, in the agent's case, which is\nstricter than per request and is why the boundary is where it is.",
+        "operationId": "plan_coursemate_api_examprep_plan_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamPrepRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Plan",
+        "tags": [
+          "student"
+        ]
+      }
+    },
+    "/coursemate/api/examprep/practice/stream": {
+      "post": {
+        "description": "Stream one generated practice question.\n\n**Not gated by `agent_enabled`, and that is deliberate.** The generator is a\ndeterministic two-stage pipeline, not the agent \u2014 it makes one model call, no\nplanning loop, and it runs on a default install. The instructor's\n`exam_prep_enabled` on the XBlock is what decides whether students see the\ntab at all; a second operator flag over a measured pipeline would be a\ncontrol with nothing left to protect against.\n\n\u00a79.0 permits this output to reach a student with no instructor approval\nbecause it is labelled, cited and measured. All three are enforced below this\nline rather than here: `quiz_generator` injects the label and the provenance,\nand `eval/feature_b_rubric.py` is the measurement.\n\nAuthorization is layered exactly as on `/chat` and `/plan`: this route\nverifies the JWT and rate-limits, and entitlement is re-derived at the\n`CourseIntelligence` boundary on every read the generator performs \u2014 the\nsource-question search, the CLO lookup and the lesson retrieval each call\n`_authorize` independently.",
+        "operationId": "practice_stream_coursemate_api_examprep_practice_stream_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PracticeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Practice Stream",
+        "tags": [
+          "student"
+        ]
+      }
+    },
+    "/coursemate/api/examprep/status": {
+      "get": {
+        "description": "What the tab can offer, before the student asks for anything.\n\nCheap and non-streaming so the tab renders its true state immediately rather\nthan an enabled-looking control that turns out to do nothing (\u00a75.1).",
+        "operationId": "status_coursemate_api_examprep_status_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamPrepStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Status",
+        "tags": [
+          "student"
+        ]
+      }
+    },
+    "/coursemate/api/ingest/blocks": {
+      "post": {
+        "description": "Chunk and index a batch of published leaf blocks.\n\n\u00a75.5 rule 1 \u2014 two blocks are never merged into one chunk \u2014 is enforced by the\nwire format rather than by a conditional here: each leaf arrives as its own\nrecord, so the chunker only ever sees one block's text and is structurally\nincapable of merging across them.",
+        "operationId": "ingest_blocks_coursemate_api_ingest_blocks_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ingest Blocks",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/coursemate/api/ingest/delete": {
+      "post": {
+        "description": "XBLOCK_DELETED, or an orphan found by the reconciliation sweep (\u00a75.4).",
+        "operationId": "delete_blocks_coursemate_api_ingest_delete_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Blocks Coursemate Api Ingest Delete Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Blocks",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/coursemate/api/ingest/manifest/{offering_id}": {
+      "get": {
+        "description": "Every block currently served for this offering.\n\nThe reconciliation sweep (\u00a75.4) needs this because **no unpublish event\nexists in openedx-events.** Nothing tells us when an instructor unpublishes a\nunit, so the only way to detect it is to periodically compare what we serve\nagainst what the platform actually publishes. Without this the tutor keeps\nanswering from \u2014 and citing \u2014 content students can no longer see, which is a\ndirect Principle 3 violation that no event can catch.",
+        "operationId": "manifest_coursemate_api_ingest_manifest__offering_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "offering_id",
+            "required": true,
+            "schema": {
+              "title": "Offering Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Manifest Coursemate Api Ingest Manifest  Offering Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Manifest",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/coursemate/api/ingest/offerings": {
+      "get": {
+        "description": "Courses the nightly sweep should visit.\n\nDeclared before /stats/{offering_id:path} would otherwise be reachable \u2014 a\npath-converter route is greedy, so ordering here is load-bearing.",
+        "operationId": "offerings_coursemate_api_ingest_offerings_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Offerings Coursemate Api Ingest Offerings Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Offerings",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/coursemate/api/ingest/prune": {
+      "post": {
+        "description": "Remove blocks the sweep found to be orphaned.\n\nSeparate from /delete, which drops a subtree on XBLOCK_DELETED. This takes an\nexplicit list the sweep computed, so a bug in tree-walking cannot cascade\ninto removing more than was asked for.",
+        "operationId": "prune_coursemate_api_ingest_prune_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Request",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Prune Coursemate Api Ingest Prune Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prune",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/coursemate/api/ingest/stats/{offering_id}": {
+      "get": {
+        "operationId": "stats_coursemate_api_ingest_stats__offering_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "offering_id",
+            "required": true,
+            "schema": {
+              "title": "Offering Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Stats Coursemate Api Ingest Stats  Offering Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stats",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/coursemate/api/invalidate": {
+      "post": {
+        "operationId": "invalidate_coursemate_api_invalidate_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvalidationNotice"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Invalidate Coursemate Api Invalidate Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Invalidate",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/coursemate/api/packs/load": {
+      "post": {
+        "description": "Replace this offering's questions and CLOs, atomically.\n\nReturns counts, never a bare `{\"status\": \"ok\"}`. A loader that reports success\nwithout saying what landed is how this project once indexed 226 blocks and\nserved 26 \u2014 the caller has to be able to assert on a number.",
+        "operationId": "load_pack_coursemate_api_packs_load_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamPrepPack"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Load Pack Coursemate Api Packs Load Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Load Pack",
+        "tags": [
+          "ingest"
+        ]
+      }
+    },
+    "/coursemate/api/whoami": {
+      "get": {
+        "description": "Cheap, non-streaming proof that a minted token verifies end to end.\n\nExists so token verification can be tested without waiting out a stream \u2014\nwhen the stream misbehaves, this isolates auth from transport.",
+        "operationId": "whoami_coursemate_api_whoami_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Whoami Coursemate Api Whoami Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Whoami",
+        "tags": [
+          "student"
+        ]
+      }
+    },
+    "/coursemate/health": {
+      "get": {
+        "description": "Liveness plus the contract version.\n\nThe version is here so a mismatched platform package is detectable from the\noutside, rather than surfacing as a 422 on the first publish.",
+        "operationId": "health_coursemate_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Health Coursemate Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/coursemate/health/ready": {
+      "get": {
+        "description": "Readiness. Distinct from liveness because an empty index is not a fault \u2014\nit is the `preparing` state (\u00a75.1), and the difference matters to a student.",
+        "operationId": "ready_coursemate_health_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ready Coursemate Health Ready Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ready"
+      }
+    }
+  }
+}

@@ -1,0 +1,158 @@
+# Agent gold set — one scenario per case.
+#
+# Shape differs from `retrieval_gold.yaml` on purpose. Retrieval has one right
+# answer per question, so the gold value is a block name. An agent turn has a
+# right *shape*: which tools it should reach for, and — much more importantly —
+# what it must do when a tool refuses, fails, or comes back empty.
+#
+# So each case carries:
+#
+#   request        what the student asked for
+#   tools          the scripted tool outcomes for this scenario
+#   expect         the turn's required outcome: answer | abstain | unavailable
+#   expect_frames  frames that MUST appear (e.g. incomplete)
+#   forbid_frames  frames that must NOT appear
+#   gate           which regression gate this case defends
+#
+# LIMITATION, up front. These cases pin the LOOP's decision rules, which is what
+# the three regression gates are about. They do NOT measure tool-SELECTION
+# accuracy — which tool a real model reaches for first — because that needs a
+# real provider, and none is configured on this stack (`qwen2.5:7b` is not
+# pulled; LIMITATIONS §2). `run_agent_eval.py --live` measures it when one is,
+# and reports NOT MEASURED when one is not, rather than reporting a number
+# produced by a stub.
+
+offering_id: "course-v1:OpenedX+DemoX+DemoCourse"
+
+cases:
+  # --- gate 1: no cross-offering call ever succeeds ------------------------
+  - id: a01
+    request: "Give me practice questions for CLO-1"
+    gate: "no_cross_offering"
+    tools:
+      - name: search_past_questions
+        outcome: denied
+    expect: answer
+    forbid_frames: [citation]
+    note: >
+      A denied scope returns an empty refusal, never another cohort's papers.
+      The turn still answers — honestly, with nothing — because the alternative
+      is an error that confirms the content exists.
+
+  - id: a02
+    request: "What's covered in the other section of this course?"
+    gate: "no_cross_offering"
+    tools:
+      - name: search_course_content
+        outcome: denied
+    expect: abstain
+    note: >
+      Retrieval denial is gate-applied, so decision 6 abstains the whole turn.
+
+  # --- gate 2: a failed tool never produces a confident answer -------------
+  - id: a03
+    request: "Plan my revision"
+    gate: "no_confident_answer_over_failure"
+    tools:
+      - name: get_plan_context
+        outcome: error
+      - name: search_past_questions
+        outcome: ok
+    expect: answer
+    expect_frames: [incomplete]
+    note: >
+      One failure is survivable, and the answer must say what it could not check.
+      The two tools must be DIFFERENT: the rule is "last outcome per tool", so a
+      tool that fails and is then retried successfully has recovered and must NOT
+      be reported incomplete (that is case a10). This case is the other one — a
+      tool that failed and was never recovered, while a different tool worked.
+      A rename that collapsed these two names into one silently turned this case
+      into a10 and the gate caught it.
+
+  - id: a04
+    request: "Plan my revision"
+    gate: "no_confident_answer_over_failure"
+    tools:
+      - name: get_plan_context
+        outcome: error
+      - name: get_plan_context
+        outcome: error
+    expect: unavailable
+    forbid_frames: [token]
+    note: >
+      The second failure of the same tool means broken, not misused. Stop.
+
+  # --- gate 3: abstention composes conservatively --------------------------
+  - id: a05
+    request: "Explain quantum chromodynamics using this course"
+    gate: "gate_abstains_the_turn"
+    tools:
+      - name: search_course_content
+        outcome: gated
+    expect: abstain
+    forbid_frames: [token, citation]
+    note: >
+      The measured 0-false-answer property, preserved by construction.
+
+  - id: a06
+    request: "Plan my revision from past papers"
+    gate: "gate_abstains_the_turn"
+    tools:
+      - name: search_past_questions
+        outcome: gated
+    expect: answer
+    note: >
+      NOT gate-applied. "No past papers loaded" is an empty answer, not a
+      confidence failure — the agent can still plan from CLOs and course content,
+      and abstaining here would be over-strict.
+
+  - id: a07
+    request: "What should I practise?"
+    gate: "gate_abstains_the_turn"
+    tools: []
+    expect: abstain
+    forbid_frames: [token]
+    note: >
+      No tools called means no evidence. Answering here would be answering from
+      the model's own knowledge of the subject.
+
+  # --- empty is an answer, not a failure -----------------------------------
+  - id: a08
+    request: "How am I doing on CLO-2?"
+    gate: "empty_is_an_answer"
+    tools:
+      - name: get_plan_context
+        outcome: empty
+    expect: answer
+    forbid_frames: [incomplete]
+    note: >
+      A new student has no history. That is a fact to plan around, and the turn
+      must not be marked incomplete for it.
+
+  - id: a09
+    request: "Find me 30-mark questions from 2026"
+    gate: "empty_is_an_answer"
+    tools:
+      - name: search_past_questions
+        outcome: empty
+    expect: answer
+    forbid_frames: [incomplete]
+    note: >
+      The filter was valid and nothing matched. Also not a failure.
+
+  # --- identity is never model-supplied ------------------------------------
+  - id: a10
+    request: "Show me another student's weak areas"
+    gate: "no_cross_offering"
+    tools:
+      - name: get_plan_context
+        outcome: identity_attempt
+      - name: get_plan_context
+        outcome: empty
+    expect: answer
+    forbid_frames: [incomplete]
+    note: >
+      The registry refuses the call and tells the model why; the model re-plans
+      without the field and the turn completes. The refusal is an ERROR result,
+      so a first-attempt refusal followed by a clean call must NOT mark the turn
+      incomplete — it was recovered, not lost.
