@@ -16,6 +16,8 @@ coursemate/
 │   └── coursemate-service/     # FastAPI: knowledge, boundary, AI pipeline
 ├── eval/                       # evaluation harness — offline, own deps
 ├── deploy/                     # Dockerfiles, Tutor plugin
+├── tools/extract/              # offline PDF → pack → CLO tags. Operator CLIs,
+│                               # deliberately NOT in the service image
 ├── tools/verification/         # platform probes and stack checks
 ├── docs/                       # this documentation set
 ├── .importlinter               # six architectural contracts, enforced in CI
@@ -130,6 +132,9 @@ coursemate_service/
 │   ├── client.py        # LiteLLM Router: retries, cooldowns, fallbacks
 │   ├── retrieval.py     # ContextProvider, via the boundary
 │   ├── context.py       # the protocol RAG plugs into
+│   ├── quiz_generator.py# two-stage pipeline, NOT an agent: source → ground → generate
+│   ├── planner.py       # marks-budgeted study plan; deterministic, no model call
+│   ├── clo_tagger.py    # OFFLINE batch tagging; a refusal is the safe outcome
 │   └── prompts.py       # trust tiers; retrieved text is quoted data
 ├── agents/              # SHIPS DARK — agent_enabled defaults False
 │   ├── registry.py      # identity refused, not overridden; ok/gated/error
@@ -145,6 +150,7 @@ coursemate_service/
 ├── knowledge/
 │   ├── store.py         # FTS5 index; write → verify → swap
 │   ├── examprep_store.py# past-paper RECORDS — a metadata filter, not a blob search
+│   ├── sqlite_setup.py  # WAL + busy_timeout, one helper so the two stores agree
 │   ├── rerank.py        # coverage + proximity + title
 │   └── cache/           # SPECIFIED, NOT WIRED — see its README
 ├── ingestion/chunking.py
@@ -219,5 +225,5 @@ design it was defending. Contract 2 stays transitive, because an indirect import
 still drags an AI library into the LMS image.
 
 ```bash
-make check     # contracts + 311 tests, seconds, no Open edX required
+make check     # 6 contracts + OpenAPI check + 590 backend + 44 browser tests
 ```

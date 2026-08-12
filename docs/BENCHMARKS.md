@@ -185,6 +185,126 @@ against.
 
 ---
 
+## 3.6 Feature B end to end, from a real PDF — added 2026-08-12
+
+Everything above measures **retrieval and chat**. This section measures **Feature
+B**, and it is the first run whose source questions were not written by hand.
+
+**Why that distinction is the whole point of this section.** The earlier Feature B
+numbers came from `eval/datasets/generation_pack.json` — exam-style items authored
+against the real indexed lessons. Those measured the *generator* in isolation and
+said nothing about whether a real paper could be turned into a usable bank. This
+run starts from a PDF and goes all the way through:
+
+    oex101_final_2024.pdf
+      -> tools/extract/extract_pack.py     (pypdf, digital text)
+      -> ai/clo_tagger.py                  (offline, qwen2.5:7b)
+      -> POST /packs/load                  (live service, service credential)
+      -> ai/quiz_generator.py              (live generation)
+      -> eval/feature_b_rubric.py          (scoring)
+
+### Environment
+
+| | |
+|---|---|
+| Model | `ollama_chat/qwen2.5:7b` (local, CPU — `size_vram: 0`) |
+| Provider base | `http://localhost:11434` |
+| Pack | `oex101_final_2024.pdf`, sha256 `55dc1790c9c1c5ee…` |
+| Offering | `course-v1:OpenedX+OEX101+2023` |
+| Index | 55 active chunks (the real OEX101 course) |
+| Bank | **5 questions, 4 tagged, 1 untagged** · 35 marks total |
+| Command | `python eval/run_generation_eval.py --index <copy> --pack <extracted> --delay 0` |
+
+### Results — n = 4
+
+| Metric | Result | n | Kind |
+|---|---|---|---|
+| **clo_alignment** | **1.000** | 4 | quality — reads generated text |
+| **band_plausibility** | **not run** | 0 | quality — see below |
+| **not_a_duplicate** | **1.000** | 4 | quality — reads generated text |
+| labelled_and_sourced | 1.000 | 4 | safety invariant |
+| metadata_in_range | 1.000 | 4 | safety invariant |
+
+**4 of 4 tagged questions generated.** The fifth was left untagged by the tagger
+and is therefore not a source — counted and skipped, never silently dropped.
+
+**Abstention, both negative cases:**
+
+| Case | Outcome |
+|---|---|
+| no matching past question | **abstained** |
+| unsupported outcome | **abstained** |
+
+### Latency (generator only)
+
+| Stage | median | p95 |
+|---|---|---|
+| source retrieval | 0.001 s | 0.002 s |
+| context retrieval | 0.031 s | 0.038 s |
+| duplicate check | 0.000 s | 0.000 s |
+| validation | 0.000 s | 0.000 s |
+| **time to first token** | **9.7 s** | **106.3 s** |
+| total | 9.7 s | 106.3 s |
+
+Same shape as §3.3: **retrieval is ~300× cheaper than inference**, and CPU
+inference misses the 2 s design budget by 5×–53×. At n=4 the p95 is effectively
+the maximum, so read it as "the slowest of four", not as a percentile.
+
+### Why `band_plausibility` did not run, and why that is the honest result
+
+It needs a requested difficulty band, and `extract_pack.py` **deliberately leaves
+`difficulty` unset**: §7.6 requires a derived difficulty to be labelled derived
+wherever it appears, so the extractor does not guess one. The authored pack
+carried a difficulty on every question, which is exactly why it could report this
+metric and a real pack cannot.
+
+So the earlier `band_plausibility 0.882` was a measurement of the *authored*
+pack's metadata, not of anything the extraction pipeline produces. Deriving
+difficulty at extraction time is the work that would make this measurable
+end to end; until then, the honest entry is "not run".
+
+### What this run does not say
+
+1. **n = 4.** One paper, five questions, four usable. This demonstrates the
+   pipeline runs end to end and produces rubric-passing output; it does not
+   establish a rate. The authored-pack run (n = 18/16/18) remains the larger
+   sample, and the two must not be averaged.
+2. **`not_a_duplicate` is token overlap against a 5-question bank.** A small bank
+   makes the check easier to pass, not harder.
+3. **The eval harness disables enrollment enforcement** (`ENFORCE_ENROLLMENT=false`)
+   so it can run offline. Enrollment was verified separately, in a real browser
+   against the live LMS — see §3.7.
+4. **One rater, one course, one model**, unchanged from §6.
+
+---
+
+## 3.7 Real-browser verification — added 2026-08-12
+
+The first end-to-end run through an actual browser, as an actual enrolled
+student, against the live stack. Not an HTTP simulation.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Exam prep tab renders | **PASS** | live `/status`: "5 past-paper questions · 3 learning outcomes · 2024–2024" |
+| 100-mark study plan | **PASS** | "Study plan — 20 of 100 marks", 2 outcomes, real question ids, 80 marks reported unfilled |
+| Practice question, CLO with data | **PASS** | generated, badged, cited to the paper + 3 real lessons |
+| Abstention, CLO with no data | **PASS** | "There isn't enough in this course's material to plan that reliably." |
+
+Environment: `cm_student`, non-staff, real `CourseEnrollment` in
+`course-v1:OpenedX+OEX101+2023`; token minted by the XBlock's own
+`mint_student_token`; Tutor 21.0.8.
+
+**The architecture held under a real browser.** The network trace shows
+`handler/mint` → 200 on the XBlock, then the browser calling
+`/coursemate/api/examprep/*` **directly** through Caddy — no LMS worker in the
+answer path (invariant 1). SSE headers survived the reverse proxy:
+`X-Accel-Buffering: no`, `Content-Type: text/event-stream`, chunked.
+
+**Cross-offering was refused live**: the same student against DemoX returned
+`403 not_enrolled` from the real enrollment check, not from a stub.
+
+---
+
 ## 4. Bugs the benchmark found
 
 The benchmark's value was not the numbers. It was these.
@@ -241,6 +361,27 @@ Retrieval is measured on all 18 questions; generation is sampled at 6. Full
 generation coverage costs ~12 minutes of CPU inference and, at this sample size,
 would not change the conclusions.
 
+**Feature B end to end from a real PDF (§3.6):**
+
+```bash
+# 1. extract and tag the paper (offline, no student waiting)
+python tools/extract/extract_pack.py tools/fixtures/oex101_final_2024.pdf \
+    --offering course-v1:OpenedX+OEX101+2023 --exam-type final --year 2024 -o pack.json
+python tools/extract/tag_pack.py pack.json --clos clos.json -o tagged.json
+
+# 2. score the whole pipeline against a COPY of the live index
+docker cp tutor_local-coursemate-1:/data/coursemate-index.db ./_live_index.db
+COURSEMATE_STRONG_MODEL=ollama_chat/qwen2.5:7b \
+COURSEMATE_MODEL_API_BASE=http://localhost:11434 \
+python eval/run_generation_eval.py --index ./_live_index.db --pack tagged.json --delay 0
+```
+
+`--delay 0` because a local model has no rate limit; the 13 s default paces a
+hosted free tier. Omit `--pack` to score the authored bank instead — the two
+measure different things and must not be averaged.
+
+**Agent regression gates** (no provider needed): `make agent-eval`.
+
 ---
 
 ## 6. What the numbers do not say
@@ -253,3 +394,19 @@ would not change the conclusions.
 3. **n=18, single rater (the author).** Indicative, not settled.
 4. **One course, one model.** DemoX is curated; real institutional courses are
    messier.
+5. **The real-PDF Feature B run is n = 4** (§3.6) and demonstrates that the
+   pipeline works end to end, not how often it works. It is a smaller sample than
+   the authored-pack run, not a replacement for it.
+6. **`band_plausibility` is unmeasured on real extractions** (§3.6), because the
+   extractor does not derive difficulty. Deriving it is the work that would close
+   this, and until then the metric is absent rather than assumed.
+7. **Tool-selection accuracy for the agent is still NOT MEASURED, and a `--live`
+   attempt on 2026-08-12 did not change that.** `make agent-eval` scores the four
+   loop gates against a scripted router, which measures them exactly. The `--live`
+   run against `qwen2.5:7b` on CPU printed `0.44`, but **nine of its planning
+   calls timed out** at 300 s first — so that figure measures timeouts, not tool
+   choice, and is deliberately not recorded as a result. It is consistent with the
+   earlier profiling finding that this model cannot drive the agent loop (it
+   emits no parallel tool calls and took 145 s of a 222 s turn just to plan).
+   Measuring this needs a hosted provider, which is why `agent_enabled` ships
+   `False`.

@@ -23,6 +23,7 @@ Built and verified against a real Open edX **Ulmo** instance — two courses,
 | **Access-aware** | Staff-only blocks never enter the index; cohort- and paid-track blocks are filtered per caller **inside the SQL**, so unauthorised content is never even a candidate |
 | **Marks what it cannot support** | Sentences the retrieved material does not back are flagged in the answer, never silently rewritten |
 | **Reads video** | Transcripts resolved through the platform's own resolver, which handles both storage paths Open edX uses |
+| **Practises from real papers** | A past-paper PDF is extracted, CLO-tagged offline, and turned into a marks-budgeted study plan plus generated practice questions — each labelled AI-generated and cited to the paper and lessons it derives from |
 | **Opt-in** | A course is indexed only if its staff added the tutor block. `--all` skips the rest and says how many |
 | **Non-invasive** | No core Open edX changes, no fork. Installs as a plugin |
 
@@ -187,7 +188,8 @@ a unit, publish. Full walkthrough: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ```bash
 make install     # venv + editable installs
-make check       # architecture contracts + 311 tests, no Open edX required
+make check       # 6 architecture contracts, OpenAPI drift check, 590 backend
+                 # + 44 browser tests. No Open edX required
 ```
 
 Tests are self-contained — a clean checkout runs green with no environment setup.
@@ -223,6 +225,7 @@ not production-deployed.**
 | | |
 |---|---|
 | Verified working | Ingestion on publish, bootstrap, nightly sweep, video transcripts, retrieval, citations, abstention, enrollment re-derivation, block-level access, claim marking, two-course isolation |
+| Verified in a real browser (2026-08-12) | Exam-prep tab, budgeted study plan, generated practice question with provenance, abstention — as an enrolled non-staff student on the live stack |
 | Runs on | Tutor 21.0.8 / Open edX Ulmo, single node |
 | Not tried on | Other releases, Kubernetes, Learning Core, multiple replicas |
 | Not installable yet | Nothing is on PyPI or a public registry — this is a clone-and-build repo |
@@ -234,21 +237,34 @@ than this section:
 1. **Retrieval is lexical only.** Measured cost: recall@3 falls from 1.000 to
    0.300 on paraphrased questions, and two of ten are answered confidently from
    the wrong lesson.
-2. **No hosted model provider has ever been exercised.** Retries, cooldowns and
-   cross-vendor failover are implemented and untested against a real outage.
+2. **Cross-vendor failover is implemented and untested against a real outage.** A
+   hosted provider *has* been exercised — a Groq run on 2026-08-11 exposed a real
+   bug in the tool schema — but no forced outage has been run, so the retry,
+   cooldown and vendor-failover paths remain unproven under failure.
 3. **One service replica only.** Rate limiting, the authz cache and LiteLLM
    cooldowns are shared through Redis; the SQLite index is still a local file.
-4. **Feature B and the agent layer ship dark.** Both are built and tested — the
-   tool registry, the loop's failure rules, the past-paper store, the mastery
-   memory layer, the MCP server, the exam-prep tab. `agent_enabled` defaults to
-   `False`, so a default install serves the deterministic study plan instead. The
-   reason is (2): the loop has never run against a real model, so tool-selection
-   accuracy and time-to-first-token are unmeasured, and `make agent-eval` says so
-   rather than printing a number a stub produced.
+4. **The agent layer ships dark, and Feature B no longer does.** Feature B is
+   verified end to end in a real browser (see the table above). The agent is a
+   separate thing: the tool registry, loop failure rules, mastery memory layer and
+   MCP server are built and tested, but `agent_enabled` defaults to `False` and a
+   default install serves the deterministic planner. Running the loop against the
+   local CPU model on 2026-08-12 timed out on nine of ten planning calls, so
+   tool-selection accuracy is still unmeasured — `make agent-eval` says so rather
+   than printing a number.
+5. **Feature B's real-PDF evaluation is n=4.** One paper, five extracted
+   questions, four tagged and usable. CLO alignment and duplicate-freedom both
+   scored 1.000, but four questions demonstrate that the pipeline works, not how
+   often. Band plausibility could not be measured at all, because the extractor
+   deliberately does not derive difficulty.
+6. **All of it runs on a local CPU model.** `qwen2.5:7b` through Ollama. Time to
+   first token is **24 s** for chat and **9.7 s** for Feature B generation — two
+   different pipelines, measured separately, both an order of magnitude outside
+   the 2 s design budget. Usable for verification, not for a demo.
 
-The evaluation is 22 covered questions on two courses, plus 10 agent scenarios,
-scored by one person who also wrote the retriever. It is indicative, not settled,
-and it is reported that way throughout.
+The evaluation is 22 covered questions on two courses, 10 agent scenarios, and 4
+generated questions from one real past paper, scored by one person who also wrote
+the retriever. It is indicative, not settled, and it is reported that way
+throughout.
 
 ## License
 

@@ -128,9 +128,16 @@ tell you whether your retrieval changed or the judge did.
 | Citation correctness | 1.000 |
 | Authorization matrix | 4/4 |
 | Agent regression gates | **4/4** (n=10 scenarios; measures the loop, not the model) |
-| Tool-selection accuracy | **NOT MEASURED** — needs a provider; a stub would measure the stub |
-| Coverage (service + contracts) | **81%**, gated. Platform 26%, reported ungated — most of it needs Open edX to execute |
-| Tests / contracts | 311 / 6 |
+| Tool-selection accuracy | **NOT MEASURED** — needs a hosted provider; see below |
+| Feature B, real PDF → scored question | CLO alignment **1.000**, duplicate-free **1.000** (**n=4**) |
+| Feature B band plausibility | **not measured** on extracted packs — the extractor does not derive difficulty |
+| Coverage (service + contracts) | **89.5%**, gated. Platform 26%, reported ungated — most of it needs Open edX to execute |
+| Tests / contracts | 590 backend + 44 browser / 6 |
+
+**Tool-selection accuracy was attempted against a real model on 2026-08-12 and
+still is not a number.** The local `qwen2.5:7b` timed out on nine of ten planning
+calls before producing a score, so what it printed measured timeouts rather than
+tool choice. It is recorded as unmeasured rather than reported.
 
 ---
 
@@ -238,12 +245,29 @@ limitations document exists for the same reason.
 
 ## Honest scope
 
-**Working and measured:** grounded tutoring with citations, abstention,
-enrollment-enforced retrieval over real course content, streaming that never
-occupies an LMS worker, and a benchmark that found four real bugs.
+The distinction that matters in what follows: **implemented** means the code
+exists and unit tests cover it; **verified** means it was observed working on the
+live stack; **measured** means a number came out of an executable run.
 
-**Not built:** semantic retrieval, hosted inference, exam prep, the instructor
-loop, multi-replica operation.
+**Implemented, verified on the live stack, and measured:** grounded tutoring with
+citations, abstention, enrollment-enforced retrieval over real course content,
+streaming that never occupies an LMS worker, and a benchmark that found four real
+bugs.
+
+**Feature B — implemented and verified in a real browser (2026-08-12).** A real
+past-paper PDF is extracted (`pypdf`, digital text), CLO-tagged offline, loaded
+through the service-credentialed endpoint, and served to an enrolled student:
+budgeted study plan, generated practice question with provenance, and correct
+abstention on an outcome with no source material. Measured end to end at **n=4**
+— a demonstration that the pipeline works, not a rate.
+
+**Implemented but shipping dark:** the agent layer. `agent_enabled` defaults to
+`False` and the deterministic planner answers instead. The loop's failure rules
+are measured (4/4 gates); which tool a real model picks is not.
+
+**Not built:** semantic retrieval, OCR/VLM extraction for scanned papers,
+difficulty derivation at extraction time, the instructor loop, multi-replica
+operation.
 
 **Not production-deployed.** The nearest gaps are operational rather than
 architectural — the boundaries held across six phases, and the seams built for

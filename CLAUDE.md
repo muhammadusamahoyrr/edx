@@ -9,41 +9,66 @@ the reasoning, not just the diff.
 
 ## STATE — read this first, then verify it
 
-Last updated 2026-08-05. **Treat every line as stale until checked** — the
+Last updated 2026-08-12. **Treat every line as stale until checked** — the
 commands to check are given. A note that disagrees with the running system is
 wrong; the system wins.
 
 **The stack is up and working. Do not disturb it casually.**
 
-> ⚠️ **The Docker daemon in `Ubuntu-24.04` is restart-looping** (2026-08-05).
-> `dockerd` uptime resets every ~2–3 minutes while the WSL distro itself has been
-> up for hours and memory is idle (9.2 GB free, PSI 0.00). Every container cycles
-> with it, so `docker ps` uptimes are always seconds and `celery inspect` never
-> gets a reply.
+> ⚠️ **WSL networking and the Docker daemon — updated 2026-08-12.**
 >
-> **What it does NOT invalidate:** work observed completing is still real —
-> tasks executed, beat dispatched, the sweep ran, the access filter passed,
-> the reindex wrote 227 chunks. Restarts happen *between* operations, they do not
-> corrupt results.
+> **`dockerd` still dies unprompted, and the interval is not predictable.**
+> Observed on 2026-08-11/12: one clean run of about 1 h 45 min, and separately
+> several restarts minutes apart (uptimes of 15 s, 23 s and 47 s were sampled
+> during one session). Do not plan around a stable window. Symptoms: `docker ps`
+> returns nothing, `systemctl is-active docker` says `inactive`.
 >
-> **What it does invalidate:** any claim that an unattended nightly job is
-> dependable here. Beat re-reads its persistent schedule on each restart so 03:30
-> would still fire, but this is not a stable host.
+> Recovery is `wsl --shutdown` then reopen the distro. **Everything deployed
+> survives** — images, migrations and the SQLite stores are durable; that was
+> re-checked after each recovery rather than assumed. Budget **~2 minutes** after
+> any WSL boot before docker is `active` (systemd reaches the unit late; measured
+> twice at 110–120 s), plus 1–2 more for the LMS to answer.
 >
-> `systemctl`/`journalctl` are unusable — the systemd user session fails to start,
-> which is the warning printed on every `wsl` call and is probably related.
-> First thing to try is `wsl --shutdown` then restart; that is now **safe**,
-> because the package lives in the image rather than in container layers.
+> **`systemctl is-active docker` is unreliable here** — it reported `inactive`
+> while 13 containers were serving. Probe functionally (`docker ps`), not by unit
+> state. The systemd *user* session still fails to start; that warning on every
+> `wsl` call is cosmetic.
+>
+> **WSL now uses mirrored networking** (`%USERPROFILE%\.wslconfig`, backup at
+> `.wslconfig.pre-phase4e.bak`). Before this, Windows could not reach the stack at
+> all: the Hyper-V firewall for the WSL VM has `DefaultInboundAction: Block` with
+> only an ICMP allow rule, so **ping succeeded and every TCP connection failed** —
+> which reads as a routing problem and is not one. A narrow inbound rule needs
+> admin; mirrored mode is the user-scoped equivalent. Two consequences:
+> * Docker's iptables DNAT publishes with **no listening socket**, which mirrored
+>   mode cannot project. It works because `docker-proxy` provides a real socket —
+>   if `ss -ltn | grep :80` is empty, Windows will not reach the LMS.
+> * In mirrored mode the host's ports are **already occupied from WSL's view**, so
+>   binding 11434 inside WSL fails with `Address already in use`.
+>
+> **Ollama is bound to `127.0.0.1:11434` on Windows** and is not being changed.
+> Containers reach it through a `socat` forwarder bound **only** to the tutor
+> network gateway:
+>
+>     socat TCP-LISTEN:11435,fork,reuseaddr,bind=172.18.0.1 TCP:127.0.0.1:11434
+>
+> Run it as root (`wsl -u root`, no password needed) and **re-run it after any WSL
+> restart** — it is not persistent. `COURSEMATE_MODEL_API_BASE` points at
+> `http://172.18.0.1:11435`. If generation starts returning `unavailable`, check
+> this forwarder before anything else.
 
 | What | State | Check |
 |---|---|---|
 | Everything through the sweep | Done, verified live | `git log --oneline` |
-| Plugin migrations | Applied, incl. 0002 (`run_id`) | `tools/ops/migrate.sh` |
+| Plugin migrations | **0001–0004 applied**, incl. 0003 (mastery) + 0004 (difficulty_band), against the live DB with real data | `tools/ops/migrate.sh` |
+| Service image | **Rebuilt 2026-08-12** — carries the planner, tagger, generator, WAL setup. 16 API routes live | `docker exec tutor_local-coursemate-1 python -c "import urllib.request,json;print(len(json.load(urllib.request.urlopen('http://127.0.0.1:8000/openapi.json'))['paths']))"` |
+| openedx image carries the package | **YES — rebuilt 2026-08-12**, all 4 containers adopted it; carries the Phase 4C study-plan UI. (First baked in 2026-08-05, ~29 min) | `tools/ops/adopt_new_image.sh` |
+| Feature B end to end | **VERIFIED IN A REAL BROWSER** — tab, 100-mark plan, generated question, abstention, as enrolled `cm_student` | BENCHMARKS §3.7 |
+| OEX101 exam pack | **Loaded live** — 5 questions, 3 CLOs, 35 marks, 4 tagged | `/examprep/status` |
 | Package in all 4 containers | From the IMAGE now, not container layers | `tools/ops/check_install.sh` |
 | Celery tasks registered | Yes, in both workers | `tools/ops/check_tasks.sh` |
 | Beat dispatches the sweep | **VERIFIED** — both from a derived image and the real container | `tools/verification/beat_container_probe.sh` |
-| `coursemate-beat` container | **RUNNING**, production schedule `crontab 30 3 * * *`, dispatched live | `docker ps \| grep beat` |
-| openedx image carries the package | **YES** — rebuilt 2026-08-05 in 29 min, all 4 containers adopted it | `tools/ops/adopt_new_image.sh` |
+| `coursemate-beat` container | **RUNNING**, `crontab 30 3 * * *`, dispatched live. Deliberately left on the OLD openedx image: it only dispatches `reconcile_all`, whose code is byte-identical | `docker ps \| grep beat` |
 | `--force-recreate` on openedx containers | **NOW SAFE** — the install comes from the image, not the container layer | `tools/ops/check_install.sh` after |
 | Video transcripts | **VERIFIED end to end** on 1 video (583 chars, retrieved at score 1.000). The other 9 DemoX videos have edx-val rows with missing files | `tools/verification/add_test_transcript.sh` |
 | Block-level access filter | **VERIFIED live end to end** — 2 restricted chunks hidden from a caller without the group, served to one with it | `tools/verification/access_filter_live.sh` |
@@ -54,11 +79,12 @@ wrong; the system wins.
 | Shared state (rate limit, authz, LiteLLM cooldowns) | **Redis db1, VERIFIED live** — 2 limiters, one budget | `tools/ops/deploy_shared_state.sh` |
 | `require_grounding` | **True by default now** (was False — the gate was opt-in) | `docker exec ...coursemate-1 python -c` |
 | Claim verification | **VERIFIED live** — ungrounded sentence marked, grounded control clean | `tools/verification/claim_verify_live.sh` |
-| Docker daemon stability | **RESTART-LOOPING** every ~2-3 min — see the warning above | `ps -eo etime,cmd \| grep dockerd` |
+| Docker daemon stability | **STILL DIES UNPROMPTED**, interval unpredictable (minutes to ~1h45m observed). Recovers via `wsl --shutdown`; deployed state survives — see the warning above | `docker ps` (NOT `systemctl is-active`) |
 
-**Done 2026-08-05:** the openedx image was rebuilt with the plugin baked in, all
-four containers adopted it, and `coursemate-beat` runs for the first time. The
-one thing left unhealthy is the host, not CourseMate — see the warning above.
+**Done 2026-08-12:** both images rebuilt and adopted, migrations 0003/0004
+applied to the live database, the OEX101 pack loaded, and Feature B verified end
+to end in a real browser. The one thing left unhealthy is still the host, not
+CourseMate — see the warning above.
 
 ### Do not do these without asking
 
@@ -126,8 +152,9 @@ upstream `edX+DemoX+Demo_Course`).
 
 ## Tests
 
-    make check        # 311 tests + 6 import-linter contracts
-    make coverage     # gated at 80% for service+contracts; platform reported ungated
+    make check        # 6 contracts + OpenAPI drift check + 590 backend
+                      # + 44 browser tests
+    make coverage     # gated at 80% for service+contracts (now 89.5%); platform ungated
     make agent-eval   # the 4 agent regression gates — needs no provider
     make openapi      # regenerate docs/openapi.json from the routes
 
@@ -233,3 +260,14 @@ What a fresh session most needs to know:
   against a scripted router. `make agent-eval` measures the four regression gates
   and reports tool-selection accuracy as NOT MEASURED. Do not report a number
   from a stub. See LIMITATIONS §5.2.
+
+- **The AGENT is what ships dark — Feature B does not.** As of 2026-08-12 Feature
+  B is deployed and browser-verified end to end: real PDF → extractor → CLO tagger
+  → `/packs/load` → study plan and generated practice question, seen by an
+  enrolled student. `agent_enabled` is still `False`, and that flag governs only
+  `/examprep/plan`'s prose path. Do not describe Feature B as unbuilt.
+
+- **`--live` has been tried and it is still NOT MEASURED.** On 2026-08-12 the
+  local `qwen2.5:7b` timed out on nine of ten planning calls and printed `0.44`.
+  That figure measures timeouts, not tool choice, and must not be quoted. This
+  model cannot drive the loop; measuring it needs a hosted provider.

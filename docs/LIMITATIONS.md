@@ -33,12 +33,30 @@ Lexical keeps exact technical terms that embeddings blur.
 
 ---
 
-## 2. No hosted inference
+## 2. Hosted inference exercised once; failover still untested
 
-Verified only against local `qwen2.5:7b` on CPU: **24 s to first token against a
-2 s budget.** LiteLLM makes the provider a config value, so this is one setting —
-but no hosted provider has been exercised, which means retries, cooldowns and
-cross-vendor fallback are **implemented and untested against a real outage**.
+Everything routinely verified — chat, Feature B, and the browser run of
+2026-08-12 — uses local `qwen2.5:7b` on CPU, against a 2 s budget. The two paths
+were measured separately and their numbers are **not interchangeable**:
+
+| Path | TTFT p50 | TTFT p95 | n | Where |
+|---|---|---|---|---|
+| Chat / retrieval | **24 s** | 110 s | 6 generated | BENCHMARKS §3.3 |
+| Feature B generation | **9.7 s** | 106 s | 4 | BENCHMARKS §3.6 |
+
+Feature B is faster at the median because it makes one short completion from a
+fixed prompt, where chat carries history and a longer context. Both miss the
+budget by an order of magnitude. LiteLLM makes the provider a config value, so
+switching is one setting.
+
+**A hosted provider HAS been exercised**, contrary to what this section used to
+claim: a Groq run on 2026-08-11 (§5.2) cut time-to-first-token from 187–301 s to
+13–15 s and exposed a real tool-schema defect. That key was subsequently pasted
+into a chat transcript, is treated as compromised, and has not been rotated — so
+no hosted provider has been used since, and the numbers above are all local.
+
+What remains genuinely untested is failover under failure: retries, cooldowns and
+cross-vendor fallback are **implemented and never driven by an actual outage**.
 
 **And "untested" was doing more work than it looked like.** Two defects sat in
 that untested path until 2026-08-10, both found by driving a real LiteLLM Router
@@ -397,15 +415,24 @@ enrollment — which is still re-derived per call and still fails closed.
 
 ---
 
-## 5.2 The exam-prep agent — built, and shipping dark
+## 5.2 The exam-prep agent — still dark. Feature B itself is not.
 
-Feature B and the agent layer landed on 2026-08-10. What is real, and what is not:
+Feature B and the agent layer landed on 2026-08-10. **They have since diverged,
+and the distinction is the point of this section:** Feature B is verified working
+in a browser; the *agent* is the part that still ships dark.
 
-**Real, and tested offline:** the tool registry (identity refused rather than
-overridden, strict schemas, three outcomes not two), the agent loop's failure
-rules, the per-tool confidence gate, the past-paper store, the mastery memory
-layer with idempotent writes, the deterministic study plan, the local stdio MCP
-server, and the exam-prep tab. 311 tests, 6 contracts.
+**Feature B — implemented, deployed, verified, and measured.** As of 2026-08-12 it
+runs end to end on the live stack: a real PDF extracted and CLO-tagged offline,
+loaded through the service-credentialed endpoint, and served to an enrolled
+non-staff student in a real browser — budgeted study plan, generated practice
+question with provenance, and correct abstention. See BENCHMARKS §3.6 and §3.7.
+Measured at n=4, which demonstrates the pipeline rather than establishing a rate.
+
+**The agent — implemented and tested offline only:** the tool registry (identity
+refused rather than overridden, strict schemas, three outcomes not two), the loop's
+failure rules, the per-tool confidence gate, the mastery memory layer with
+idempotent writes, and the local stdio MCP server. 590 backend + 44 browser tests,
+6 contracts.
 
 **`agent_enabled` defaults to `False`**, so a default install routes exam prep to
 the deterministic path and no agent code runs. That is the inverse of the
@@ -523,7 +550,11 @@ been made, because it should be calibrated against a hosted model rather than
 against a 7B that cannot batch.
 
 `eval/run_agent_eval.py` still reports tool-selection accuracy as **NOT MEASURED**
-by default; `--live` now has a working model behind it.
+by default, and a `--live` run on 2026-08-12 did not change that: against the
+local `qwen2.5:7b` it timed out on nine of ten planning calls before printing a
+figure, so what it produced measured timeouts rather than tool choice. Measuring
+this needs a hosted model — which is the same constraint §2 describes, and the
+reason `agent_enabled` ships `False`.
 
 **Mastery is not a grade.** The snapshot is carried by the browser, exactly as
 chat history is (§3.1), so a student can forge their own. What that buys them is
@@ -531,10 +562,18 @@ worse study recommendations for themselves: it never reaches another student, it
 cannot widen retrieval scope, and enrollment is still re-derived at the boundary
 on every call. It must never be read as an assessment record.
 
-**Not built for Feature B:** PDF extraction and OCR/VLM (a pack is loaded as JSON
-through a service-credentialed endpoint; producing that JSON from real papers is
-manual), automated CLO tagging (the prompt exists, nothing calls it), and the
-instructor correction UI for a mis-tagged question.
+**Built since, and measured (2026-08-12).** PDF extraction (`tools/extract/
+extract_pack.py`, pypdf, digital text only) and automated CLO tagging
+(`ai/clo_tagger.py`) now exist and have been run end to end from a real PDF
+through to scored generation — see BENCHMARKS §3.6. The earlier statement that
+"producing that JSON from real papers is manual" and that the tagging prompt had
+no caller is no longer true.
+
+**Still not built for Feature B:** OCR and VLM extraction (a scanned paper has no
+text layer and yields nothing — reported honestly rather than half-guessed),
+difficulty derivation at extraction time (which is why `band_plausibility` cannot
+be measured on a real pack), and the instructor correction UI for a mis-tagged
+question.
 
 ---
 
@@ -542,7 +581,7 @@ instructor correction UI for a mis-tagged question.
 
 | Feature | Status |
 |---|---|
-| **Feature B — PDF/OCR extraction** | The store, agent, rubric and UI exist; turning real past papers into a pack is manual. See §5.2 |
+| **Feature B — OCR / VLM extraction** | Digital-text PDF extraction and CLO tagging are built and measured end to end (BENCHMARKS §3.6). A *scanned* paper still yields nothing — no OCR, no VLM. See §5.2 |
 | **Instructor loop** | Proposal queue schema exists, dormant. No struggle signals, review UI, or notifications |
 | **XBlockAside** | Tutor must be added per-unit by hand. The aside would auto-attach, filtered to `vertical` |
 | Instructor-visible opt-in state | `coursemate_reindex --all` now indexes only courses carrying the tutor block, matching what the sweep already required. There is no UI showing an admin which courses opted in — `--all` prints the counts and nothing else |
@@ -567,15 +606,34 @@ instructor correction UI for a mis-tagged question.
 - **The agent gold set (n=10) measures the loop, not the model.** Its four
   regression gates are decided entirely by tool outcomes, so a scripted router
   measures them exactly. Tool-selection accuracy is not measured at all until a
-  provider is configured, and is reported as such.
+  provider is configured, and is reported as such. A `--live` attempt against the
+  local `qwen2.5:7b` on 2026-08-12 printed `0.44` but timed out on nine planning
+  calls first, so it measured timeouts rather than tool choice and is not
+  recorded as a result — see BENCHMARKS §6.7.
 - **The Feature B rubric detects reprinting, not rewording.** It is token overlap,
   the same honest floor `verify.py` uses. A practice question paraphrased from a
   past paper passes the duplicate check. The threshold (0.6) is calibrated on one
   course.
-- **Coverage is gated on the service and contracts only** (81%). `coursemate_platform`
-  sits at 26% because most of it needs a live Open edX to execute; blending the two
-  produced a figure that measured how much of the code needs a platform rather than
-  how well tested it is.
+- **The real-PDF Feature B run is n=4** (BENCHMARKS §3.6, 2026-08-12). It is the
+  first Feature B measurement whose source questions were extracted rather than
+  authored, and it shows the pipeline runs end to end and passes the rubric — but
+  four questions from one paper is a demonstration, not a rate. The authored-pack
+  run (n=18/16/18) is still the larger sample; the two measure different things
+  and must not be averaged.
+- **`band_plausibility` cannot be measured on a real extracted pack.** The check
+  needs a requested difficulty band, and `extract_pack.py` deliberately leaves
+  `difficulty` unset (§7.6: a derived difficulty must be labelled derived, so it
+  is not guessed at extraction time). It reports "not run" rather than a number.
+  The earlier 0.882 was measured on the authored pack's own metadata.
+- **The generation eval disables enrollment enforcement** so it can run offline.
+  Enrollment is verified separately, in a real browser against the live LMS
+  (BENCHMARKS §3.7), where a cross-offering request returned `403 not_enrolled`.
+- **Coverage is gated on the service and contracts only** (89.5%, floor 80%).
+  `coursemate_platform` sits at 26% because most of it needs a live Open edX to
+  execute; blending the two produced a figure that measured how much of the code
+  needs a platform rather than how well tested it is. And coverage says which
+  lines ran, never whether the assertion that ran them meant anything — this repo
+  has shipped 100%-covered code that returned success while doing nothing, twice.
 
 ---
 
@@ -586,23 +644,39 @@ instructor correction UI for a mis-tagged question.
 2. **Extend the gold set with paraphrase questions.** Without this, embeddings
    cannot be justified by measurement — the benchmark is saturated.
 3. **Add embeddings as a second retriever, merged with BM25.**
-4. **Exercise a hosted provider**, including a forced outage to test fallback.
+4. **Force a provider outage** and prove the fallback chain. A hosted provider has
+   been exercised (Groq, 2026-08-11, which exposed a real tool-schema bug), but
+   the retry/cooldown/vendor-failover paths have never been driven by an actual
+   failure.
 5. **Cross-encoder reranking**, now measurable against the lexical baseline.
 6. **Shorten the unpublish window** by subscribing to a platform unpublish event
    — which means proposing one upstream, since none exists.
-7. **Turn the agent on against a real model** and measure the two things a stub
+7. **Turn the agent on against a hosted model** and measure the two things a stub
    cannot: tool-selection accuracy, and time to first token. Both are why
-   `agent_enabled` ships `False` (§5.2).
-8. **PDF extraction for Feature B.** Everything downstream of a loaded pack works;
-   producing the pack is manual.
+   `agent_enabled` ships `False` (§5.2). The local CPU model is not sufficient —
+   it timed out on nine of ten planning calls on 2026-08-12.
+8. **Derive difficulty at extraction time.** It is the one Feature B rubric metric
+   that cannot be measured on a real pack, because the extractor refuses to guess
+   a number whose contract says it must be labelled derived.
+9. **Widen the real-PDF evaluation past n=4.** One paper is a demonstration; a
+   rate needs several, ideally from different courses and layouts.
+10. **OCR / VLM extraction** for scanned papers, which currently yield nothing.
 
 ---
 
 ## 9. Honest summary
 
 CourseMate works end to end and is measured: it retrieves real course content,
-answers with citations, abstains correctly, and enforces enrollment. Every claim
-in the benchmark report is backed by an executable run.
+answers with citations, abstains correctly, and enforces enrollment. Feature B
+now runs the whole way from a real past-paper PDF to a generated, cited practice
+question, verified in a browser by an enrolled student (BENCHMARKS §3.6, §3.7).
+Every claim in the benchmark report is backed by an executable run.
+
+**Three things that sound like results and are not.** The real-PDF evaluation is
+n=4. `band_plausibility` is not measured on extracted packs at all. Tool-selection
+accuracy for the agent is still unmeasured, and the one attempt against a local
+model measured its timeouts. Each is stated wherever the neighbouring numbers
+appear, rather than only here.
 
 It is **not production-ready**. The nearest gaps are operational (single-replica
 assumptions, a sweep interval rather than an event) rather than architectural — the boundaries

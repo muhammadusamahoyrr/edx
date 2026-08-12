@@ -351,7 +351,12 @@ Contract 2 is the one that pays for the whole file. It is the promise that most 
 | **1** | `tools/verification/` (all five, first), then `contracts/`, `platform/adapters/`, `platform/events/`, `platform/tasks/ingest.py`, `service/api/ingest.py`, `service/ingestion/`, `service/knowledge/`, `.importlinter` | Publish a block → it appears in the index. Results written back into `Week1_Verification_Plan.md` |
 | **2** | `platform/xblock/`, `platform/client/`, `platform/management/`, `service/api/chat.py`, `service/boundary/`, `service/agents/nodes/{rewrite,retrieve,rerank,tutor}` | A student asks in a lesson and gets a cited answer from a bootstrapped course |
 | **3** | `service/agents/guards/`, `service/agents/nodes/{socratic,planner,quiz_generator}`, `service/ingestion/examprep/`, `service/models/router.py`, `platform/tasks/reconcile.py`, `eval/`, `deploy/` | Abstains below τ; survives a killed provider; exam-prep pack produces a plan; deployed |
-| **4** | `docs/adr/`, `eval/reports/`, `deploy/README.md` runbook | Numbers published with limitations beside them (§11) |
+| **4** | `docs/adr/`, `eval/reports/`, a deployment runbook | Numbers published with limitations beside them (§11) |
+
+> **As built (2026-08-12):** `eval/reports/` exists; the runbook was written as
+> [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) rather than `deploy/README.md`; `docs/adr/`
+> was never created — the decisions and their rejected alternatives live in
+> `CourseMate_Complete_Design.md` instead, which is where §17 says they belong.
 
 **The ordering is not arbitrary — it is the design's own risk ordering.** Verification first because §3.6 says an unexpected answer costs nothing in week 1 and a great deal in week 3. Ingestion before the tutor because §5.1 names an empty index as *"the most likely way a demo fails."* `.importlinter` in week 1 because an architectural rule added in week 3 is a rule that finds violations it is too late to fix.
 

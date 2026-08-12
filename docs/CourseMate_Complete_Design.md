@@ -1046,3 +1046,26 @@ This design is the technical source of truth. The other documents are derived fr
 **`archive/`** holds superseded material kept only for history: the earlier 35-page proposal (now split between the Brief and this document), the plain-language plan, the mentor Q&A, the round-1 review response, the presentation guide and the original review notes. Nothing current depends on any of it.
 
 **Maintenance rule, learned the hard way across four review rounds:** when something moves from *built* to *deferred*, search every document for its name before closing the change. Four separate inconsistencies in this set were caused by a claim outliving the thing that supported it — a differentiator that had been cut, a control for a feature no longer shipping, a fallback model no longer used. Each was cheap to fix and would have been expensive to be caught on.
+
+**The rule runs in both directions, which the 2026-08-12 fold-back proved.** Things moving from *deferred* to *built* strand claims just as effectively, and they are harder to spot because a stale "not built" reads as modesty rather than as an error. Applying the search found four:
+
+| Claim | Where | Why it was false |
+|---|---|---|
+| "exam prep" listed under **Not built** | `TECHNICAL_SUMMARY.md` | Built, deployed and browser-verified |
+| "producing that JSON from real papers is manual" | `LIMITATIONS.md` §5.2, §8 | `tools/extract/` does it; measured end to end |
+| "automated CLO tagging — the prompt exists, nothing calls it" | `LIMITATIONS.md` §5.2 | `ai/clo_tagger.py` calls it |
+| "no hosted provider has been exercised" | `LIMITATIONS.md` §2 | Contradicted by §5.2 *in the same file* — a Groq run was documented there |
+
+The last one is the instructive case: the contradiction was **internal to one document**, and survived because each section was edited on its own. Searching by feature name rather than re-reading top to bottom is what surfaced it.
+
+### 17.1 Fold-back record — 2026-08-12
+
+What the design now describes as **built and verified**, against §7 (exam prep), §3.4 (service split) and §6.5 (the boundary):
+
+* **§7.6 past-paper records** — real PDF → `tools/extract/extract_pack.py` (pypdf, digital text) → structured `QuestionRecord`s with marks, page and provenance. OCR/VLM for scanned papers remains deferred, as the scope table above always said.
+* **§7.3 CLO tagging, assisted never asserted** — `ai/clo_tagger.py`, offline batch, on the cheap deployment. A refusal is the safe outcome; an out-of-scope outcome id is refused rather than coerced.
+* **§7.4 marks-budgeted study plan** — `ai/planner.py`, deterministic, no model call, exposed at `POST /examprep/study-plan`.
+* **§9.0 personal practice generation** — labelled, cited and measured, reaching a student with no instructor gate exactly as the design argued it could.
+* **§3.4 / invariant 1** — the *request path* confirmed under a real browser: the network trace shows `handler/mint` returning a JWT, then the browser calling `/coursemate/api/examprep/*` directly through the ingress. That establishes the LMS is not in the answer path; it is not a fresh measurement of worker occupancy, which was measured separately and earlier (3 concurrent generations, zero LMS log lines, 103 ms LMS CPU).
+
+Still deferred, unchanged: the instructor loop (§9.3), XBlockAside (§3.1), Meilisearch hybrid (§6.1), multi-tenancy (§3.5), retirement-pipeline registration (§10.7), and difficulty calibration — the last of which is why one rubric metric cannot be measured on a real pack.
