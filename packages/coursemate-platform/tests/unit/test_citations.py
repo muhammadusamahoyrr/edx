@@ -11,7 +11,13 @@ from __future__ import annotations
 import pytest
 from coursemate_platform.xblock.citations import (
     MAX_CITATIONS_PER_TURN,
+    MAX_UNSUPPORTED_PER_TURN,
+)
+from coursemate_platform.xblock.citations import (
     clean_citations as _clean_citations,
+)
+from coursemate_platform.xblock.citations import (
+    clean_unsupported as _clean_unsupported,
 )
 
 
@@ -80,3 +86,52 @@ def test_javascript_url_is_stored_but_neutralised_at_render():
     out = _clean_citations([{"usage_key": "k", "display_name": "d",
                              "url": "javascript:alert(1)"}])
     assert out[0]["url"] == "javascript:alert(1)"  # stored verbatim, by design
+
+
+# --- unsupported-claim marks (D1) ------------------------------------------
+#
+# Same trust boundary as the citations above, and a sharper reason to persist
+# them. Marks used to live only for the length of the live stream, so a refresh
+# dropped the warning and kept the sentence — a reloaded answer read as MORE
+# trustworthy than the one the student had just been shown.
+
+
+def test_valid_marks_survive():
+    assert _clean_unsupported(["Deadlock cannot occur here.", "  Trimmed.  "]) == [
+        "Deadlock cannot occur here.",
+        "Trimmed.",
+    ]
+
+
+def test_marks_are_capped():
+    out = _clean_unsupported([f"sentence {i}" for i in range(50)])
+    assert len(out) == MAX_UNSUPPORTED_PER_TURN
+
+
+def test_mark_length_is_bounded():
+    out = _clean_unsupported(["x" * 5000])
+    assert len(out[0]) == 500
+
+
+def test_non_strings_are_dropped_not_coerced():
+    """Coercing would store `"{'a': 1}"` as a sentence and render it to the
+    student. Dropping keeps whatever the browser invented out of `user_state`."""
+    assert _clean_unsupported(["real", {"a": 1}, None, 42, ["nested"]]) == ["real"]
+
+
+def test_empty_and_whitespace_marks_are_dropped():
+    assert _clean_unsupported(["", "   ", "\n\t"]) == []
+
+
+@pytest.mark.parametrize("junk", [None, "string", 42, {"a": 1}, object()])
+def test_malformed_mark_payloads_never_raise(junk):
+    """This runs after every answer. An exception here loses the turn."""
+    assert _clean_unsupported(junk) == []
+
+
+def test_marks_are_stored_as_text_never_as_markup():
+    """The renderer uses textContent, so this is belt-and-braces — but the value
+    is browser-supplied and lands in per-student storage, so it must not be
+    silently transformed on the way in either."""
+    out = _clean_unsupported(["<script>alert(1)</script>"])
+    assert out == ["<script>alert(1)</script>"]

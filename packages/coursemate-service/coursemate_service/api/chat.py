@@ -29,7 +29,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from ..ai.pipeline import pipeline
-from .deps import rate_limited
+from .deps import holding_stream_slot, rate_limited, rate_limiter
 
 log = logging.getLogger(__name__)
 
@@ -84,8 +84,24 @@ async def chat(
         claims.sub, claims.offering_id, claims.block_id, request.question[:80],
     )
 
+    # Before the generator is touched, and for the same reason the practice
+    # stream does it here: a slot taken after generation started would be
+    # counting streams that are already consuming the thing it exists to
+    # protect, and the third stream would be refused only once its model call
+    # was in flight.
+    #
+    # `/chat` went without this until 2026-08-12 while `/practice/stream` had it
+    # — an oversight, not a decision. Chat is the longer generation of the two
+    # (~55 s measured against the local model), so it is the one that most needs
+    # bounding: the per-minute rate limit caps how often a student *starts* a
+    # stream and can never cap how many they hold open at once.
+    #
+    # Raises 429 with the same typed code the rate limiter uses, so the
+    # browser's existing `rate_limited` notice covers it unchanged.
+    token = rate_limiter.acquire_stream(claims.sub)
+
     return StreamingResponse(
-        _encode(request, claims),
+        holding_stream_slot(_encode(request, claims), claims.sub, token),
         media_type="text/event-stream",
         headers={
             # Defeat proxy buffering. Without these an intermediary may hold the

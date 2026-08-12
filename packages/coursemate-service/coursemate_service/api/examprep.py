@@ -38,7 +38,7 @@ from fastapi.responses import StreamingResponse
 from ..ai.planner import plan_for_offering
 from ..boundary.impl import AuthorizationError, boundary
 from ..config import settings
-from .deps import rate_limited, rate_limiter
+from .deps import holding_stream_slot, rate_limited, rate_limiter
 
 log = logging.getLogger(__name__)
 
@@ -54,25 +54,17 @@ async def _encode(source: AsyncIterator[StreamFrame]) -> AsyncIterator[str]:
         yield _sse(frame)
 
 
-async def _encode_holding_slot(
+def _encode_holding_slot(
     source: AsyncIterator[StreamFrame], student_id: str, token: str
 ) -> AsyncIterator[str]:
     """`_encode`, but the concurrency slot is given back when the stream ends.
 
-    The `finally` covers all three endings that matter: the generator finished,
-    it raised, or the student closed the tab — Starlette closes the iterator on
-    disconnect, which arrives here as `GeneratorExit` and still runs the release.
-
-    Releasing here rather than in the endpoint is the whole point. The endpoint
-    returns as soon as the `StreamingResponse` is constructed, long before a
-    single token has been generated, so a release there would free the slot while
-    the stream it was protecting was still running.
+    The release policy itself moved to `deps.holding_stream_slot` when `/chat`
+    gained a slot too — a second `finally` would have been a second copy of the
+    rule about when a slot is safe to give back, and those drift. This stays as
+    the exam-prep spelling of it: encode, then hold.
     """
-    try:
-        async for frame in source:
-            yield _sse(frame)
-    finally:
-        rate_limiter.release_stream(student_id, token)
+    return holding_stream_slot(_encode(source), student_id, token)
 
 
 @router.get("/status")

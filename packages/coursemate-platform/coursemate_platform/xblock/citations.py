@@ -12,9 +12,17 @@ from __future__ import annotations
 #: able to grow a student's `user_state` without bound.
 MAX_CITATIONS_PER_TURN = 8
 
+#: Marked sentences stored per answer. Same bound-the-state reason as the
+#: citation cap: a verifier that flagged every sentence of a long answer must not
+#: be able to grow `user_state` without limit.
+MAX_UNSUPPORTED_PER_TURN = 8
+
 _MAX_USAGE_KEY = 255
 _MAX_DISPLAY_NAME = 200
 _MAX_URL = 500
+#: One flagged sentence. Generous enough for real prose, bounded because this is
+#: browser-supplied text heading into per-student storage.
+_MAX_SENTENCE = 500
 
 
 def clean_citations(raw: object) -> list[dict]:
@@ -54,4 +62,36 @@ def clean_citations(raw: object) -> list[dict]:
                 "url": str(item.get("url") or "")[:_MAX_URL],
             }
         )
+    return cleaned
+
+
+def clean_unsupported(raw: object) -> list[str]:
+    """The sentences an answer could not ground, kept with the turn.
+
+    Same untrusted-input reasoning as `clean_citations`: `persist_turn` is a
+    handler the student's own page calls, so this list arrives from the browser
+    and is re-rendered on every page load.
+
+    **Why persist these at all.** `UNSUPPORTED_CLAIM` marks existed only for the
+    length of the live stream, so a refresh removed the warning and left the
+    sentence — which is worse than never having warned. §8.5's promise is to mark
+    a doubtful sentence and never silently rewrite what the student has read; an
+    unmark on reload breaks that promise in the direction that manufactures
+    confidence. It is the same defect `clean_citations` was written to fix, and
+    the argument is stronger here: a lost citation weakens an answer's support, a
+    lost warning invents it.
+
+    Never raises. It runs after every answer, and an exception here would lose
+    the student's turn.
+    """
+    if not isinstance(raw, list):
+        return []
+
+    cleaned: list[str] = []
+    for item in raw[:MAX_UNSUPPORTED_PER_TURN]:
+        if not isinstance(item, str):
+            continue
+        sentence = item.strip()[:_MAX_SENTENCE]
+        if sentence:
+            cleaned.append(sentence)
     return cleaned

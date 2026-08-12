@@ -98,6 +98,14 @@ function CourseMateTutor(runtime, element, initArgs) {
     while (log.firstChild) { log.removeChild(log.firstChild); }
     history.forEach(function (turn) {
       var node = el("div", "cm-turn " + turn.role, turn.content);
+      /* Marks first, so a doubtful sentence is flagged above its sources rather
+       * than below them. Persisted with the turn since 2026-08-12: before that a
+       * refresh dropped the warning and kept the sentence, so a reloaded answer
+       * read as MORE trustworthy than the live one. `|| []` is the
+       * compatibility path — turns written earlier have no such key. */
+      (turn.unsupported || []).forEach(function (text) {
+        node.appendChild(el("div", "cm-unsupported", text));
+      });
       /* Citations are persisted with the turn, so a reloaded answer keeps its
        * sources. Before this they existed only during the live stream, and a
        * refresh silently stripped them — which undercuts the whole point of a
@@ -194,6 +202,9 @@ function CourseMateTutor(runtime, element, initArgs) {
     log.appendChild(answerNode);
     var answer = "";
     var citations = [];
+    /* Collected so the marks can be persisted with the turn, not just drawn
+     * once. See renderHistory. */
+    var unsupported = [];
 
     mintToken().then(function (token) {
       if (token.error) { showNotice(token.error); busy(false); return; }
@@ -228,6 +239,7 @@ function CourseMateTutor(runtime, element, initArgs) {
               break;
             case "unsupported_claim":
               // Mark it; never silently rewrite text the student already read.
+              unsupported.push(frame.text || "");
               answerNode.appendChild(el("div", "cm-unsupported", frame.text || ""));
               break;
             case "degraded":
@@ -258,13 +270,19 @@ function CourseMateTutor(runtime, element, initArgs) {
         }).then(function () {
           busy(false);
           if (!answer) { return; }
-          history.push({ role: "tutor", content: answer, citations: citations });
+          history.push({
+            role: "tutor", content: answer,
+            citations: citations, unsupported: unsupported
+          });
           // Persist through the platform, which owns conversation state (§3.1).
           fetch(persistUrl, {
             method: "POST",
             credentials: "same-origin",
             headers: platformHeaders(),
-            body: JSON.stringify({ question: question, answer: answer, citations: citations })
+            body: JSON.stringify({
+              question: question, answer: answer,
+              citations: citations, unsupported: unsupported
+            })
           });
         });
       });

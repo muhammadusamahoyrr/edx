@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections.abc import AsyncIterator
 
 import jwt
 from coursemate_contracts.auth import AUDIENCE_SERVICE, AUDIENCE_STUDENT, StudentClaims
@@ -299,3 +300,33 @@ rate_limiter = _RateLimiter()
 def rate_limited(claims: StudentClaims = Depends(student_claims)) -> StudentClaims:
     rate_limiter.check(claims.sub)
     return claims
+
+
+async def holding_stream_slot(
+    source: AsyncIterator[str], student_id: str, token: str
+) -> AsyncIterator[str]:
+    """Pass an encoded stream through, giving the slot back when it ends.
+
+    The `finally` covers all three endings that matter: the generator finished,
+    it raised, or the student closed the tab — Starlette closes the iterator on
+    disconnect, which arrives here as `GeneratorExit` and still runs the release.
+
+    **Releasing here rather than in the endpoint is the whole point.** The
+    endpoint returns as soon as the `StreamingResponse` is constructed, long
+    before a single token has been generated, so a release there would free the
+    slot while the stream it was protecting was still running.
+
+    It lives beside the limiter rather than in a route module because both
+    streaming routes need it and the release policy is one decision. It was
+    `examprep._encode_holding_slot` while only one route had a slot; chat gained
+    one on 2026-08-12 and a second copy of a `finally` is a second copy of the
+    rule about when a slot is safe to give back.
+
+    Deliberately generic over already-encoded strings, so it needs no opinion
+    about SSE framing and no import from either route module.
+    """
+    try:
+        async for chunk in source:
+            yield chunk
+    finally:
+        rate_limiter.release_stream(student_id, token)

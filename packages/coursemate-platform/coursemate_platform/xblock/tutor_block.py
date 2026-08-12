@@ -41,7 +41,7 @@ except ImportError:  # pragma: no cover
 from coursemate_contracts.chat import Mode
 
 from ..client.jwt import mint_student_token
-from .citations import clean_citations
+from .citations import clean_citations, clean_unsupported
 from .identity import roles_of
 
 log = logging.getLogger(__name__)
@@ -161,7 +161,7 @@ class CourseMateTutorXBlock(XBlock):
             from ..models import StudentMastery
 
             rows = StudentMastery.snapshot(student_id, self._offering_id())
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("coursemate: mastery snapshot failed; continuing without it")
             rows = []
 
@@ -198,7 +198,7 @@ class CourseMateTutorXBlock(XBlock):
     # --- handlers: both return in milliseconds -------------------------------
 
     @XBlock.json_handler
-    def mint(self, data, suffix=""):  # noqa: ARG002
+    def mint(self, data, suffix=""):
         """Issue a short-lived token and get out of the way.
 
         This is the entire LMS involvement in answering a question.
@@ -255,12 +255,12 @@ class CourseMateTutorXBlock(XBlock):
             return content_adapter.user_group_tokens(
                 self.scope_ids.usage_id.course_key, django_user
             )
-        except Exception:  # noqa: BLE001 - a mint must never fail on this
+        except Exception:
             log.exception("coursemate: group token lookup failed")
             return ()
 
     @XBlock.json_handler
-    def persist_turn(self, data, suffix=""):  # noqa: ARG002
+    def persist_turn(self, data, suffix=""):
         """Write a completed turn back to platform-owned storage.
 
         Called by the browser after the stream finishes. A dropped connection can
@@ -282,17 +282,23 @@ class CourseMateTutorXBlock(XBlock):
                 # is cited and the reloaded one is not — which quietly breaks the
                 # product's central claim for any student who refreshes.
                 "citations": clean_citations((data or {}).get("citations")),
+                # And the marks, for the same reason and a sharper one: a
+                # refresh used to drop the "this sentence is not supported"
+                # warning while keeping the sentence, so a reloaded answer looked
+                # MORE trustworthy than the live one. Absent on turns written
+                # before 2026-08-12; the renderer treats missing as none.
+                "unsupported": clean_unsupported((data or {}).get("unsupported")),
             },
         ][-(HISTORY_WINDOW_TURNS * 2):]
         return {"saved": True, "turns": len(self.history)}
 
     @XBlock.json_handler
-    def clear_history(self, data, suffix=""):  # noqa: ARG002
+    def clear_history(self, data, suffix=""):
         self.history = []
         return {"cleared": True}
 
     @XBlock.json_handler
-    def record_attempt(self, data, suffix=""):  # noqa: ARG002
+    def record_attempt(self, data, suffix=""):
         """Count one practice attempt. **The only write in Feature B.**
 
         It lives here, in the platform, and not on the agent's tool surface — and
@@ -357,7 +363,7 @@ class CourseMateTutorXBlock(XBlock):
         )
 
     @XBlock.json_handler
-    def index_course(self, data, suffix=""):  # noqa: ARG002
+    def index_course(self, data, suffix=""):
         """Enqueue the bootstrap job for this course (§5.1).
 
         Course staff only, and it *enqueues* rather than working: the platform's

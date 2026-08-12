@@ -225,9 +225,14 @@ async def _frames(*, fail: bool = False):
 
 @pytest.mark.asyncio
 async def test_the_slot_is_released_when_the_stream_finishes(limiter, monkeypatch):
-    from coursemate_service.api import examprep
+    from coursemate_service.api import deps, examprep
 
+    # Both names, and the reason is the point of the seam. `examprep` binds the
+    # limiter at import for `acquire_stream`; the RELEASE lives in
+    # `deps.holding_stream_slot` and resolves `deps.rate_limiter` at call time.
+    # One object in production, two names to patch in a test.
     monkeypatch.setattr(examprep, "rate_limiter", limiter)
+    monkeypatch.setattr(deps, "rate_limiter", limiter)
     token = limiter.acquire_stream("u1")
 
     out = [chunk async for chunk in examprep._encode_holding_slot(_frames(), "u1", token)]
@@ -239,9 +244,14 @@ async def test_the_slot_is_released_when_the_stream_finishes(limiter, monkeypatc
 @pytest.mark.asyncio
 async def test_the_slot_is_released_when_the_stream_fails(limiter, monkeypatch):
     """A crash mid-generation must not cost the student a slot permanently."""
-    from coursemate_service.api import examprep
+    from coursemate_service.api import deps, examprep
 
+    # Both names, and the reason is the point of the seam. `examprep` binds the
+    # limiter at import for `acquire_stream`; the RELEASE lives in
+    # `deps.holding_stream_slot` and resolves `deps.rate_limiter` at call time.
+    # One object in production, two names to patch in a test.
     monkeypatch.setattr(examprep, "rate_limiter", limiter)
+    monkeypatch.setattr(deps, "rate_limiter", limiter)
     token = limiter.acquire_stream("u1")
 
     with pytest.raises(RuntimeError, match="blew up"):
@@ -256,9 +266,14 @@ async def test_the_slot_is_released_when_the_student_disconnects(limiter, monkey
     """Starlette closes the iterator on disconnect, which arrives as
     `GeneratorExit`. Abandoning a stream is the most common ending of all — a
     student who does not like the question closes the tab."""
-    from coursemate_service.api import examprep
+    from coursemate_service.api import deps, examprep
 
+    # Both names, and the reason is the point of the seam. `examprep` binds the
+    # limiter at import for `acquire_stream`; the RELEASE lives in
+    # `deps.holding_stream_slot` and resolves `deps.rate_limiter` at call time.
+    # One object in production, two names to patch in a test.
     monkeypatch.setattr(examprep, "rate_limiter", limiter)
+    monkeypatch.setattr(deps, "rate_limiter", limiter)
     token = limiter.acquire_stream("u1")
 
     stream = examprep._encode_holding_slot(_frames(), "u1", token)
