@@ -269,9 +269,9 @@ upstream `edX+DemoX+Demo_Course`).
 
 ## Tests
 
-    make check        # 6 contracts + OpenAPI drift check + 736 backend
-                      # + 63 browser tests
-    make coverage     # gated at 80% for service+contracts (now 90.4%); platform ungated
+    make check        # 6 contracts + OpenAPI drift check + 838 backend
+                      # + 93 browser tests
+    make coverage     # gated at 80% for service+contracts (now 90.9%); platform ungated
     make agent-eval   # the 4 agent regression gates — needs no provider
     make openapi      # regenerate docs/openapi.json from the routes
 

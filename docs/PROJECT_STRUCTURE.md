@@ -45,7 +45,7 @@ coursemate_contracts/
 ├── errors.py        # abstained | preparing | unavailable — three distinct states
 ├── invalidation.py  # enrollment/scope notices
 ├── examprep.py      # Feature B data model (dormant)
-└── version.py       # contract version; both sides assert at startup
+└── version.py       # contract version; asserted on first contact, not startup
 ```
 
 **Dependency ceiling: pydantic.** This package is imported into LMS processes;
@@ -225,5 +225,5 @@ design it was defending. Contract 2 stays transitive, because an indirect import
 still drags an AI library into the LMS image.
 
 ```bash
-make check     # 6 contracts + OpenAPI check + 590 backend + 44 browser tests
+make check     # 6 contracts + OpenAPI check + 838 backend + 93 browser tests
 ```

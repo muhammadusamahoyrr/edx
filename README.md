@@ -188,8 +188,8 @@ a unit, publish. Full walkthrough: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ```bash
 make install     # venv + editable installs
-make check       # 6 architecture contracts, OpenAPI drift check, 590 backend
-                 # + 44 browser tests. No Open edX required
+make check       # 6 architecture contracts, OpenAPI drift check, 838 backend
+                 # + 93 browser tests. No Open edX required
 ```
 
 Tests are self-contained — a clean checkout runs green with no environment setup.

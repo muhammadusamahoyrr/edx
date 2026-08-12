@@ -496,7 +496,7 @@ Measured at n=4, which demonstrates the pipeline rather than establishing a rate
 **The agent — implemented and tested offline only:** the tool registry (identity
 refused rather than overridden, strict schemas, three outcomes not two), the loop's
 failure rules, the per-tool confidence gate, the mastery memory layer with
-idempotent writes, and the local stdio MCP server. 590 backend + 44 browser tests,
+idempotent writes, and the local stdio MCP server. 838 backend + 93 browser tests,
 6 contracts.
 
 **`agent_enabled` defaults to `False`**, so a default install routes exam prep to
@@ -735,8 +735,8 @@ question.
 - **The generation eval disables enrollment enforcement** so it can run offline.
   Enrollment is verified separately, in a real browser against the live LMS
   (BENCHMARKS §3.7), where a cross-offering request returned `403 not_enrolled`.
-- **Coverage is gated on the service and contracts only** (89.5%, floor 80%).
-  `coursemate_platform` sits at 26% because most of it needs a live Open edX to
+- **Coverage is gated on the service and contracts only** (90.9%, floor 80%).
+  `coursemate_platform` sits at 33% because most of it needs a live Open edX to
   execute; blending the two produced a figure that measured how much of the code
   needs a platform rather than how well tested it is. And coverage says which
   lines ran, never whether the assertion that ran them meant anything — this repo

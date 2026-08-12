@@ -137,8 +137,8 @@ tell you whether your retrieval changed or the judge did.
 | Feature B band plausibility | **not measured** on extracted packs — the extractor does not derive difficulty |
 | Multi-turn retrieval recall@3 | **0.917** (was 0.333); answered-from-wrong-lesson **7 → 1** of 12 |
 | First-turn cache, real browser | **74,973 ms → 133 ms**, 0 tokens charged on the hit |
-| Coverage (service + contracts) | **90.4%**, gated at 80%. Platform 26%, reported ungated — most of it needs Open edX to execute |
-| Tests / contracts | 736 backend + 63 browser / 6 |
+| Coverage (service + contracts) | **90.9%**, gated at 80%. Platform 33%, reported ungated — most of it needs Open edX to execute |
+| Tests / contracts | 838 backend + 93 browser / 6 |
 
 **Tool-selection accuracy was attempted against a real model on 2026-08-12 and
 still is not a number.** The local `qwen2.5:7b` timed out on nine of ten planning

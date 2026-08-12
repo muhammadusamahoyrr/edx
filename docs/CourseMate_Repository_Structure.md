@@ -264,7 +264,7 @@ coursemate-service/
 ```
 coursemate-contracts/
 └── coursemate_contracts/
-    ├── version.py            # single integer, bumped on any breaking change; both sides assert
+    ├── version.py            # single integer, bumped on any breaking change; asserted on first contact
     ├── auth.py               # JWT claim set (§3.4)
     ├── chat.py               # request incl. rolling history window (§3.1) · SSE frames · citations
     ├── ingest.py             # ONE RECORD PER LEAF BLOCK — enforces §5.5 rule 1 in the wire format
