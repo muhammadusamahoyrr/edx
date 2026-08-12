@@ -15,7 +15,12 @@ import pytest
 from coursemate_contracts.auth import StudentClaims
 from coursemate_contracts.chat import Citation, FrameType
 from coursemate_contracts.errors import ErrorCode
-from coursemate_contracts.examprep import ExamType, PracticeQuestion, QuestionRecord, band_of
+from coursemate_contracts.examprep import (
+    ExamType,
+    PracticeQuestion,
+    QuestionRecord,
+    band_of,
+)
 from coursemate_service.ai.context import ContextChunk, ContextResult
 from coursemate_service.ai.quiz_generator import QuizGenerator
 
@@ -57,7 +62,7 @@ class _Ctx:
     def __init__(self, result: ContextResult):
         self.result = result
 
-    def fetch_sync(self, question, claims, limit=None):  # noqa: ARG002
+    def fetch_sync(self, question, claims, limit=None):
         return self.result
 
 
@@ -68,7 +73,7 @@ class _Router:
         self.payloads = list(payloads)
         self.calls = 0
 
-    async def acompletion(self, **kw):  # noqa: ARG002
+    async def acompletion(self, **kw):
         self.calls += 1
         content = self.payloads.pop(0) if self.payloads else None
         return SimpleNamespace(
@@ -389,7 +394,8 @@ def test_generation_fallback_excludes_cheap():
     because the STRONG model's output was measured. Serving a weaker model
     quietly ships unmeasured output under someone else's measurement."""
     from coursemate_service.ai.client import (
-        build_fallback_chain, build_generation_fallback_chain,
+        build_fallback_chain,
+        build_generation_fallback_chain,
     )
 
     models = [{"model_name": n, "litellm_params": {}} for n in ("strong", "cheap", "fallback")]
@@ -566,3 +572,74 @@ async def test_the_requested_band_reaches_the_prompt_not_just_the_filter(monkeyp
     joined = "\n".join(m["content"] for m in seen["messages"])
     assert "Target difficulty: hard" in joined
     assert "TARGET LEARNING OUTCOME: CLO-1" in joined
+
+
+# --- closing the mastery loop (D2) ------------------------------------------
+#
+# `record_attempt` requires a `question_id`, and until 2026-08-12 the practice
+# stream sent only the question TEXT and the source paper's name. Nothing could
+# call the mastery write, so the counters that rank a study plan were read by
+# four components and written by none. These frames are what make the loop
+# closable at all.
+
+
+@pytest.mark.asyncio
+async def test_done_carries_the_source_question_id(monkeypatch):
+    gen = _make(monkeypatch, source=_source(question_id="Q-42"), context=_grounded(),
+                router=_Router(OK))
+    done = (await _run(gen))[-1]
+
+    assert done.type == FrameType.DONE
+    assert done.question_id == "Q-42"
+
+
+@pytest.mark.asyncio
+async def test_done_carries_the_band_actually_used_not_the_one_requested(monkeypatch):
+    """`_pick` falls back to the closest available question when a course has
+    nothing in the asked-for band. Recording the REQUEST would bucket a
+    student's counters under a difficulty they never practised."""
+    gen = _make(monkeypatch, source=_source(difficulty=0.9), context=_grounded(),
+                router=_Router(OK))
+
+    done = (await _run(gen, difficulty_band="easy"))[-1]
+
+    assert done.difficulty_band == band_of(0.9)
+    assert done.difficulty_band != "easy"
+
+
+@pytest.mark.asyncio
+async def test_an_unscored_question_reports_no_band_rather_than_easy(monkeypatch):
+    """`band_of` is None-in/None-out: an unknown difficulty is unknown, not
+    easy. `record_attempt` accepts "" for exactly this case."""
+    gen = _make(monkeypatch, source=_source(difficulty=None), context=_grounded(),
+                router=_Router(OK))
+    done = (await _run(gen))[-1]
+
+    assert done.difficulty_band is None
+
+
+@pytest.mark.asyncio
+async def test_an_abstention_carries_no_question_id(monkeypatch):
+    """No question was shown, so there is nothing to record an attempt against.
+    A question_id here would let the browser offer a self-assessment for a
+    question that does not exist."""
+    weak = ContextResult(chunks=[], top_score=0.0)
+    gen = _make(monkeypatch, source=_source(), context=weak, router=_Router(OK))
+
+    frames = await _run(gen)
+
+    assert frames[-1].type == FrameType.ERROR
+    assert all(getattr(f, "question_id", None) is None for f in frames)
+
+
+def test_chat_never_sets_the_practice_fields():
+    """The two fields are scoped to one frame of one path, like `citation` and
+    `truncated`. A chat DONE frame setting them would mean the chat UI could
+    offer a mastery write against a question nobody generated."""
+    import inspect
+
+    from coursemate_service.ai import pipeline
+
+    source = inspect.getsource(pipeline)
+    assert "question_id=" not in source
+    assert "difficulty_band=" not in source

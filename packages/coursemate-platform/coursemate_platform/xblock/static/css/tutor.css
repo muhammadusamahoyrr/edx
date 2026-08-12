@@ -44,6 +44,20 @@
 .coursemate-tutor .cm-practice-text { white-space: pre-wrap; }
 .coursemate-tutor .cm-provenance { font-size: 12px; color: #555; margin-top: 6px; }
 
+/* --- Phase D2: closing the practice loop ------------------------------- *
+ * Separated from the question by a rule, because the question is generated
+ * content and this is the student's own workspace — the AI-generated badge
+ * above must not appear to cover what the student writes below it. */
+.coursemate-tutor .cm-selfcheck { margin-top: 10px; padding-top: 8px; border-top: 1px solid #e6e6e6; }
+.coursemate-tutor .cm-selfcheck-prompt { font-size: 12px; color: #555; margin-bottom: 6px; }
+.coursemate-tutor .cm-practice-answer { width: 100%; box-sizing: border-box; font: inherit; padding: 6px; border: 1px solid #ccc; border-radius: 3px; resize: vertical; }
+.coursemate-tutor .cm-selfcheck-buttons { display: flex; gap: 6px; margin-top: 6px; }
+.coursemate-tutor .cm-selfcheck-got,
+.coursemate-tutor .cm-selfcheck-not { font: inherit; padding: 4px 10px; border-radius: 3px; border: 1px solid #bbb; background: #fff; cursor: pointer; }
+.coursemate-tutor .cm-selfcheck-got:disabled,
+.coursemate-tutor .cm-selfcheck-not:disabled { opacity: .55; cursor: default; }
+.coursemate-tutor .cm-selfcheck-status { font-size: 12px; color: #555; margin-top: 6px; min-height: 1em; }
+
 /* --- Phase 4C: budgeted study plan ------------------------------------ */
 .coursemate-tutor .cm-budget-form { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
 .coursemate-tutor .cm-budget-input { width: 90px; padding: 5px; }

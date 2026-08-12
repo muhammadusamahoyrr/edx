@@ -82,7 +82,8 @@ test-js:
 		node packages/coursemate-platform/tests/js/test_practice_ui.mjs && \
 		node packages/coursemate-platform/tests/js/test_study_plan_ui.mjs && \
 		node packages/coursemate-platform/tests/js/test_error_notices.mjs && \
-		node packages/coursemate-platform/tests/js/test_history_marks.mjs; \
+		node packages/coursemate-platform/tests/js/test_history_marks.mjs && \
+		node packages/coursemate-platform/tests/js/test_practice_loop.mjs; \
 	else \
 		echo "SKIPPED: node not found — the XBlock UI is untested on this machine"; \
 	fi

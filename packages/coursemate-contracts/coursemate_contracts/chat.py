@@ -101,6 +101,26 @@ class StreamFrame(BaseModel):
     #: and turns a silent quality failure into a visible, explainable one.
     truncated: bool = False
 
+    # --- practice only, set on DONE ------------------------------------------
+    #
+    # Scoped like `citation` and `truncated`: present on one frame of one path
+    # and None everywhere else. They exist because `record_attempt` needs them
+    # and the browser has no other way to learn them.
+    #
+    # Without these the exam-prep loop cannot close. The XBlock's mastery write
+    # requires a `question_id`, the practice stream sent only the question TEXT
+    # and the source paper's name, and so nothing could ever call it — the
+    # counters that rank a study plan were read by four components and written by
+    # none.
+
+    #: The past-paper record the generated question was built from.
+    question_id: str | None = None
+    #: The band actually used, which is **not** always the band requested: the
+    #: generator falls back to the closest available question when a course has
+    #: nothing in the asked-for band. Recording the request instead would bucket
+    #: a student's counters under a difficulty they never practised.
+    difficulty_band: str | None = None
+
 
 class PersistTurnRequest(BaseModel):
     """Browser -> XBlock `json_handler`, after the stream completes.

@@ -241,6 +241,14 @@ Do not break these without saying so explicitly:
    aspirational. The only write in Feature B is `record_attempt`, and it lives on
    the XBlock, platform-side, deliberately off the tool surface. Adding a write
    tool ends the claim on the day it is added.
+
+   **It had no caller until 2026-08-12**, which made the claim true for the wrong
+   reason: the practice card showed a question and offered no way to answer it,
+   so `StudentMastery` was read by four components and written by none. The loop
+   is now closed through the student's own self-assessment — still platform-side,
+   still off the tool surface, so the invariant holds for the right reason. If
+   you are checking that "the only write is `record_attempt`", also check that
+   something calls it.
 9. **Identity is injected, never accepted.** The tool registry refuses
    model-supplied `offering_id`/`student_id` rather than overriding them —
    overriding hides the attempt. No tool schema declares an identity field, so a

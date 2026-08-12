@@ -621,11 +621,38 @@ figure, so what it produced measured timeouts rather than tool choice. Measuring
 this needs a hosted model — which is the same constraint §2 describes, and the
 reason `agent_enabled` ships `False`.
 
-**Mastery is not a grade.** The snapshot is carried by the browser, exactly as
-chat history is (§3.1), so a student can forge their own. What that buys them is
-worse study recommendations for themselves: it never reaches another student, it
-cannot widen retrieval scope, and enrollment is still re-derived at the boundary
-on every call. It must never be read as an assessment record.
+**Mastery is not a grade, and since 2026-08-12 it is explicitly self-reported.**
+The snapshot is carried by the browser, exactly as chat history is (§3.1), so a
+student can forge their own. What that buys them is worse study recommendations
+for themselves: it never reaches another student, it cannot widen retrieval
+scope, and enrollment is still re-derived at the boundary on every call. It must
+never be read as an assessment record.
+
+**Nothing marks the answer, and nothing claims to.** A past-paper
+`QuestionRecord` carries the question text and no answer key — there is none
+anywhere in the system — so the student attempts the question and then marks
+their own attempt "I got this" or "Not yet". `record_attempt` was always built to
+be *told*: it takes `correct` from the payload. Judging free text would mean a
+second model call whose accuracy is unmeasured, which is exactly the kind of
+claim §9.0 says must be measured before a student sees it.
+
+Two consequences worth stating rather than discovering:
+
+- **The counters measure confidence, not correctness.** A student who
+  consistently overrates themselves gets a plan that under-weights their weakest
+  outcome. That is a real limitation of self-assessment as a signal, not a bug in
+  the recording.
+- **The written answer never leaves the page.** Nothing can compare it against
+  anything, so transmitting it would create a store of student prose with no
+  purpose, inside the retirement boundary, for no gain.
+
+**Until this landed the loop was open**, and that is the more serious fact: the
+practice card rendered a question and stopped. There was no answer field, no
+submit and no caller for `record_attempt`, so `StudentMastery` was a table
+nothing wrote — while the model, migration 0003, the `MasterySnapshot` contract,
+the planner's weakness ranking and the agent's `get_plan_context` tool were all
+built on top of it. Every student looked like a new student, permanently, and
+every component involved worked correctly in isolation.
 
 **Built since, and measured (2026-08-12).** PDF extraction (`tools/extract/
 extract_pack.py`, pypdf, digital text only) and automated CLO tagging

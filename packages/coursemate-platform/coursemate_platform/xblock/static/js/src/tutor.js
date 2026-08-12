@@ -19,6 +19,7 @@ function CourseMateTutor(runtime, element, initArgs) {
 
   var mintUrl = runtime.handlerUrl(element, "mint");
   var persistUrl = runtime.handlerUrl(element, "persist_turn");
+  var recordUrl = runtime.handlerUrl(element, "record_attempt");
 
   var history = (initArgs && initArgs.history) || [];
   var mode = (initArgs && initArgs.mode) || "direct";
@@ -615,6 +616,121 @@ function CourseMateTutor(runtime, element, initArgs) {
     });
   }
 
+  /* One attempt id per generated card, reused by both buttons.
+   *
+   * `record_attempt` builds its idempotency key from it, so reusing it is what
+   * makes a double-click count once. A fresh id per CLICK would let an
+   * impatient student inflate their own counters; a fixed id across cards would
+   * discard every attempt after the first, freezing their record at whatever
+   * they answered once. One per card is the only reading that is right.
+   *
+   * Not crypto: this identifies an attempt, it does not authorise anything, and
+   * the server derives student and offering from the session regardless. */
+  function attemptId() {
+    return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+  }
+
+  /* --- closing the practice loop --------------------------------------- *
+   *
+   * **Self-assessment, not grading, and the distinction is deliberate.** A
+   * past-paper `QuestionRecord` carries the question text and nothing else —
+   * there is no answer key anywhere in the system, so nothing here can mark an
+   * answer right or wrong. Judging free text would mean a second model call
+   * whose accuracy is unmeasured, which is exactly the sort of claim §9.0 says
+   * has to be measured before a student sees it.
+   *
+   * So the student marks their own attempt, and `record_attempt` was always
+   * built to be told: it takes `correct` from the payload. That is sound because
+   * mastery is not a grade — it ranks the student's OWN study plan and reaches
+   * nothing else. A student who lies to it only misdirects their own revision.
+   *
+   * The written answer never leaves the page. There is nothing to compare it
+   * against, so sending it would create a store of student prose with no
+   * purpose, inside the retirement boundary, for no gain. */
+  function selfAssessment(card, cloId, questionId, band) {
+    var attempt = attemptId();
+    var wrap = el("div", "cm-selfcheck");
+
+    var prompt = el("div", "cm-selfcheck-prompt",
+      "Have a go, then mark how it went — this shapes your study plan.");
+    wrap.appendChild(prompt);
+
+    var draft = el("textarea", "cm-practice-answer");
+    draft.setAttribute("rows", "4");
+    draft.setAttribute("aria-label", "Your answer (kept on this page)");
+    draft.setAttribute("placeholder", "Your answer — stays on this page");
+    wrap.appendChild(draft);
+
+    var status = el("div", "cm-selfcheck-status", "");
+    var got = el("button", "cm-selfcheck-got", "I got this");
+    var notYet = el("button", "cm-selfcheck-not", "Not yet");
+    got.setAttribute("type", "button");
+    notYet.setAttribute("type", "button");
+
+    /* Disabling the buttons already stops a second press in a real browser,
+     * which does not dispatch click on a disabled control. This flag says the
+     * same thing in code rather than borrowing it from the platform: the
+     * guarantee being asserted is "one attempt is written per generated
+     * question", and that should not depend on a DOM behaviour a test harness —
+     * or a keyboard-driven a11y path — can step around. `record_attempt` is
+     * idempotent on `attempt_id` as the third layer. */
+    var recorded = false;
+
+    function record(correct) {
+      if (recorded) { return; }
+      recorded = true;
+      got.disabled = true;
+      notYet.disabled = true;
+      status.textContent = "Saving…";
+
+      fetch(recordUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: platformHeaders(),
+        body: JSON.stringify({
+          clo_id: cloId,
+          question_id: questionId,
+          attempt_id: attempt,
+          difficulty_band: band || "",
+          correct: correct
+        })
+      }).then(function (r) {
+        return r.ok ? r.json() : { error: "unavailable" };
+      }).then(function (result) {
+        if (result && result.error) {
+          /* Re-enabled on failure. A silent loss here is the whole defect this
+           * closes: the student believes their practice was counted and their
+           * plan quietly never changes. */
+          status.textContent = "That didn't save — try again.";
+          recorded = false;
+          got.disabled = false;
+          notYet.disabled = false;
+          return;
+        }
+        status.textContent = correct
+          ? "Recorded. Your plan will lean away from this outcome."
+          : "Recorded. Your plan will give this outcome more time.";
+      }).catch(function () {
+        /* Cleared alongside the buttons: nothing was written, so the next press
+         * is a first attempt, not a duplicate. */
+        status.textContent = "That didn't save — try again.";
+        recorded = false;
+        got.disabled = false;
+        notYet.disabled = false;
+      });
+    }
+
+    got.addEventListener("click", function () { record(true); });
+    notYet.addEventListener("click", function () { record(false); });
+
+    var buttons = el("div", "cm-selfcheck-buttons");
+    buttons.appendChild(got);
+    buttons.appendChild(notYet);
+    wrap.appendChild(buttons);
+    wrap.appendChild(status);
+    card.appendChild(wrap);
+  }
+
   /* --- practice generation ------------------------------------------- *
    * One generated question, streamed. Renders the AI-generated badge and the
    * provenance line from the CITATION frames the service emits — the badge is
@@ -702,6 +818,15 @@ function CourseMateTutor(runtime, element, initArgs) {
                 prov.textContent = "Source unavailable for this question.";
               }
               card.appendChild(prov);
+              /* The loop closes here, and only when the service told us which
+               * past-paper record this came from. Without a question_id the
+               * mastery write has no key, so offering the buttons would give a
+               * student a control that silently does nothing — worse than not
+               * offering it. An abstention leaves `answer` empty and never
+               * reaches this branch. */
+              if (frame.question_id && answer) {
+                selfAssessment(card, cloId, frame.question_id, frame.difficulty_band);
+              }
               break;
           }
         });
