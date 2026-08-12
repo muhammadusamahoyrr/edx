@@ -58,6 +58,21 @@ class CourseIntelligence(Protocol):
         """
         ...
 
+    def index_version(self, offering_id: str) -> str | None:
+        """The active index version, or None when the offering has no index.
+
+        Exists for the response cache and is deliberately on the boundary rather
+        than read from the store directly: `.importlinter` contract 3 keeps the
+        reasoning layer out of `knowledge`, and a cache that reached around the
+        boundary for its invalidation token would be reaching around it for the
+        single value that decides whether a cached answer is stale.
+
+        Reindexing writes a new version, so including this in the cache key makes
+        a reindex invalidate every cached answer for the offering without anyone
+        remembering to purge anything.
+        """
+        ...
+
     # --- Feature B (§7) ---------------------------------------------------
 
     def search_past_questions(

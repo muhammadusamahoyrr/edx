@@ -30,6 +30,14 @@ class ContextChunk(BaseModel):
     text: str
     citation: Citation
     score: float
+    #: Whether this chunk came from a per-student namespace. Always False on the
+    #: chat path today — `retrieve_course_context` searches course content only,
+    #: so there is no personal chunk for it to return. It is carried anyway
+    #: because the response cache gates its writes on
+    #: `knowledge.cache.policy.assert_cacheable`, and that control has to be
+    #: wired to a real value BEFORE a personal namespace reaches chat rather
+    #: than after. §6.4/§10.2 call it a security control, not an optimisation.
+    is_personal: bool = False
 
 
 class ContextResult(BaseModel):
@@ -39,6 +47,11 @@ class ContextResult(BaseModel):
     #: True when the course has no index at all — a different state from "nothing
     #: matched", and the student is told something different (§5.1).
     index_missing: bool = False
+    #: Active index version for the offering, from the boundary. The response
+    #: cache puts this in its key so a reindex invalidates every cached answer
+    #: without anyone remembering to purge. None means "not known", and the
+    #: cache declines to store anything it cannot version.
+    index_version: str | None = None
 
     @property
     def is_empty(self) -> bool:
@@ -62,5 +75,5 @@ class NullContextProvider:
     the flag exists rather than being hardcoded.
     """
 
-    async def fetch(self, question: str, claims: StudentClaims) -> ContextResult:  # noqa: ARG002
+    async def fetch(self, question: str, claims: StudentClaims) -> ContextResult:
         return ContextResult(chunks=[], top_score=0.0, index_missing=True)

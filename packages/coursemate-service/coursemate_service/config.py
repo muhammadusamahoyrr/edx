@@ -221,6 +221,19 @@ class Settings(BaseSettings):
     #: Zero or less disables the ceiling — a mis-set limit must not take the
     #: tutor offline.
     student_daily_token_budget: int = 100_000
+
+    #: First-turn response cache (§6.4). A kill switch rather than a permanent
+    #: flag: §10.2 calls response caching the place isolation quietly fails after
+    #: every filter is written correctly, so there has to be a way to turn it off
+    #: that does not need a deploy to reason about.
+    response_cache_enabled: bool = True
+    #: TTL ceiling. The index version in the key already invalidates on reindex,
+    #: so this is not the correctness mechanism — it bounds how long an answer
+    #: can outlive a change the version did not capture (a prompt edit, a model
+    #: swap, a tau change). One hour is short enough that such a change is not
+    #: worth a manual purge and long enough to absorb a lecture-hall spike of the
+    #: same question.
+    response_cache_ttl_seconds: int = 3600
     per_course_ingest_ceiling_usd: float = 5.0
 
     # --- feature flags for designed-but-dormant work --------------------------

@@ -78,13 +78,28 @@ class CourseContextProvider:
             # pipeline then abstains, which is the correct outcome: a student
             # asking outside their enrollment gets "not covered", not an error
             # that confirms the content exists.
+            #
+            # **`index_version` is deliberately left None here**, and that is a
+            # security property, not an omission: the response cache only builds
+            # a key when it has a version, so a caller who failed authorization
+            # cannot read from the cache or write to it. The check does not need
+            # to be repeated in the cache — a denied caller never reaches it.
             log.warning("authorization denied: %s", exc)
             return ContextResult(chunks=[], top_score=0.0, index_missing=False)
 
+        # Read once, after the index is known to exist, and carry it on the
+        # result. The response cache needs it in its key; fetching it separately
+        # from the pipeline would be a second boundary call answering a question
+        # this one already had to ask.
+        version = boundary.index_version(offering_id)
+
         if not chunks:
-            return ContextResult(chunks=[], top_score=0.0, index_missing=False)
+            return ContextResult(
+                chunks=[], top_score=0.0, index_missing=False, index_version=version
+            )
 
         return ContextResult(
+            index_version=version,
             chunks=[
                 ContextChunk(
                     text=c.text,

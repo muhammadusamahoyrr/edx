@@ -18,9 +18,10 @@ import logging
 from collections.abc import AsyncIterator
 
 from coursemate_contracts.auth import StudentClaims
-from coursemate_contracts.chat import ChatRequest, FrameType, StreamFrame
+from coursemate_contracts.chat import ChatRequest, Citation, FrameType, StreamFrame
 from coursemate_contracts.errors import ErrorCode
 
+from .. import response_cache
 from ..budget import estimate_tokens, ledger
 from ..config import settings
 from . import gate
@@ -66,6 +67,32 @@ class AnswerPipeline:
             yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.UNAVAILABLE)
             return
 
+        # --- 1b. first-turn cache read -------------------------------------
+        # Placed AFTER retrieval and before everything else, which is the only
+        # position that is both useful and safe:
+        #
+        # * after retrieval, because retrieval is what enforces enrollment,
+        #   applies the group filter and writes the audit record. A hit that
+        #   short-circuited those would be the §10.2 failure exactly — every
+        #   filter correct, and the cache handing the answer to someone the
+        #   filters would have refused. Retrieval costs ~3 ms locally; the call
+        #   this skips costs ~55 s.
+        # * before the gate, so an abstention can be served from cache too, and
+        #   so a hit replays whatever the gate decided last time rather than
+        #   re-deriving it.
+        #
+        # Replaying the gate's decision is sound because the decision is a
+        # function of retrieval, and retrieval is a function of the query, the
+        # caller's scope and the index version — all three of which are in the
+        # key. A hit therefore cannot disagree with what the gate would have said.
+        cache_key: str | None = None
+        if response_cache.is_cacheable_request(request) and context.index_version:
+            cache_key = response_cache.cache_key(request, claims, context.index_version)
+            if (hit := response_cache.read(cache_key)) is not None:
+                async for frame in _replay(hit):
+                    yield frame
+                return
+
         # --- 2. confidence gate, BEFORE generating a token (§8.5) ----------
         # Free, and it is why abstention costs no latency: nothing streams that
         # already failed the retrieval bar.
@@ -77,6 +104,15 @@ class AnswerPipeline:
         # implementation instead of the two a copy-paste would have produced.
         outcome = gate.evaluate(context)
         if (code := gate.ERROR_CODE[outcome]) is not None:
+            # ABSTAINED is cached; PREPARING is not. "Not covered in this course"
+            # is a settled answer for this index version. "Still being prepared"
+            # is a statement that the index is about to change, and caching a
+            # claim whose whole content is "this is temporary" is the one entry
+            # guaranteed to be wrong before its TTL expires.
+            if cache_key is not None and code is ErrorCode.ABSTAINED:
+                response_cache.write(
+                    cache_key, {"kind": "abstained"}, context.chunks
+                )
             yield StreamFrame(type=FrameType.ERROR, error_code=code)
             return
 
@@ -233,12 +269,14 @@ class AnswerPipeline:
         # used this" — three authoritative links under a sentence none of them
         # support. `supporting_chunks` returns everything when nothing overlaps,
         # so the mandatory-citation promise still holds in the worst case.
-        for idx in supporting_chunks(answer, chunk_texts):
-            yield StreamFrame(type=FrameType.CITATION, citation=context.chunks[idx].citation)
+        cited = [context.chunks[idx].citation for idx in supporting_chunks(answer, chunk_texts)]
+        for citation in cited:
+            yield StreamFrame(type=FrameType.CITATION, citation=citation)
 
         # Sentences the retrieved material does not support. The frame is marked,
         # never rewritten: the student has already read the text, and silently
         # changing it under them is worse than telling them which part to doubt.
+        unsupported: list[str] = []
         if settings.verify_claims:
             for claim in unsupported_sentences(
                 answer, chunk_texts, settings.claim_support_threshold
@@ -246,6 +284,7 @@ class AnswerPipeline:
                 log.info(
                     "unsupported claim (coverage %.2f): %.80s", claim.coverage, claim.sentence
                 )
+                unsupported.append(claim.sentence)
                 yield StreamFrame(type=FrameType.UNSUPPORTED_CLAIM, text=claim.sentence)
 
         # Surfaced so an outage reads as "answered by a fallback" rather than as
@@ -277,7 +316,62 @@ class AnswerPipeline:
                 settings.max_output_tokens,
             )
 
+        # --- 6. cache the finished answer ------------------------------------
+        # The completed payload, never streaming state: text, citations, marked
+        # claims and the DONE metadata — everything needed to reproduce what this
+        # caller just saw, and nothing about how it arrived in pieces.
+        #
+        # **A degraded answer is not cached.** It came from the fallback
+        # deployment during an outage, and it is the worst answer the system
+        # produces. Storing it would freeze the outage's quality into every
+        # subsequent hit for the TTL, long after the primary recovered — and the
+        # replayed DEGRADED frame would tell a student about an outage that had
+        # ended. A truncated answer is cached: it is a complete record of a real
+        # answer that hit the token cap, and the flag replays honestly.
+        if cache_key is not None and deployment == PRIMARY_DEPLOYMENT:
+            response_cache.write(
+                cache_key,
+                {
+                    "kind": "answer",
+                    "answer": answer,
+                    "citations": [c.model_dump(mode="json") for c in cited],
+                    "unsupported": unsupported,
+                    "provider": provider_used,
+                    "truncated": truncated,
+                },
+                context.chunks,
+            )
+
         yield StreamFrame(type=FrameType.DONE, provider=provider_used, truncated=truncated)
+
+
+async def _replay(payload: dict) -> AsyncIterator[StreamFrame]:
+    """Turn a cached payload back into the frames the UI already handles.
+
+    No new frame type and no "this was cached" marker. The student asked a
+    question and got the answer to it; where it came from is an implementation
+    detail, and a badge saying otherwise would invite them to distrust an answer
+    that is byte-identical to the one they would have waited 55 seconds for.
+
+    The whole answer arrives as ONE token frame rather than re-simulated
+    streaming. Faking a typewriter would mean inventing timings that never
+    happened, and the UI appends token text either way.
+    """
+    if payload.get("kind") == "abstained":
+        yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.ABSTAINED)
+        return
+
+    if answer := payload.get("answer"):
+        yield StreamFrame(type=FrameType.TOKEN, text=answer)
+    for citation in payload.get("citations") or []:
+        yield StreamFrame(type=FrameType.CITATION, citation=Citation(**citation))
+    for sentence in payload.get("unsupported") or []:
+        yield StreamFrame(type=FrameType.UNSUPPORTED_CLAIM, text=sentence)
+    yield StreamFrame(
+        type=FrameType.DONE,
+        provider=payload.get("provider"),
+        truncated=bool(payload.get("truncated")),
+    )
 
 
 #: One instance per process. Stateless — conversation state stays with the

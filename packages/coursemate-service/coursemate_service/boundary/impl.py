@@ -22,8 +22,8 @@ from coursemate_contracts.examprep import CLO, QuestionRecord
 from ..config import settings
 from ..knowledge import get_examprep_store, get_store
 from ..knowledge.rerank import get_reranker
-from .authz import NotEnrolled, PlatformUnreachable, verifier
 from ..knowledge.store import StoredChunk
+from .authz import NotEnrolled, PlatformUnreachable, verifier
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +105,12 @@ class CourseIntelligenceImpl:
 
     def has_index(self, offering_id: str) -> bool:
         return get_store().has_index(offering_id)
+
+    def index_version(self, offering_id: str) -> str | None:
+        """Unauthenticated, matching `has_index`: it reveals only that an
+        offering has been indexed and an opaque version string, never content."""
+        version = get_store().stats(offering_id).get("active_version")
+        return str(version) if version else None
 
     # --- Feature B: exam prep (§7) ---------------------------------------
     #

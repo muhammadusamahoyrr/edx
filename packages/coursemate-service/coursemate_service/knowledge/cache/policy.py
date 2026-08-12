@@ -1,9 +1,9 @@
 """Cache policy — design §6.4 and §10.2.
 
-**STATUS: specified, not wired.** No response cache exists in the request path
-yet, so nothing calls this module today. It is kept — and tested — so that whoever
-adds caching inherits the rules rather than rediscovering the bugs behind them.
-See README.md in this directory before wiring anything up.
+**STATUS: wired as of Phase C2.** `coursemate_service.response_cache.write` calls
+`assert_cacheable` before storing any answer, so this is now an active control
+rather than a documented intention. It was specified and tested for six phases
+before anything called it, which is how the rule survived to be inherited.
 
 
 This module exists as its own file for one reason: the rule *"personal-namespace
