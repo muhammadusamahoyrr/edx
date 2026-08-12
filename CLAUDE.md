@@ -46,16 +46,47 @@ wrong; the system wins.
 > * In mirrored mode the host's ports are **already occupied from WSL's view**, so
 >   binding 11434 inside WSL fails with `Address already in use`.
 >
+> **Adopting a new openedx image drops the `:80` socket (2026-08-12).** After
+> `adopt_new_image.sh`, `ss -ltn | grep :80` came back EMPTY and Windows could not
+> reach the LMS at all, while everything inside WSL answered normally. Recreating
+> the containers takes the old `docker-proxy` with it and the replacement is not
+> always projected. Recovery is one line:
+>
+>     docker restart tutor_local-caddy-1
+>
+> Check `ss -ltn | grep :80` **before** blaming the browser — the same symptom
+> reads as "the page will not load" and sends you looking in the wrong place.
+>
+> **Windows→WSL reachability also flaps on its own.** Measured on 2026-08-12:
+> after each socket recreate Windows got roughly 15 seconds of working requests
+> and then `000` again, while WSL-internal curl held a steady 200 throughout. The
+> Hyper-V firewall is still `DefaultInboundAction: Block`, so the durable fix is a
+> narrow inbound allow rule, which needs admin. Until then, budget for browser
+> work happening in short windows and re-check reachability between steps rather
+> than assuming a failure is the application.
+>
 > **Ollama is bound to `127.0.0.1:11434` on Windows** and is not being changed.
 > Containers reach it through a `socat` forwarder bound **only** to the tutor
 > network gateway:
 >
->     socat TCP-LISTEN:11435,fork,reuseaddr,bind=172.18.0.1 TCP:127.0.0.1:11434
+>     setsid socat TCP-LISTEN:11435,fork,reuseaddr,bind=172.18.0.1 \
+>            TCP:127.0.0.1:11434 </dev/null >/tmp/socat.log 2>&1 &
 >
 > Run it as root (`wsl -u root`, no password needed) and **re-run it after any WSL
 > restart** — it is not persistent. `COURSEMATE_MODEL_API_BASE` points at
 > `http://172.18.0.1:11435`. If generation starts returning `unavailable`, check
 > this forwarder before anything else.
+>
+> **`setsid` is load-bearing; `nohup … &` is not enough (2026-08-12).** Started
+> with plain `nohup` from a `wsl -- bash script.sh` invocation, the forwarder dies
+> the moment that invocation exits — the whole session is torn down and the child
+> goes with it. It looks like it worked: the script prints a listening socket and
+> a successful `/api/tags` probe, and the forwarder is gone by the next command.
+> The symptom arrives later and elsewhere, as
+> `APIConnectionError: Cannot connect to host 172.18.0.1:11435` and an
+> `unavailable` frame. `setsid` detaches it into its own session, which survives.
+> Verify it outlived the shell with a SEPARATE `wsl` call, not the one that
+> started it.
 
 | What | State | Check |
 |---|---|---|
@@ -142,6 +173,41 @@ Two traps, both of which cost time on 2026-08-11:
    until a generation failed with `llama-server binary not found`. Fixed by
    re-running the full installer (1.49 GB). If inference dies after an update,
    check `lib\ollama\llama-server.exe` exists before debugging anything else.
+
+## A cold LMS trips the 5-second authz timeout (2026-08-12)
+
+`authz_timeout_seconds = 5.0`. Measured against a freshly restarted LMS, three
+consecutive enrollment checks from the same process:
+
+    1st   TIMED OUT at 5.58s
+    2nd   OK          3.46s
+    3rd   OK          0.00s   (token cached in-process)
+
+The first OAuth token exchange after the LMS comes up is slow enough to exceed
+the timeout. The boundary then fails **closed** — which is correct, and is the
+behaviour §10.1 wants — but the visible result is confusing: retrieval returns
+nothing, and the exam-prep generator reports `abstained`. Two hours of Phase D2
+went into chasing "why is it abstaining" before the log line
+`enrollment unverifiable, denying: token exchange failed: timed out` explained
+it.
+
+Two practical consequences:
+
+* **A restart of the service process re-cools it.** The token cache is
+  per-process, so anything that restarts uvicorn puts the next request back at
+  the 5.58s path.
+* **Warm it before verifying anything.** Two throwaway calls are enough; the
+  third is cached and free.
+
+**Open decision, deliberately not taken:** whether `authz_timeout_seconds` should
+be raised. Arguments both ways, and they are not close to obvious — 5s is a
+sensible ceiling for a synchronous check on a student's request path, and raising
+it makes a genuinely unreachable platform hold the student longer before failing
+closed. But a value that a healthy-but-cold platform routinely exceeds turns a
+timeout into a flapping outage. If it is raised, raise it for the *cold* case
+only if the retry/caching behaviour cannot absorb it instead.
+
+---
 
 ## Verify, don't assume
 
