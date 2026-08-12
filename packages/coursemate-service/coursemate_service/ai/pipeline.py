@@ -26,6 +26,7 @@ from . import gate
 from .client import PRIMARY_DEPLOYMENT, NoModelConfigured, deployment_of, get_router
 from .context import ContextProvider
 from .prompts import build_messages
+from .query import retrieval_query
 from .verify import supporting_chunks, unsupported_sentences
 
 log = logging.getLogger(__name__)
@@ -51,8 +52,14 @@ class AnswerPipeline:
         with a typed code the UI already knows how to render (§5.1).
         """
         # --- 1. retrieve --------------------------------------------------
+        # What we SEARCH for is not what the student typed. On a follow-up the
+        # bare question carries no topic — "why?" is unsearchable — so the query
+        # is built from the conversation as well. `build_messages` below still
+        # gets `request.question`: the model must see what was actually asked,
+        # and only the retriever needs the reconstruction.
+        query = retrieval_query(request.question, request.history, request.usage_key)
         try:
-            context = await self.context.fetch(request.question, claims)
+            context = await self.context.fetch(query, claims)
         except Exception:
             log.exception("context fetch failed")
             yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.UNAVAILABLE)

@@ -42,6 +42,9 @@ class RetrievalResult:
     question: str
     covered: bool
     expected: list[str]
+    #: Which gold-set arm this case belongs to. Metrics are reported per arm;
+    #: averaging arms together measures nothing in particular.
+    arm: str = "original"
     retrieved: list[str] = field(default_factory=list)
     scores: list[float] = field(default_factory=list)
     top_score: float = 0.0
@@ -64,6 +67,47 @@ class GenerationResult:
     total_ms: float = 0.0
 
 
+#: Arms whose questions stand on their own. Generation is sampled ONLY from
+#: these — see `generation_candidates`.
+GENERATION_ARMS = ("original", "paraphrase")
+
+
+def build_query(case: dict) -> str:
+    """The query the SHIPPING pipeline would build for this case.
+
+    Calls `ai.query.retrieval_query` rather than reproducing its rule, so no
+    harness can drift from production — the failure where an eval keeps passing
+    because it is measuring its own copy of the logic. Both `run_eval.py` and
+    `run_conversation_eval.py` come through here, which is why their numbers can
+    be compared at all.
+
+    The gold set stores history as plain student strings; the contract carries
+    `Turn` objects with roles. Converting here keeps the dataset readable.
+    """
+    from coursemate_contracts.chat import Role, Turn
+    from coursemate_service.ai.query import retrieval_query
+
+    history = [Turn(role=Role.STUDENT, content=h) for h in case.get("history") or []]
+    return retrieval_query(case["question"], history, case.get("usage_key"))
+
+
+def generation_candidates(questions: list[dict]) -> list[dict]:
+    """Questions a generation run may sample from.
+
+    **Conversational cases are excluded, and this is a correctness guard rather
+    than a preference.** Generation runs the pipeline on `question` alone with no
+    history attached, so sampling "Why would I use one?" would measure the
+    model's ability to cope with a question stripped of its conversation — a
+    different thing from what the benchmark reports.
+
+    Until 2026-08-12 this was safe only by accident: the sample took the first N
+    covered cases positionally and the conversational arms happened to be
+    appended last. Reordering the file, or raising `--gen`, would have started
+    generating answers to bare follow-ups and reported them as results.
+    """
+    return [q for q in questions if q.get("arm", "original") in GENERATION_ARMS]
+
+
 def run_retrieval(questions: list[dict], offering_id: str) -> list[RetrievalResult]:
     """Measure retrieval alone, through the boundary (so authorization and the
     filter-before-ranking path are exercised, not bypassed)."""
@@ -79,7 +123,7 @@ def run_retrieval(questions: list[dict], offering_id: str) -> list[RetrievalResu
         )
         t0 = time.perf_counter()
         try:
-            chunks = boundary.retrieve_course_context(q["question"], offering_id, claims, limit=5)
+            chunks = boundary.retrieve_course_context(build_query(q), offering_id, claims, limit=5)
             r.retrieved = [c.display_name or c.block_id for c in chunks]
             r.scores = [c.score for c in chunks]
             r.top_score = max(r.scores) if r.scores else 0.0
@@ -158,7 +202,10 @@ def run_authorization(offering_id: str) -> list[dict[str, Any]]:
     denials: an authorization suite that only proves the allowed case passes
     trivially on a system with no authorization at all.
     """
-    from coursemate_service.boundary.impl import AuthorizationError, CourseIntelligenceImpl
+    from coursemate_service.boundary.impl import (
+        AuthorizationError,
+        CourseIntelligenceImpl,
+    )
 
     b = CourseIntelligenceImpl()
     cases: list[dict[str, Any]] = []

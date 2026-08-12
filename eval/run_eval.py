@@ -19,12 +19,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from harness import metrics as M  # noqa: E402
-from harness.runner import (  # noqa: E402
+from harness import metrics as M
+from harness.runner import (
+    GENERATION_ARMS,
+    generation_candidates,
     run_authorization,
     run_generation,
     run_retrieval,
 )
+
+
+def settings_tau() -> float:
+    from coursemate_service.config import settings
+
+    return settings.confidence_threshold
 
 
 def load_dataset(path: Path) -> dict:
@@ -34,7 +42,11 @@ def load_dataset(path: Path) -> dict:
     import re
 
     text = path.read_text(encoding="utf-8")
-    offering = re.search(r'^offering_id:\s*"([^"]+)"', text, re.M).group(1)
+    offering = re.search(r'^offering_id:\s*"([^"]+)"', text, re.MULTILINE).group(1)
+
+    def one_line_list(body: str) -> list[str]:
+        """`["a", "b"]` on a single line — the only list shape this file uses."""
+        return [x.strip().strip('"') for x in body.strip().strip("[]").split('", "') if x.strip()]
 
     questions, current = [], None
     for raw in text.splitlines():
@@ -42,14 +54,31 @@ def load_dataset(path: Path) -> dict:
         if line.startswith("- id:"):
             if current:
                 questions.append(current)
-            current = {"id": line.split(":", 1)[1].strip(), "expect": [], "covered": True}
+            current = {
+                "id": line.split(":", 1)[1].strip(), "expect": [], "covered": True,
+                # Defaults keep every pre-existing case valid without editing it.
+                "arm": "original", "history": [], "usage_key": None,
+            }
         elif current is not None and line.startswith("question:"):
             current["question"] = line.split(":", 1)[1].strip().strip('"')
         elif current is not None and line.startswith("expect:"):
-            body = line.split(":", 1)[1].strip()
-            current["expect"] = [x.strip().strip('"') for x in body.strip("[]").split(",") if x.strip()]
+            current["expect"] = one_line_list(line.split(":", 1)[1])
         elif current is not None and line.startswith("covered:"):
             current["covered"] = line.split(":", 1)[1].strip() == "true"
+        elif current is not None and line.startswith("arm:"):
+            current["arm"] = line.split(":", 1)[1].strip().strip('"')
+        elif current is not None and line.startswith("history:"):
+            current["history"] = one_line_list(line.split(":", 1)[1])
+        elif current is not None and line.startswith("usage_key:"):
+            # Strip a trailing `# comment`, which these entries carry.
+            v = line.split(":", 1)[1].split("#")[0].strip().strip('"')
+            current["usage_key"] = v or None
+        elif current is not None and line.startswith("paraphrase:"):
+            # Back-compat: the paraphrase arm predates `arm:` and marks itself
+            # with a boolean. Its own comment says the harness "can report them
+            # as their own arm" — it never did, and this is what makes that true.
+            if line.split(":", 1)[1].split("#")[0].strip() == "true":
+                current["arm"] = "paraphrase"
     if current:
         questions.append(current)
     return {"offering_id": offering, "questions": questions}
@@ -94,8 +123,20 @@ def main() -> int:
     print(f"\n[1/3] retrieval over {len(questions)} questions ...", flush=True)
     retrieval = run_retrieval(questions, offering)
 
-    covered = [r for r in retrieval if r.covered]
+    arm_of = {q["id"]: q.get("arm", "original") for q in questions}
+    for r in retrieval:
+        r.arm = arm_of.get(r.qid, "original")
+
+    all_covered = [r for r in retrieval if r.covered]
     uncovered = [r for r in retrieval if not r.covered]
+
+    # **The headline stays over the SINGLE-TURN arms only**, which is what it
+    # measured before the conversational arms existed. Phase A appended 18 cases
+    # and this number silently began averaging them in — so a figure BENCHMARKS
+    # quotes as retrieval quality became a blend of retrieval quality and an
+    # unfixed conversational defect. Arms are reported separately below; a blend
+    # of arms is not a measurement of anything.
+    covered = [r for r in all_covered if r.arm in GENERATION_ARMS]
 
     r_at_3 = [M.recall_at_k(r.retrieved, r.expected, 3) for r in covered]
     r_at_5 = [M.recall_at_k(r.retrieved, r.expected, 5) for r in covered]
@@ -103,14 +144,42 @@ def main() -> int:
     mrr = [M.reciprocal_rank(r.retrieved, r.expected) for r in covered]
     lat = [r.latency_ms for r in retrieval]
 
+    def arm_block(rows):
+        if not rows:
+            return None
+        return {
+            "n": len(rows),
+            "recall_at_1": round(statistics.fmean(
+                M.recall_at_k(r.retrieved, r.expected, 1) for r in rows), 3),
+            "recall_at_3": round(statistics.fmean(
+                M.recall_at_k(r.retrieved, r.expected, 3) for r in rows), 3),
+            "mrr": round(statistics.fmean(
+                M.reciprocal_rank(r.retrieved, r.expected) for r in rows), 3),
+            # The failure that matters most: missed AND still above tau, so the
+            # pipeline answers confidently from the wrong lesson.
+            "answered_from_wrong_content": sum(
+                1 for r in rows
+                if M.recall_at_k(r.retrieved, r.expected, 5) == 0.0
+                and r.top_score >= settings_tau()
+            ),
+        }
+
     # On uncovered questions the retriever SHOULD return nothing above tau.
-    from coursemate_service.config import settings
-    tau = settings.confidence_threshold
+    tau = settings_tau()
     leaked = [r for r in uncovered if r.top_score >= tau]
 
+    by_arm = {
+        arm: arm_block([r for r in all_covered if r.arm == arm])
+        for arm in dict.fromkeys(r.arm for r in all_covered)
+    }
+
     # --- generation (sample) ---------------------------------------------
-    print(f"\n[2/3] generation sample (n={args.gen}) — slow, real model ...", flush=True)
-    generation = run_generation(questions, offering, args.gen)
+    # Single-turn arms only. See `generation_candidates` for why sampling a bare
+    # follow-up would not measure generation.
+    eligible = generation_candidates(questions)
+    print(f"\n[2/3] generation sample (n={args.gen}) from {len(eligible)} "
+          f"single-turn cases — slow, real model ...", flush=True)
+    generation = run_generation(eligible, offering, args.gen)
 
     abst = M.AbstentionOutcome()
     ground_scores, cite_scores, ttfts, totals = [], [], [], []
@@ -149,7 +218,14 @@ def main() -> int:
 
     report = {
         "environment": env,
-        "dataset": {"questions": len(questions), "covered": len(covered), "uncovered": len(uncovered)},
+        "dataset": {
+            "questions": len(questions),
+            "covered": len(all_covered),
+            "uncovered": len(uncovered),
+            "headline_scope": "original + paraphrase (single-turn arms)",
+            "headline_n": len(covered),
+        },
+        "retrieval_by_arm": by_arm,
         "retrieval": {
             "recall_at_3": avg(r_at_3),
             "recall_at_5": avg(r_at_5),
@@ -192,6 +268,15 @@ def main() -> int:
     print("\n" + "=" * 70)
     print("RESULTS")
     print("=" * 70)
+    print(f"  retrieval headline is {report['dataset']['headline_scope']}, "
+          f"n={report['dataset']['headline_n']}")
+    print()
+    print(f"  {'arm':22s}{'n':>4}{'r@1':>8}{'r@3':>8}{'MRR':>8}{'wrong+answered':>17}")
+    print("  " + "-" * 64)
+    for arm, m in by_arm.items():
+        print(f"  {arm:22s}{m['n']:>4}{m['recall_at_1']:>8.3f}{m['recall_at_3']:>8.3f}"
+              f"{m['mrr']:>8.3f}{m['answered_from_wrong_content']:>17}")
+    print()
     print(json.dumps(report["retrieval"], indent=2)[:900])
     print(json.dumps(report["generation"], indent=2))
     print(json.dumps(report["abstention"], indent=2))

@@ -7,13 +7,24 @@ scores what it produced with `feature_b_rubric.py`. Nothing is stubbed except th
 clock: the boundary, the confidence gate, the model routing and the contract
 validation are all the shipping ones.
 
-**LIMITATION, stated up front.** The *lesson content* is real — the OEX101 course
-as indexed on the live stack. The *source questions* are exam-style items written
-against those lessons for this eval, not extracted from a real past paper, because
-no real paper exists for a demo course. So this measures the generator, not the
-extractor: "given a plausible source question and real course material, does the
-pipeline produce something the rubric accepts?" Phase 2's PDF ingestion is what
-would replace the authored half.
+**Which pack, and what that changes.** `--pack` selects the source bank; the
+default is the authored one this eval shipped with.
+
+* The **authored** pack (`datasets/generation_pack.json`) is exam-style items
+  written against the real indexed lessons. It measures the GENERATOR in
+  isolation and carries a `difficulty` on every question, so every rubric metric
+  can run.
+* A **real extracted** pack — produced by `tools/extract/extract_pack.py` from an
+  actual PDF and tagged by `ai/clo_tagger.py` — measures the WHOLE pipeline,
+  extractor included. It is the honest end-to-end number, and it is smaller and
+  patchier, because a real paper is. In particular the extractor leaves
+  `difficulty` unset by design (§7.6: a derived difficulty must be labelled
+  derived, so it is not guessed at extraction time), which means the band checks
+  report "not run" rather than a number. That is a true statement about the
+  pipeline, not a gap in the eval.
+
+Questions the tagger left untagged cannot be generated from — there is no outcome
+to request — so they are skipped and counted, never silently dropped.
 
 Two things are reported separately and must not be averaged together:
 
@@ -37,7 +48,7 @@ sys.path.insert(0, str(ROOT / "packages" / "coursemate-service"))
 sys.path.insert(0, str(ROOT / "packages" / "coursemate-contracts"))
 sys.path.insert(0, str(Path(__file__).parent))
 
-PACK = Path(__file__).parent / "datasets" / "generation_pack.json"
+AUTHORED_PACK = Path(__file__).parent / "datasets" / "generation_pack.json"
 
 for _k, _v in (
     ("COURSEMATE_JWT_SIGNING_KEY", "generation-eval-not-a-real-secret-32b+"),
@@ -116,7 +127,7 @@ async def generate_one(gen, timer, claims, clo_id, band):
     return ("".join(text_parts) or None), outcome, timings
 
 
-async def preflight(gen, claims, pack) -> str | None:
+async def preflight(gen, claims, probe_question) -> str | None:
     """One cheap call to check the provider can do what the generator needs.
 
     **What the generator actually requires is narrow**, and worth stating because
@@ -132,9 +143,9 @@ async def preflight(gen, claims, pack) -> str | None:
     Returns None when usable, else a reason. Runs BEFORE the 20 questions so an
     incompatible or rate-limited provider costs one call instead of twenty.
     """
-    q = pack.questions[0]
     try:
-        _, outcome, _ = await generate_one(gen, Timed(gen), claims, q.clo_id, None)
+        _, outcome, _ = await generate_one(
+            gen, Timed(gen), claims, probe_question.clo_id, None)
     except Exception as exc:  # noqa: BLE001
         return f"{type(exc).__name__}: {str(exc)[:200]}"
     if outcome == "unavailable":
@@ -179,6 +190,10 @@ def pct(values, p):
 async def main_async(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--index", required=True, help="a COPY of the chunk index")
+    parser.add_argument("--pack", type=Path, default=AUTHORED_PACK,
+                        help="source bank. Defaults to the authored pack; pass a "
+                             "real extracted+tagged pack to measure the whole "
+                             "pipeline instead of the generator alone.")
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
         "--delay", type=float, default=13.0,
@@ -198,14 +213,24 @@ async def main_async(argv=None) -> int:
     from coursemate_service.ai.quiz_generator import QuizGenerator
     from coursemate_service.knowledge import get_examprep_store
 
-    pack = ExamPrepPack(**json.loads(PACK.read_text(encoding="utf-8")))
+    pack = ExamPrepPack(**json.loads(args.pack.read_text(encoding="utf-8")))
     get_examprep_store().load_pack(pack)
     claims = _claims(pack.offering_id)
+
+    # A question the tagger left untagged has no outcome to generate for. Counted
+    # rather than dropped: on a real extracted pack the untagged share is a
+    # property of the pipeline being measured, and hiding it would flatter the
+    # result by shrinking the denominator invisibly.
+    sources = [q for q in pack.questions if q.clo_id]
+    n_untagged = len(pack.questions) - len(sources)
+    if not sources:
+        print("No tagged question in this pack; there is nothing to generate from.")
+        return 2
 
     gen = QuizGenerator()
 
     # --- preflight: never spend 20 calls proving the provider is unusable ----
-    reason = await preflight(gen, claims, pack)
+    reason = await preflight(gen, claims, sources[0])
     if reason:
         print("=" * 92)
         print("PREFLIGHT FAILED — no eval was run, and no numbers are reported.")
@@ -218,7 +243,7 @@ async def main_async(argv=None) -> int:
 
     # --- positive set: one generation per source question ------------------
     generated, outcomes, timings = [], [], []
-    for n, q in enumerate(pack.questions):
+    for n, q in enumerate(sources):
         if n:
             await asyncio.sleep(args.delay)
         band = band_of(q.difficulty)
@@ -230,7 +255,7 @@ async def main_async(argv=None) -> int:
             print("=" * 92)
             print(f"ABORTED at {q.question_id} — the provider became unavailable "
                   "(rate limit or outage).")
-            print(f"  {len(generated)} of {len(pack.questions)} generated. "
+            print(f"  {len(generated)} of {len(sources)} generated. "
                   "That is not a measurement and no metrics are reported.")
             print("=" * 92)
             return 2
@@ -256,14 +281,17 @@ async def main_async(argv=None) -> int:
     bank = [q.model_dump() for q in pack.questions]
     report = score_per_question(generated, bank)
 
-    answered = [o for _, _, o in outcomes if o == "answer"]
     by_band: dict[str, list[str]] = {}
     for _, band, outcome in outcomes:
         by_band.setdefault(band or "unbanded", []).append(outcome)
 
     generated_items = [g for _, _, g in generated]
     out = {
-        "n_source_questions": len(pack.questions),
+        "pack": str(args.pack.name),
+        "pack_offering": pack.offering_id,
+        "n_pack_questions": len(pack.questions),
+        "n_source_questions": len(sources),
+        "n_untagged_skipped": n_untagged,
         "n_generated": len(generated_items),
         "quality": report.as_dict(),
         "outcomes_by_band": {b: {o: v.count(o) for o in set(v)} for b, v in by_band.items()},
@@ -285,10 +313,17 @@ async def main_async(argv=None) -> int:
 
     W = 92
     print("=" * W)
-    print(f"FEATURE B GENERATION EVAL — {len(generated_items)}/{len(pack.questions)} generated")
+    print(f"FEATURE B GENERATION EVAL — {len(generated_items)}/{len(sources)} generated")
     print("=" * W)
-    print("  Source questions are exam-style items authored against the REAL indexed")
-    print("  lessons, not extracted from a real paper. This measures the generator.")
+    print(f"  pack     : {args.pack.name}  ({pack.offering_id})")
+    print(f"  questions: {len(pack.questions)} in pack, {len(sources)} tagged and usable, "
+          f"{n_untagged} untagged and skipped")
+    if args.pack.resolve() == AUTHORED_PACK.resolve():
+        print("  Source questions are exam-style items authored against the REAL indexed")
+        print("  lessons, not extracted from a real paper. This measures the generator.")
+    else:
+        print("  Source questions come from a REAL extracted + tagged pack, so this")
+        print("  measures the whole pipeline: extractor, tagger, retrieval and generator.")
     print()
     print("-" * W)
     print(f"QUALITY  (n = {len(generated_items)} generated, bank of {len(bank)})")

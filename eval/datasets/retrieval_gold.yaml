@@ -194,3 +194,174 @@ questions:
     expect: ["ORA", "Assessments Summary"]
     covered: true
     paraphrase: true    # avoids: open response assessment, peer grading, rubric
+
+  # --- multi-turn arm (m01-m12), added 2026-08-12 --------------------------
+  #
+  # THE GAP THESE EXIST TO MEASURE. Production retrieves on `request.question`
+  # alone (`pipeline.py`: `self.context.fetch(request.question, claims)`), so a
+  # follow-up like "why?" is searched with no idea what "why" refers to. The
+  # conversation reaches the MODEL through `history`; it never reaches the
+  # RETRIEVER.
+  #
+  # `history` here is the prior STUDENT turns, most recent last. The harness does
+  # NOT feed it to the retriever — that is precisely the production behaviour
+  # being measured, and the baseline these produce is the number a fix has to
+  # beat. Tutor turns are omitted: they are model output, and no proposed fix
+  # would search on them.
+  #
+  # Written conversation-first: each exchange was written as a plausible thing a
+  # student would type, and the expected block chosen afterwards. Writing the
+  # expectation first is how the original arm ended up saturated at recall@3 =
+  # 1.000.
+
+  - id: m01
+    arm: multiturn
+    history: ["What is a cohort?"]
+    question: "Why would I use one?"
+    expect: ["Cohorts", "Setting up Cohorts", "Cohorts, Content Groups, and Components"]
+    covered: true
+
+  - id: m02
+    arm: multiturn
+    history: ["What is a cohort?"]
+    question: "How do I set one up?"
+    expect: ["Setting up Cohorts", "Cohorts"]
+    covered: true
+
+  - id: m03
+    arm: multiturn
+    history: ["What are video transcripts used for?"]
+    question: "How do I create them?"
+    expect: ["Best Practices & Generating SRT Files", "Transcripts"]
+    covered: true
+
+  - id: m04
+    arm: multiturn
+    history: ["What is an Open Response Assessment?"]
+    question: "Who grades it?"
+    expect: ["Peer Assessment", "ORA", "Assessments Summary"]
+    covered: true
+
+  - id: m05
+    arm: multiturn
+    history: ["What are XBlocks?"]
+    question: "Can you give an example?"
+    expect: ["XBlocks", "Components"]
+    covered: true
+
+  - id: m06
+    arm: multiturn
+    history: ["What are teams?"]
+    question: "How are they different from cohorts?"
+    expect: ["Teams", "Cohorts", "Social Learning Tools"]
+    covered: true
+
+  - id: m07
+    arm: multiturn
+    history: ["What is conditional content?"]
+    question: "What decides who sees it?"
+    expect: ["Conditional Content", "Conditional", "Content Groups"]
+    covered: true
+
+  - id: m08
+    arm: multiturn
+    history: ["What are content libraries?"]
+    question: "Why would I use one?"
+    expect: ["Content Libraries", "Content libraries"]
+    covered: true
+
+  - id: m09
+    arm: multiturn
+    history: ["How do discussions work?"]
+    question: "Can I moderate them?"
+    expect: ["Discussion Moderation", "Discussion Moderation Privileges"]
+    covered: true
+
+  - id: m10
+    arm: multiturn
+    history: ["What is a poll?"]
+    question: "Is there something similar for longer feedback?"
+    expect: ["Surveys", "Polls"]
+    covered: true
+
+  - id: m11
+    arm: multiturn
+    history: ["What is a section in a course?"]
+    question: "What comes below it?"
+    expect: ["Subsections", "Units", "Sections"]
+    covered: true
+
+  - id: m12
+    arm: multiturn
+    history: ["What is Studio?"]
+    question: "How do I try it out?"
+    expect: ["Try Studio", "Studio"]
+    covered: true
+
+  # --- topic-change arm (t01-t04) — THE REGRESSION GUARD -------------------
+  #
+  # Same shape as the multi-turn arm, but the new question is self-contained and
+  # about something else. These must keep working. Any fix that prepends history
+  # to the retrieval query risks dragging the OLD topic into the new search, and
+  # without these four the multi-turn number could be "improved" by breaking
+  # every topic change in the product.
+  #
+  # They should already pass today, because production ignores history. Their
+  # value is entirely as a before/after guard.
+
+  - id: t01
+    arm: topic_change
+    history: ["What is a cohort?"]
+    question: "What are XBlocks?"
+    expect: ["XBlocks"]
+    covered: true
+
+  - id: t02
+    arm: topic_change
+    history: ["What are video transcripts used for?"]
+    question: "How do discussions work?"
+    expect: ["How do discussions work?", "Discussion Prompt", "Posts vs. Questions"]
+    covered: true
+
+  - id: t03
+    arm: topic_change
+    history: ["What is an Open Response Assessment?"]
+    question: "What is a content library?"
+    expect: ["Content Libraries", "Content libraries"]
+    covered: true
+
+  - id: t04
+    arm: topic_change
+    history: ["What are teams?"]
+    question: "What is SCORM?"
+    expect: ["SCORM"]
+    covered: true
+
+  # --- usage_key conflict arm (u01-u02) ------------------------------------
+  #
+  # `ChatRequest.usage_key` is documented as "where the student is standing …
+  # used as a retrieval hint". Nothing sends it and nothing reads it. When it is
+  # wired, it must be a SECONDARY signal: the page is where the student happens
+  # to be, the conversation is what they are actually asking about, and the two
+  # disagree whenever a student carries a question to a different page.
+  #
+  # Here page context points at X and the conversation points at Y. **Expected
+  # is Y.** A future fix that lets `usage_key` override history will fail these.
+  # They are written now, before any consumer exists, so the decision is pinned
+  # by a test rather than by whoever writes the code.
+
+  - id: u01
+    arm: usage_key_conflict
+    history: ["What is a cohort?"]
+    question: "Why would I use one?"
+    usage_key: "block-v1:OpenedX+DemoX+DemoCourse+type@html+block@0f594fe7afb947bbbac7"   # XBlocks page
+    expect: ["Cohorts", "Setting up Cohorts", "Cohorts, Content Groups, and Components"]
+    covered: true
+
+  - id: u02
+    arm: usage_key_conflict
+    history: ["What are video transcripts used for?"]
+    question: "How do I create them?"
+    usage_key: "block-v1:OpenedX+DemoX+DemoCourse+type@html+block@5dd796da0de64ed782b0"   # Cohorts page
+    expect: ["Best Practices & Generating SRT Files", "Transcripts"]
+    covered: true
