@@ -196,6 +196,15 @@ class Settings(BaseSettings):
     #: cannot bypass them. Since v8 they also cover student traffic, which used
     #: to be rate-limited in the XBlock.
     student_requests_per_minute: int = 20
+    #: Practice streams one student may hold open at once. A different question
+    #: from the rate above: that one caps how often a stream is *started*, this
+    #: caps how many are *running*, and only the second bounds how much of the
+    #: provider's concurrency one student can occupy while everyone else waits.
+    #:
+    #: Two, not one: a student who opens a second tab, or reloads before the
+    #: first stream has finished unwinding, is doing something ordinary. Two
+    #: absorbs that; one would reject it.
+    max_concurrent_streams: int = 2
     per_course_ingest_ceiling_usd: float = 5.0
 
     # --- feature flags for designed-but-dormant work --------------------------

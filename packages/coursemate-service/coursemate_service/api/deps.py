@@ -14,6 +14,7 @@ directly, anything the token asserts is attacker-controlled in the threat model.
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 
@@ -22,8 +23,10 @@ from coursemate_contracts.auth import AUDIENCE_SERVICE, AUDIENCE_STUDENT, Studen
 from coursemate_contracts.errors import ErrorCode
 from fastapi import Depends, Header, HTTPException, status
 
-from ..config import settings
 from .. import shared_state
+from ..config import settings
+
+log = logging.getLogger(__name__)
 
 ALGORITHM = "HS256"
 
@@ -79,6 +82,17 @@ def service_credential(authorization: str | None = Header(default=None)) -> None
 #: limit across two seconds, which is exactly the burst the limit exists to stop.
 _WINDOW_SECONDS = 60
 
+#: How long a stream slot survives without being released. This is a **lease**,
+#: not a timeout on the stream: if a worker is killed mid-generation the `finally`
+#: that releases the slot never runs, and without an expiry that student would be
+#: locked out of practice until the process restarted. A leak that only ever
+#: denies service, with nothing logged, is the failure shape this project keeps
+#: finding — so slots expire on their own and the release is an optimisation.
+#:
+#: Comfortably longer than any real generation (one model call, seconds) and far
+#: shorter than a student's patience for being told to wait.
+_STREAM_LEASE_SECONDS = 180
+
 
 class _RateLimiter:
     """Per-student limit, enforced here rather than in the XBlock.
@@ -96,6 +110,9 @@ class _RateLimiter:
 
     def __init__(self) -> None:
         self._hits: dict[str, list[float]] = {}
+        #: student -> {slot token: acquired-at}. Concurrency, not rate — see
+        #: `acquire_stream`.
+        self._streams: dict[str, dict[str, float]] = {}
 
     # --- shared path ------------------------------------------------------
 
@@ -159,6 +176,121 @@ class _RateLimiter:
 
         if not allowed:
             raise HTTPException(status_code=429, detail=ErrorCode.RATE_LIMITED.value)
+
+    # --- concurrency slots -------------------------------------------------
+    #
+    # A *rate* limit and a *concurrency* limit answer different questions, and
+    # the sliding window above cannot answer the second one: its entries expire
+    # by clock, so it can say "20 requests this minute" but never "2 streams open
+    # right now". A stream that ends after 300 ms and one still running both
+    # count identically to it.
+    #
+    # So this is the same limiter — one class, one Redis client, one fail-open
+    # policy, one typed error — given the acquire/release pair concurrency needs.
+    # A second limiter component would mean two places to keep those four
+    # decisions consistent, and they would drift.
+    #
+    # Why the limit exists: each practice stream holds an upstream model call for
+    # its whole life. Rate limiting caps how often a student *starts* one; only
+    # this caps how many they hold open at once, which is what actually consumes
+    # the provider's concurrency budget for everyone else on the instance.
+
+    def _acquire_redis(self, client, student_id: str, token: str, now: float) -> bool:
+        """One round trip: trim expired leases, count, insert, re-arm the TTL.
+
+        Counting in a separate call from the insert is how a limiter lets through
+        more than it should under exactly the concurrency it exists to limit —
+        the same reason `_check_redis` is pipelined.
+        """
+        key = f"cm:stream:{student_id}"
+        pipe = client.pipeline()
+        pipe.zremrangebyscore(key, 0, now - _STREAM_LEASE_SECONDS)
+        pipe.zcard(key)
+        pipe.zadd(key, {token: now})
+        pipe.expire(key, _STREAM_LEASE_SECONDS * 2)
+        _, count, _, _ = pipe.execute()
+        if count < settings.max_concurrent_streams:
+            return True
+        # Over the limit: take back the slot this call just inserted. Inserting
+        # first and removing on refusal keeps the count-and-insert atomic; the
+        # alternative — check, then insert — is the race.
+        client.zrem(key, token)
+        return False
+
+    def _acquire_local(self, student_id: str, token: str, now: float) -> bool:
+        slots = self._streams.setdefault(student_id, {})
+        for t, started in list(slots.items()):
+            if now - started > _STREAM_LEASE_SECONDS:
+                slots.pop(t, None)
+        if len(slots) >= settings.max_concurrent_streams:
+            if not slots:
+                self._streams.pop(student_id, None)
+            return False
+        slots[token] = now
+        return True
+
+    def acquire_stream(self, student_id: str) -> str:
+        """Take a concurrency slot, or raise 429. Returns the release token.
+
+        Fails OPEN when Redis is unreachable, matching `check`: this is abuse
+        control, not authorization, and refusing every student because a cache is
+        down trades a small abuse risk for a total outage.
+        """
+        now = time.time()
+        token = uuid.uuid4().hex
+        client = shared_state.get_redis()
+        if client is not None:
+            try:
+                allowed = self._acquire_redis(client, student_id, token, now)
+            except Exception as exc:  # noqa: BLE001
+                shared_state.redis_failed("stream concurrency", exc)
+                allowed = self._acquire_local(student_id, token, now)
+        else:
+            allowed = self._acquire_local(student_id, token, now)
+
+        if not allowed:
+            raise HTTPException(status_code=429, detail=ErrorCode.RATE_LIMITED.value)
+        return token
+
+    def release_stream(self, student_id: str, token: str) -> None:
+        """Give the slot back. Safe to call twice, and safe to never call.
+
+        Never raises. It runs in a `finally` on the streaming path, where an
+        exception would replace whatever real error ended the stream with a
+        bookkeeping one — and the lease expiry already covers the case where it
+        does not run at all.
+        """
+        client = shared_state.get_redis()
+        if client is not None:
+            try:
+                client.zrem(f"cm:stream:{student_id}", token)
+                return
+            except Exception as exc:  # noqa: BLE001
+                shared_state.redis_failed("stream release", exc)
+        slots = self._streams.get(student_id)
+        if slots is not None:
+            slots.pop(token, None)
+            if not slots:
+                # Drop the empty dict, or this grows one key per student ever
+                # seen — the same slow leak `_check_local` had to be fixed for.
+                self._streams.pop(student_id, None)
+
+    def active_streams(self, student_id: str) -> int:
+        """Currently held slots. For tests and diagnostics, not for deciding."""
+        now = time.time()
+        client = shared_state.get_redis()
+        if client is not None:
+            try:
+                client.zremrangebyscore(
+                    f"cm:stream:{student_id}", 0, now - _STREAM_LEASE_SECONDS
+                )
+                return int(client.zcard(f"cm:stream:{student_id}"))
+            except Exception as exc:  # noqa: BLE001
+                # Diagnostic only — nothing decides on this, so falling back to
+                # the local view is better than propagating a cache failure.
+                log.debug("stream count unavailable from redis: %s", exc)
+        slots = self._streams.get(student_id, {})
+        return sum(1 for t in slots.values() if now - t <= _STREAM_LEASE_SECONDS)
 
 
 rate_limiter = _RateLimiter()
