@@ -316,6 +316,31 @@ questions:
     expect: ["XBlocks"]
     covered: true
 
+  # RESOLVED 2026-08-12 — `Duplicate of 'Discussion Prompt'` is NOT added here.
+  #
+  # This case retrieves that block at 0.833 and is scored a miss, which raised
+  # the question of whether the label was wrong rather than the retriever. It was
+  # left unchanged through two measurement phases precisely because adjusting an
+  # expectation after seeing the result is how a gold set gets tuned to flatter
+  # the system — and adding it would have taken B2's topic-change
+  # wrong-and-answered count from 1 to 0.
+  #
+  # Settled by reading the block instead of arguing about it. Its entire indexed
+  # content is a troubleshooting note:
+  #
+  #     "Configuration Note: If you cannot access the inline discussions or see
+  #      the Discussions tab, then you likely need to install the Open edX LMS
+  #      Forum Plugin. Work with your site administrator to do this, if needed."
+  #
+  # That does not answer "how do discussions work?" — a student asking it and
+  # being told to install a plugin has been misdirected. The block that DOES
+  # answer it is already in `expect` and explains forums, blackout dates and
+  # best practices. The name is misleading too: the content is not a duplicate
+  # of `Discussion Prompt`, which is a language-learning prompt.
+  #
+  # So t02 is a real retrieval failure, and the decision is recorded here rather
+  # than in a commit message so the next person to see this miss finds the
+  # reasoning attached to the label.
   - id: t02
     arm: topic_change
     history: ["What are video transcripts used for?"]
