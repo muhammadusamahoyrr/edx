@@ -74,17 +74,34 @@ def is_under_specified(question: str) -> bool:
     return any(tok in _PRO_FORMS for tok in _WORD.findall(question.lower()))
 
 
-def last_student_turn(history: Sequence[Turn]) -> str | None:
-    """The most recent thing the student said, or None.
+def last_student_turn(history: Sequence[Turn], exclude: str | None = None) -> str | None:
+    """The most recent thing the student said BEFORE `exclude`, or None.
 
     Tutor turns are skipped. They are model output, and searching on our own
     previous answer would feed the retriever whatever the model happened to say
     — including, on a bad turn, content it drew from the wrong lesson. Only what
     the student actually typed is evidence of what they are asking about.
+
+    **`exclude` exists because the browser sends the current question inside
+    `history`.** `tutor.js` pushes the question onto its history array before
+    building the request, so the wire payload ends
+    `[…, {student: "why?"}]` *and* carries `question: "why?"`. Without this the
+    "previous" turn is the current question echoed back, the query becomes
+    `"why? why?"`, and the whole reconstruction is a no-op that merely doubles
+    the question.
+
+    Found by browser verification on 2026-08-12, after the unit tests and the
+    offline eval both passed: they build history the way the *contract* reads,
+    with prior turns only, and production sends a different shape. A harness that
+    constructs its own input cannot discover what a real client actually sends.
     """
     for turn in reversed(list(history)):
-        if turn.role == Role.STUDENT and turn.content.strip():
-            return turn.content.strip()
+        if turn.role != Role.STUDENT:
+            continue
+        text = turn.content.strip()
+        if not text or (exclude is not None and text == exclude):
+            continue
+        return text
     return None
 
 
@@ -120,7 +137,10 @@ def retrieval_query(
     if not is_under_specified(question):
         return question
 
-    previous = last_student_turn(history)
+    # `exclude=question`: the browser puts the current question in `history` as
+    # well as in `question`, so without this the "previous" turn is the question
+    # itself. See `last_student_turn`.
+    previous = last_student_turn(history, exclude=question)
     if previous is None:
         return question
 

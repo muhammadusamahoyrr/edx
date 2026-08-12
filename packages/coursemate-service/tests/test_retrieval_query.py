@@ -243,3 +243,63 @@ def test_a_bare_interrogative_is_also_a_known_gap():
     """
     assert is_under_specified("why?") is False
     assert retrieval_query("why?", [student("What is a cohort?")]) == "why?"
+
+
+# --- the shape a real browser actually sends -------------------------------
+
+
+def test_the_current_question_inside_history_is_not_treated_as_the_previous_turn():
+    """**The defect browser verification found on 2026-08-12.**
+
+    `tutor.js` pushes the question onto its history array before building the
+    request, so the wire payload carries the current question in BOTH fields.
+    Captured verbatim from a real request:
+
+        {"question": "Why would I use one?",
+         "history": [{"role":"student","content":"What is a cohort?"},
+                     {"role":"tutor","content":"A cohort is ..."},
+                     {"role":"student","content":"Why would I use one?"}]}
+
+    Before the fix this produced `"Why would I use one? Why would I use one?"` —
+    the question doubled, the conversation never consulted, and B1/B2 a complete
+    no-op in production while every unit test and the offline eval passed. They
+    passed because they build history the way the contract READS, with prior
+    turns only. A harness that constructs its own input cannot discover what a
+    real client sends.
+    """
+    wire = [
+        student("What is a cohort?"),
+        tutor("A cohort is a course-level group of learners..."),
+        student("Why would I use one?"),
+    ]
+    assert (retrieval_query("Why would I use one?", wire)
+            == "What is a cohort? Why would I use one?")
+
+
+def test_history_that_omits_the_current_question_still_works():
+    """The contract's own reading, which the eval harness uses. Both shapes must
+    produce the same query or the offline numbers mean nothing."""
+    contract_shape = [student("What is a cohort?")]
+    wire_shape = [student("What is a cohort?"), student("Why would I use one?")]
+    assert (retrieval_query("Why would I use one?", contract_shape)
+            == retrieval_query("Why would I use one?", wire_shape))
+
+
+def test_a_question_repeated_verbatim_falls_back_to_the_turn_before_it():
+    """A student who asks the same thing twice is not giving us a new topic, so
+    the reconstruction reaches past both copies rather than augmenting with an
+    identical string."""
+    history = [
+        student("What is a cohort?"),
+        student("Why would I use one?"),
+        student("Why would I use one?"),
+    ]
+    assert (retrieval_query("Why would I use one?", history)
+            == "What is a cohort? Why would I use one?")
+
+
+def test_only_the_current_question_in_history_leaves_it_unchanged():
+    """First turn, echoed into history by the browser. There is no conversation
+    to reconstruct from, so the question is searched as typed."""
+    assert retrieval_query("why would I use one?",
+                           [student("why would I use one?")]) == "why would I use one?"
