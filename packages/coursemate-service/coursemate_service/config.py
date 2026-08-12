@@ -134,7 +134,10 @@ class Settings(BaseSettings):
     #: out of the box rather than answering from the model's own knowledge.
     require_grounding: bool = True
 
-    reranker_model: str = "BAAI/bge-reranker-base"
+    # `reranker_model` was declared here and read by nothing: the reranker is
+    # lexical, so a model name was a setting for a component that does not
+    # exist. The target it named is preserved in `knowledge/rerank.py`, beside
+    # the reasoning for shipping the lexical one first. Removed 2026-08-13.
 
     #: Retrieval index. A file, not a service: at course scale SQLite FTS5 is
     #: faster than a network hop to a vector database would be.
@@ -245,7 +248,13 @@ class Settings(BaseSettings):
     #: worth a manual purge and long enough to absorb a lecture-hall spike of the
     #: same question.
     response_cache_ttl_seconds: int = 3600
-    per_course_ingest_ceiling_usd: float = 5.0
+
+    # `per_course_ingest_ceiling_usd` was declared here, under this same
+    # "abuse and cost" heading, and enforced by nothing — no ingest path ever
+    # read it. Sitting beside two limits that ARE enforced, it read as a third
+    # control rather than as an intention, which is the misleading direction.
+    # Ingest spend is currently unbounded; LIMITATIONS says so. Removed
+    # 2026-08-13 rather than left as a number that protects nothing.
 
     # --- feature flags for designed-but-dormant work --------------------------
     lexical_retrieval_enabled: bool = False  # Meilisearch half of hybrid (§6.1)

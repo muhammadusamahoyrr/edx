@@ -100,6 +100,25 @@ class CourseIntelligence(Protocol):
         """Whether past papers were loaded. Pairs with `has_index` (§5.1)."""
         ...
 
+    def exam_pack_stats(self, offering_id: str) -> dict:
+        """Counts only — how many questions, how many CLOs, the year range, and
+        how many items the extractor was unsure about.
+
+        Unauthenticated for the same reason as `has_exam_pack`: it carries no
+        question text. The caller is already JWT-verified, and this is what lets
+        the exam-prep tab say *why* it is empty instead of rendering a control
+        that does nothing (§5.1).
+
+        **Declared here late.** It was implemented on `CourseIntelligenceImpl`
+        and called by `api/examprep.py` while being absent from this protocol —
+        the inverse of the drift the module docstring above warns about, and the
+        same failure in the other direction: anything typed against
+        `CourseIntelligence` could not call it, and a second implementation
+        would have satisfied the protocol while omitting a method the API
+        depends on.
+        """
+        ...
+
 
 # --- Deferred tools -------------------------------------------------------
 #

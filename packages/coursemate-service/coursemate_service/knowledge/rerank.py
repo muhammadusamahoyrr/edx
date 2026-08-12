@@ -8,7 +8,9 @@ the model are noise. Every noisy chunk spends context budget and gives the model
 more surface to go wrong on.
 
 **Why a lexical reranker first, and not the cross-encoder §8.2 names.** The
-design's target is a bge-reranker-class cross-encoder on CPU. That remains the
+design's target is a bge-reranker-class cross-encoder on CPU —
+`BAAI/bge-reranker-base` specifically, the name `config.reranker_model` used
+to carry before it was deleted for being read by nothing. That remains the
 target. It is not the right *first* move here:
 
 * It is a ~1GB download on a link measured at ~0.6 MB/s in Phase 1, and adds
