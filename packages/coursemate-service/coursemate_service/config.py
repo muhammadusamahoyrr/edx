@@ -205,6 +205,22 @@ class Settings(BaseSettings):
     #: first stream has finished unwinding, is doing something ordinary. Two
     #: absorbs that; one would reject it.
     max_concurrent_streams: int = 2
+    #: Tokens one student may spend on chat answers in one course in one UTC day.
+    #: The third abuse question, and the only one denominated in money: the two
+    #: limits above bound how OFTEN and how MANY AT ONCE, and twenty questions a
+    #: minute all day is within both.
+    #:
+    #: 100,000 is roughly 30–35 full answers — a prompt carrying retrieved
+    #: context runs ~2,200 tokens and `max_output_tokens` caps the reply at 800.
+    #: That is more than a heavy revision session and far under a scripted one.
+    #: Worst case at hosted Sonnet-class pricing is about $0.50 per student per
+    #: course per day, and under $0.30 at a realistic input/output mix.
+    #:
+    #: Counted in tokens, not dollars, because a price table is wrong the moment
+    #: a provider reprices or the router falls back to another deployment.
+    #: Zero or less disables the ceiling — a mis-set limit must not take the
+    #: tutor offline.
+    student_daily_token_budget: int = 100_000
     per_course_ingest_ceiling_usd: float = 5.0
 
     # --- feature flags for designed-but-dormant work --------------------------

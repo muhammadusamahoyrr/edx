@@ -21,6 +21,7 @@ from coursemate_contracts.auth import StudentClaims
 from coursemate_contracts.chat import ChatRequest, FrameType, StreamFrame
 from coursemate_contracts.errors import ErrorCode
 
+from ..budget import estimate_tokens, ledger
 from ..config import settings
 from . import gate
 from .client import PRIMARY_DEPLOYMENT, NoModelConfigured, deployment_of, get_router
@@ -79,6 +80,21 @@ class AnswerPipeline:
             yield StreamFrame(type=FrameType.ERROR, error_code=code)
             return
 
+        # --- 2b. spend ceiling, also BEFORE the provider call ---------------
+        # Same philosophy as the gate above and placed deliberately after it.
+        # Retrieval and the gate are local and free, so running them first costs
+        # nothing and keeps abstention honest: a student who is out of budget and
+        # asks something this course does not cover still gets ABSTAINED, which
+        # is the true answer, rather than being told about a limit that was never
+        # going to be charged.
+        #
+        # Identity comes from the verified claims and nowhere else. `ChatRequest`
+        # has no field that could name a different student, so a request cannot
+        # ask to be billed to someone else — it can only be refused (invariant 9).
+        if ledger.would_exceed(claims.offering_id, claims.sub):
+            yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.BUDGET_EXCEEDED)
+            return
+
         # --- 3. build messages --------------------------------------------
         messages = build_messages(
             question=request.question,
@@ -107,6 +123,33 @@ class AnswerPipeline:
         # length of one answer and never stored — §3.1 keeps conversation text
         # with the platform, and this module holds no per-student state.
         answer_parts: list[str] = []
+        #: Total tokens as the PROVIDER reported them, or None if it never did.
+        #: The distinction is load-bearing — see `_bill`.
+        reported_tokens: int | None = None
+
+        def _bill() -> None:
+            """Charge the day's ledger for what this turn actually cost.
+
+            Two sources, in order of trust:
+
+            1. What the provider reported. That is the number being billed, so it
+               is the number to count — including on a turn that produced no text
+               but still consumed a prompt.
+            2. Failing that, an estimate over the text that really moved. Only
+               when tokens demonstrably streamed.
+
+            **A turn with no provider report and no output is not charged.** An
+            abstention never reaches here, and a provider that failed before
+            emitting anything bills nobody — counting either would make the
+            ledger a request counter wearing a token's name, and would let a
+            broken provider exhaust a student's day for free.
+            """
+            if reported_tokens:
+                ledger.record(claims.offering_id, claims.sub, reported_tokens)
+            elif produced_any:
+                ledger.record(
+                    claims.offering_id, claims.sub, estimate_tokens(messages, answer_parts)
+                )
 
         try:
             response = await asyncio.wait_for(
@@ -121,6 +164,15 @@ class AnswerPipeline:
             )
 
             async for part in response:
+                # BEFORE the `choices` guard below, not after. A provider that
+                # reports usage sends it on a final chunk with an EMPTY choices
+                # list, so reading it further down would skip the only chunk that
+                # carries the real cost and silently fall back to the estimate.
+                if (usage := getattr(part, "usage", None)) is not None:
+                    total = getattr(usage, "total_tokens", None)
+                    if isinstance(total, int) and total > 0:
+                        reported_tokens = total
+
                 choice = (part.choices or [None])[0]
                 if choice is None:
                     continue
@@ -140,19 +192,30 @@ class AnswerPipeline:
 
         except asyncio.TimeoutError:
             log.warning("generation timed out after %ss", settings.model_timeout_seconds)
+            # A timeout after partial output still spent those tokens. The
+            # student sees UNAVAILABLE — unchanged — but the bill is real and
+            # not charging it would make a timing-out provider the cheapest way
+            # to use the tutor.
+            _bill()
             yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.UNAVAILABLE)
             return
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # Covers the case the design calls out explicitly: both hosted
             # providers down means the tutor is unavailable and says so, rather
             # than fabricating an answer (§8.4).
             log.exception("generation failed: %s", type(exc).__name__)
+            _bill()
             yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.UNAVAILABLE)
             return
 
         if not produced_any:
+            # `_bill` charges here only if the provider itself reported usage —
+            # a prompt was submitted and metered even though nothing came back.
+            _bill()
             yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.UNAVAILABLE)
             return
+
+        _bill()
 
         # --- 5. attribution and verification ---------------------------------
         # Both run after the stream, on the assembled answer. Streaming is

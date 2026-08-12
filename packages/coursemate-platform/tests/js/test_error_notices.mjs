@@ -201,6 +201,41 @@ const tests = {
     assert.match(framed.textContent, /expired/i);
   },
 
+  /* --- the daily spend ceiling (Phase C1) ------------------------------ */
+
+  async "a spent daily budget is named, not reported as a generic fault"() {
+    const notice = noticeOf(await askWithErrorFrame("budget_exceeded"));
+    assert.notEqual(notice.textContent, GENERIC);
+    assert.match(notice.textContent, /limit/i);
+  },
+
+  async "the budget message says when it comes back"() {
+    // A limit with no stated end reads as being cut off for good.
+    const notice = noticeOf(await askWithErrorFrame("budget_exceeded"));
+    assert.match(notice.textContent, /resets|midnight/i);
+  },
+
+  async "the budget message exposes no cost or token detail"() {
+    // The student cannot act on either number, and both are internal.
+    const notice = noticeOf(await askWithErrorFrame("budget_exceeded"));
+    assert.doesNotMatch(notice.textContent, /token|\$|cost|usd|cent/i);
+  },
+
+  async "the daily limit does not sound like the per-minute one"() {
+    // "give it a moment" and "come back tomorrow" are different instructions.
+    // Collapsing them sends a student refreshing for hours.
+    const day = noticeOf(await askWithErrorFrame("budget_exceeded")).textContent;
+    const minute = noticeOf(await askWithErrorFrame("rate_limited")).textContent;
+    assert.notEqual(day, minute);
+    assert.doesNotMatch(day, /give it a moment/i);
+  },
+
+  async "the form is re-enabled after the budget notice"() {
+    const root = await askWithErrorFrame("budget_exceeded");
+    assert.equal(find(root, ".cm-input").disabled, false);
+    assert.equal(find(root, ".cm-send").disabled, false);
+  },
+
   /* --- everything that already worked must still work ------------------ */
 
   async "abstained still says the course does not cover it"() {

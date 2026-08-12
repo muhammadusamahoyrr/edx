@@ -11,8 +11,8 @@ that a naive implementation would collapse into one generic error:
 They are typed here, in the shared contract, so neither side can render them
 identically by accident.
 
-**Two of these are declared and not yet produced** — `BUDGET_EXCEEDED` and
-`CONTRACT_MISMATCH`, both marked below. That is deliberate and it is enforced:
+**One of these is declared and not yet produced** — `CONTRACT_MISMATCH`, marked
+below. That is deliberate and it is enforced:
 `tests/test_error_contract.py` holds the pair in an allowlist and fails if either
 gains a producer while the browser still has no wording for it, and equally if
 any other code loses its producer or its message. A declared code with neither
@@ -34,8 +34,8 @@ class ErrorCode(StrEnum):
     # --- states that are faults, reported honestly ----------------------------
     UNAVAILABLE = "unavailable"
     RATE_LIMITED = "rate_limited"
-    #: NOT PRODUCED. Spend is tracked but nothing refuses on it, so there is no
-    #: ceiling to exceed. Phase C owns the producer, and must add the wording.
+    #: Raised before the provider call when a student has spent their daily
+    #: token ceiling for this course. See `budget.DailyTokenLedger`.
     BUDGET_EXCEEDED = "budget_exceeded"
 
     # --- states that mean someone is doing something wrong --------------------

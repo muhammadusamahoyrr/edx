@@ -41,8 +41,12 @@ TUTOR_JS = (
 #: Declared, deliberately not produced yet, and therefore not required to have a
 #: student-facing message either.
 #:
-#: * ``BUDGET_EXCEEDED`` — there is no spend ceiling to exceed. The cost path
-#:   tracks spend but nothing refuses on it. Phase C owns this.
+#: ``BUDGET_EXCEEDED`` was here until Phase C1 and is the worked example of this
+#: mechanism doing its job: adding the producer in `ai/pipeline.py` turned
+#: `test_the_allowlist_has_not_rotted` red, and clearing that failure forced the
+#: student-facing message to be written in the same change. The list got smaller
+#: by one, which is the only direction it is supposed to move.
+#:
 #: * ``CONTRACT_MISMATCH`` — reserved for a service/platform version skew that
 #:   the deployment cannot currently produce: both ship in the same repo and the
 #:   XBlock pins no version, so there is no skew to detect.
@@ -54,7 +58,7 @@ TUTOR_JS = (
 #: test demand a message for it. That ordering is the point: a code cannot become
 #: producible without someone being told to write what the student reads.
 INTENTIONALLY_UNPRODUCED: frozenset[ErrorCode] = frozenset(
-    {ErrorCode.BUDGET_EXCEEDED, ErrorCode.CONTRACT_MISMATCH}
+    {ErrorCode.CONTRACT_MISMATCH}
 )
 
 PRODUCIBLE = [c for c in ErrorCode if c not in INTENTIONALLY_UNPRODUCED]

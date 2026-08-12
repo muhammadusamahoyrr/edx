@@ -31,6 +31,11 @@ function CourseMateTutor(runtime, element, initArgs) {
     preparing: "This course is still being prepared — please try again shortly.",
     unavailable: "The tutor is unavailable right now.",
     rate_limited: "Too many questions just now — give it a moment.",
+    /* Says when it comes back, and says nothing about tokens or cost. A student
+     * cannot act on either number and a limit with no stated end reads as being
+     * cut off for good. "rate_limited" above is minutes; this one is a day, so
+     * the two must not sound alike. */
+    budget_exceeded: "You've reached today's question limit for this course. It resets at midnight UTC.",
     not_enrolled: "You don't have access to this course's tutor.",
     /* The only notice whose fix is not "wait and retry". Retrying is exactly
      * what a student does when told "Something went wrong", and it cannot work
