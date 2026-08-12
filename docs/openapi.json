@@ -178,6 +178,19 @@
             "title": "Clos",
             "type": "array"
           },
+          "content_sha256": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Sha256"
+          },
           "offering_id": {
             "title": "Offering Id",
             "type": "string"
@@ -641,6 +654,19 @@
       "QuestionRecord": {
         "description": "One past-paper question. A record, not a blob (\u00a77.6).",
         "properties": {
+          "clo_confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clo Confidence"
+          },
           "clo_id": {
             "anyOf": [
               {
@@ -802,6 +828,88 @@
         ],
         "title": "Role",
         "type": "string"
+      },
+      "StudyPlan": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StudyPlanItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "offering_id": {
+            "title": "Offering Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "offering_id"
+        ],
+        "title": "StudyPlan",
+        "type": "object"
+      },
+      "StudyPlanItem": {
+        "properties": {
+          "clo_id": {
+            "title": "Clo Id",
+            "type": "string"
+          },
+          "marks_budget": {
+            "title": "Marks Budget",
+            "type": "integer"
+          },
+          "question_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Question Ids",
+            "type": "array"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rationale"
+          }
+        },
+        "required": [
+          "clo_id",
+          "marks_budget"
+        ],
+        "title": "StudyPlanItem",
+        "type": "object"
+      },
+      "StudyPlanRequest": {
+        "description": "Browser -> service, for one budgeted study plan.\n\nSeparate from `ExamPrepRequest` rather than a field added to it. That request\nis free text answered by prose (or by the agent); this one is a number\nanswered by arithmetic, and the deterministic planner needs an integer it can\nrely on. Widening `ExamPrepRequest` would have made `marks_budget` optional on\na route that cannot use it, and optional-and-ignored is how a field becomes a\nlie.\n\nSame absence as every other request contract here, and it is the contract:\nno `student_id`, no `offering_id`. Scope comes from the verified JWT, so a\nforged payload cannot widen it \u2014 `plan_for_offering` takes no `offering_id`\nparameter at all, which is the same rule enforced one level down.",
+        "properties": {
+          "marks_budget": {
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Marks Budget",
+            "type": "integer"
+          },
+          "mastery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MasterySnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "marks_budget"
+        ],
+        "title": "StudyPlanRequest",
+        "type": "object"
       },
       "Turn": {
         "properties": {
@@ -1087,6 +1195,66 @@
           }
         },
         "summary": "Status",
+        "tags": [
+          "student"
+        ]
+      }
+    },
+    "/coursemate/api/examprep/study-plan": {
+      "post": {
+        "description": "A revision plan sized by a marks budget (\u00a77.4). JSON, not a stream.\n\n**Not streamed, deliberately.** This is arithmetic over data the service\nalready has \u2014 a few SQL queries and a weighted split, no model call, no tool\nloop, milliseconds. Streaming it would mean inventing a frame type to carry\nstructured items, and a `StudyPlan` is a value, not a narration. `/plan` next\ndoor streams prose because prose arrives a token at a time; this does not.\n\n**No concurrency slot.** Slots exist to bound how much of the provider's\nconcurrency one student can hold open, and there is no provider here. Taking\none would let a free local computation deny a student their practice\nquestions, which is the opposite of what the limit is for. The per-minute\nrate limit still applies, through the same `rate_limited` dependency every\nother student route uses.\n\nAuthorization is layered exactly as on `/plan`: this route verifies the JWT\nand nothing more, and enrollment is re-derived at the `CourseIntelligence`\nboundary on every read the planner performs \u2014 the CLO lookup and one search\nper outcome each call `_authorize` independently.",
+        "operationId": "study_plan_coursemate_api_examprep_study_plan_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudyPlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlan"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Study Plan",
         "tags": [
           "student"
         ]
@@ -1517,6 +1685,16 @@
         "description": "Replace this offering's questions and CLOs, atomically.\n\nReturns counts, never a bare `{\"status\": \"ok\"}`. A loader that reports success\nwithout saying what landed is how this project once indexed 226 blocks and\nserved 26 \u2014 the caller has to be able to assert on a number.",
         "operationId": "load_pack_coursemate_api_packs_load_post",
         "parameters": [
+          {
+            "in": "query",
+            "name": "force",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Force",
+              "type": "boolean"
+            }
+          },
           {
             "in": "header",
             "name": "authorization",

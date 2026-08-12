@@ -28,7 +28,7 @@ TESTS := packages/coursemate-service/tests packages/coursemate-platform/tests/un
 #: measures nothing. Raise it when the number rises, never to make a point.
 COVER_MIN := 80
 
-.PHONY: help install test test-js lint-arch check coverage agent-eval openapi clean
+.PHONY: help install test test-js lint-arch check coverage agent-eval openapi openapi-check clean
 
 help:
 	@echo "install    - venv + editable installs"
@@ -39,6 +39,7 @@ help:
 	@echo "coverage   - line coverage of the two shipped packages"
 	@echo "agent-eval - the agent regression gates (no provider needed)"
 	@echo "openapi    - regenerate docs/openapi.json from the routes"
+	@echo "openapi-check - fail if the committed spec is stale (part of check)"
 
 # django + XBlock + web_fragments are here for the PLATFORM-side unit tests, and
 # they are not the Open edX runtime — they are the two libraries the plugin's
@@ -71,12 +72,27 @@ lint-arch:
 # The XBlock UI is the one surface Python cannot reach. `node` is not a hard
 # dependency — a machine without it skips these and says so, rather than failing
 # a build over a test runner.
+#
+# `if/else`, not `A && B || echo`. The `||` form was here first and it made a
+# FAILING test print "SKIPPED: node not found" and exit 0 — a lie and a green
+# build, so these tests gated nothing. Found while adding the study-plan suite,
+# by running a deliberately failing file through the old shape.
 test-js:
-	@node --version >/dev/null 2>&1 && \
-		node packages/coursemate-platform/tests/js/test_practice_ui.mjs || \
-		echo "SKIPPED: node not found — the XBlock UI is untested on this machine"
+	@if node --version >/dev/null 2>&1; then \
+		node packages/coursemate-platform/tests/js/test_practice_ui.mjs && \
+		node packages/coursemate-platform/tests/js/test_study_plan_ui.mjs; \
+	else \
+		echo "SKIPPED: node not found — the XBlock UI is untested on this machine"; \
+	fi
 
-check: lint-arch test test-js
+# The committed spec describes the API to anyone integrating with it, and
+# "generated" was not enough to keep it true — generating it was a step someone
+# had to remember, and Phase 2 forgot. This makes forgetting fail the build,
+# the same move `.importlinter` makes for the module graph.
+openapi-check:
+	$(PY) tools/ops/dump_openapi.py --check
+
+check: lint-arch openapi-check test test-js
 
 # Line coverage, not branch: branch coverage on this codebase is dominated by the
 # `if settings.X` guards, and chasing it rewards tests that flip flags over tests
