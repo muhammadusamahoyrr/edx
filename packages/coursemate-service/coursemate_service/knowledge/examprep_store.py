@@ -31,6 +31,8 @@ from pathlib import Path
 
 from coursemate_contracts.examprep import CLO, ExamPrepPack, QuestionRecord
 
+from . import sqlite_setup
+
 log = logging.getLogger(__name__)
 
 _SCHEMA = """
@@ -50,6 +52,7 @@ CREATE TABLE IF NOT EXISTS exam_questions (
     difficulty_is_derived INTEGER NOT NULL DEFAULT 1,
     topic           TEXT,
     clo_id          TEXT,
+    clo_confidence  REAL,
     confidence      REAL,
     extraction_method TEXT,
     low_confidence_flag INTEGER NOT NULL DEFAULT 0,
@@ -62,6 +65,19 @@ CREATE INDEX IF NOT EXISTS ix_eq_clo   ON exam_questions(tenant, offering_id, cl
 CREATE VIRTUAL TABLE IF NOT EXISTS exam_questions_fts
     USING fts5(text, content='exam_questions', content_rowid='id',
                tokenize='porter unicode61');
+
+-- One row per source document imported into an offering. Separate from
+-- exam_questions because the question rows are replaced wholesale on every load
+-- and the import history must outlive that.
+CREATE TABLE IF NOT EXISTS exam_sources (
+    tenant         TEXT NOT NULL,
+    offering_id    TEXT NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    source_doc_id  TEXT,
+    questions      INTEGER NOT NULL DEFAULT 0,
+    loaded_at      TEXT,
+    PRIMARY KEY (tenant, offering_id, content_sha256)
+);
 
 CREATE TABLE IF NOT EXISTS exam_clos (
     tenant       TEXT NOT NULL,
@@ -79,25 +95,64 @@ CREATE TABLE IF NOT EXISTS exam_clos (
 #: term so it is a literal rather than an operator.
 _FTS_UNSAFE = re.compile(r"""[^\w\s]""", re.UNICODE)
 
+#: Drives the INSERT *and* `_record`, so a field added here round-trips in one
+#: edit. A column present in one and not the other is exactly how a field gets
+#: silently dropped at the storage boundary.
 _COLUMNS = (
     "question_id", "source_doc_id", "page", "question_number", "text", "year",
     "exam_type", "marks", "difficulty", "difficulty_is_derived", "topic",
-    "clo_id", "confidence", "extraction_method", "low_confidence_flag",
+    "clo_id", "clo_confidence", "confidence", "extraction_method",
+    "low_confidence_flag",
 )
+
+#: Columns added after the table first shipped. `CREATE TABLE IF NOT EXISTS` is
+#: a no-op on an existing database, so a new column in `_SCHEMA` reaches a fresh
+#: install and no other — and the mismatch surfaces as an `OperationalError` on
+#: the next load, not at startup. Additive only: this store is a derived cache
+#: rebuilt by re-loading the pack, so it needs a migration ladder far less than
+#: it needs never to lose a column.
+_ADDED_COLUMNS = (("clo_confidence", "REAL"),)
 
 
 class ExamPrepStore:
     def __init__(self, path: str | Path) -> None:
         self.path = str(path)
-        if self.path != ":memory:":
-            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        # Same helper as the chunk store, so the two cannot drift into different
+        # durability settings — which would be invisible until one of them
+        # started returning `database is locked` under load and the other did not.
+        self._conn = sqlite_setup.connect(self.path)
         self._conn.executescript(_SCHEMA)
+        self._upgrade()
         self._conn.commit()
 
+    def _upgrade(self) -> None:
+        """Add any column `_SCHEMA` gained since this database was created."""
+        have = {r["name"] for r in self._conn.execute("PRAGMA table_info(exam_questions)")}
+        for name, decl in _ADDED_COLUMNS:
+            if name not in have:
+                self._conn.execute(f"ALTER TABLE exam_questions ADD COLUMN {name} {decl}")
+                log.info("exam_questions: added column %s", name)
+
     # --- loading ---------------------------------------------------------
+
+    def already_imported(self, *, tenant: str, offering_id: str,
+                         content_sha256: str | None) -> dict | None:
+        """The previous import of this exact document, or None.
+
+        `None` for a pack with no hash — a hand-written one. **"Unknown" is not
+        "new"**, and the loader says which it is rather than letting an
+        unhashable pack look like a fresh document.
+        """
+        if not content_sha256:
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT source_doc_id, questions, loaded_at FROM exam_sources "
+                "WHERE tenant=? AND offering_id=? AND content_sha256=?",
+                (tenant, offering_id, content_sha256),
+            ).fetchone()
+        return dict(row) if row else None
 
     def load_pack(self, pack: ExamPrepPack) -> dict:
         """Replace this offering's questions and CLOs atomically.
@@ -155,6 +210,22 @@ class ExamPrepStore:
                         (cur.lastrowid, q.text),
                     )
                     written += 1
+
+                # Record the import BEFORE committing, so a source row can never
+                # exist for a load that did not land. Superseded rows for other
+                # documents are kept: this is the import history, not a mirror of
+                # what is currently served.
+                if pack.content_sha256:
+                    self._conn.execute(
+                        "INSERT INTO exam_sources(tenant, offering_id, content_sha256, "
+                        "source_doc_id, questions, loaded_at) "
+                        "VALUES(?,?,?,?,?,datetime('now')) "
+                        "ON CONFLICT(tenant, offering_id, content_sha256) DO UPDATE SET "
+                        "questions=excluded.questions, loaded_at=excluded.loaded_at",
+                        (pack.tenant, pack.offering_id, pack.content_sha256,
+                         pack.questions[0].source_doc_id if pack.questions else None,
+                         written),
+                    )
                 self._conn.commit()
             except Exception:
                 self._conn.rollback()

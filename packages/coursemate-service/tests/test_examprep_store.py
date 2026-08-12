@@ -200,11 +200,46 @@ def test_a_record_survives_the_round_trip_intact(store):
     original = q(
         "Q1", page=4, question_number="3(b)", year=2024, exam_type=ExamType.FINAL,
         marks=15, difficulty=0.8, topic="Concurrency", clo_id="CLO-1",
-        confidence=0.55, low_confidence_flag=True,
+        confidence=0.55, clo_confidence=0.72, low_confidence_flag=True,
     )
     store.load_pack(pack(original))
     got = store.get_question(tenant=TENANT, offering_id=OFFERING, question_id="Q1")
     assert got == original
+
+
+def test_the_two_confidences_do_not_collapse_into_one(store):
+    """"Did we read it right?" and "did we file it right?" are different
+    questions, and one number cannot answer both. They are stored apart so a
+    tagged question with a shaky parse is still visibly a shaky parse."""
+    store.load_pack(pack(q("Q1", confidence=0.4, clo_id="CLO-1", clo_confidence=0.95)))
+    got = store.get_question(tenant=TENANT, offering_id=OFFERING, question_id="Q1")
+    assert (got.confidence, got.clo_confidence) == (0.4, 0.95)
+
+
+def test_an_untagged_question_has_no_tagging_confidence(store):
+    """None, not 0.0. A tag that was never attempted is not a tag we had no
+    confidence in, and the offline tagger reruns on exactly this difference."""
+    store.load_pack(pack(q("Q1")))
+    got = store.get_question(tenant=TENANT, offering_id=OFFERING, question_id="Q1")
+    assert got.clo_id is None and got.clo_confidence is None
+
+
+def test_a_database_from_before_a_column_existed_is_upgraded(store, tmp_path):
+    """`CREATE TABLE IF NOT EXISTS` is a no-op on an existing database, so a new
+    column reaches a fresh install and no other. Without the additive upgrade the
+    mismatch surfaces as an OperationalError on the next load — in front of an
+    operator who has just spent an hour extracting a paper."""
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    ExamPrepStore(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute("ALTER TABLE exam_questions DROP COLUMN clo_confidence")
+
+    reopened = ExamPrepStore(path)          # must add it back, not fail
+    reopened.load_pack(pack(q("Q1", clo_id="CLO-1", clo_confidence=0.8)))
+    got = reopened.get_question(tenant=TENANT, offering_id=OFFERING, question_id="Q1")
+    assert got.clo_confidence == 0.8
 
 
 def test_derived_difficulty_stays_labelled_derived(store):

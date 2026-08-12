@@ -33,10 +33,11 @@ from __future__ import annotations
 
 import logging
 import re
-import sqlite3
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+
+from . import sqlite_setup
 
 log = logging.getLogger(__name__)
 
@@ -144,8 +145,10 @@ class ChunkStore:
         # per question against a small file; a pool would add contention bugs
         # without buying throughput.
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        # WAL + busy_timeout, via the one helper both stores use. A reindex
+        # writing while students read is this store's normal state, and on the
+        # default journal that is a lock, not a queue.
+        self._conn = sqlite_setup.connect(self.path)
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
 
