@@ -43,3 +43,23 @@
 .coursemate-tutor .cm-ai-badge { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: #6b4d00; background: #fdf0c8; border: 1px solid #e8d38a; border-radius: 3px; padding: 2px 6px; margin-bottom: 6px; }
 .coursemate-tutor .cm-practice-text { white-space: pre-wrap; }
 .coursemate-tutor .cm-provenance { font-size: 12px; color: #555; margin-top: 6px; }
+
+/* --- Phase 4C: budgeted study plan ------------------------------------ */
+.coursemate-tutor .cm-budget-form { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.coursemate-tutor .cm-budget-input { width: 90px; padding: 5px; }
+.coursemate-tutor .cm-budget-unit { font-size: 12px; color: #555; }
+/* Visually distinct from .cm-practice-card, and that is the point: this card
+   holds real past-paper questions and that one holds a generated question. Two
+   different trust levels must not look alike. */
+.coursemate-tutor .cm-plan-card { border: 1px solid #cfd8e3; border-left: 3px solid #4a6fa5; border-radius: 4px; padding: 8px; margin: 8px 0; background: #fbfcfe; }
+.coursemate-tutor .cm-plan-heading { font-weight: 600; margin-bottom: 6px; }
+.coursemate-tutor .cm-plan-item { padding: 6px 0; border-top: 1px solid #eef1f5; }
+.coursemate-tutor .cm-plan-clo { font-weight: 600; font-size: 13px; }
+.coursemate-tutor .cm-plan-questions { font-size: 12px; color: #333; margin-top: 2px; }
+.coursemate-tutor .cm-plan-rationale { font-size: 12px; color: #555; font-style: italic; margin-top: 2px; }
+/* The shortfall is information, not a warning: the request was fine and the
+   bank is simply short. Legible, not alarming. */
+.coursemate-tutor .cm-plan-unspent { font-size: 12px; color: #6b4d00; background: #fdf6e3; padding: 4px 6px; border-radius: 3px; margin-top: 6px; }
+.coursemate-tutor .cm-plan-empty { font-size: 13px; color: #444; }
+.coursemate-tutor .cm-plan-footnote { font-size: 11px; color: #666; margin-top: 6px; }
+.coursemate-tutor .cm-prep-notice.invalid_budget { background: #fdf6e3; }

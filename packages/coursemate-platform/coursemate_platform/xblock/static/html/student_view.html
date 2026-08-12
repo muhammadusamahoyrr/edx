@@ -39,6 +39,20 @@
       <button class="cm-prep-send" type="submit">Plan</button>
     </form>
 
+    <!-- Budgeted study plan (§7.4). A third form, and a third request shape:
+         the one above is free text answered by prose, this one is a number
+         answered by arithmetic. `min`/`max` mirror StudyPlanRequest's own
+         bounds so the browser refuses what the contract would reject anyway —
+         a 422 the student never sees is better than one they do. -->
+    <form class="cm-budget-form" hidden>
+      <label class="cm-practice-label" for="cm-budget">Session length</label>
+      <input class="cm-budget-input" id="cm-budget" type="number"
+             min="1" max="500" step="1" value="100"
+             aria-label="Marks budget for this revision session" />
+      <span class="cm-budget-unit">marks</span>
+      <button class="cm-budget-send" type="submit">Build a study plan</button>
+    </form>
+
     <!-- Practice generation. Separate form from the plan above because they are
          different requests: a plan is free text, a practice question is a
          structured pick of outcome + level (PracticeRequest). -->

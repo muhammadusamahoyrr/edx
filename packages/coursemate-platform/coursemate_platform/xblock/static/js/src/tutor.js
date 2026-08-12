@@ -292,6 +292,9 @@ function CourseMateTutor(runtime, element, initArgs) {
   var practiceSend = prepPanel.querySelector(".cm-practice-send");
   var prepInput = prepPanel.querySelector(".cm-prep-input");
   var prepSend = prepPanel.querySelector(".cm-prep-send");
+  var budgetForm = prepPanel.querySelector(".cm-budget-form");
+  var budgetInput = prepPanel.querySelector(".cm-budget-input");
+  var budgetSend = prepPanel.querySelector(".cm-budget-send");
 
   /* The memory layer, carried rather than stored (§3.1). The platform owns it;
    * this script is the courier, exactly as it is for chat history. A student can
@@ -359,6 +362,11 @@ function CourseMateTutor(runtime, element, initArgs) {
         /* The outcome selector. Only enabled when the course actually declares
          * outcomes — an empty dropdown is a control that cannot work, which is
          * the failure §5.1 is about. */
+        /* The budget form needs a pack, not outcomes: the planner reports an
+         * empty plan honestly when nothing is tagged, which is more use to a
+         * student than a hidden control that never explains itself. */
+        if (budgetForm) { budgetForm.hidden = false; }
+
         var options = status.clo_options || [];
         if (options.length && practiceForm) {
           options.forEach(function (c) {
@@ -435,6 +443,147 @@ function CourseMateTutor(runtime, element, initArgs) {
     }).then(function () {
       prepInput.disabled = false;
       prepSend.disabled = false;
+    });
+  }
+
+  /* --- budgeted study plan (§7.4) -------------------------------------- *
+   * A different request from the prose plan above, so a different renderer: the
+   * service returns a StudyPlan as JSON, not a stream, because a plan is a value
+   * rather than a narration. Nothing here is AI-generated — every question named
+   * is a real past-paper question — so no AI badge is attached, deliberately. */
+
+  var MIN_BUDGET = 1;
+  var MAX_BUDGET = 500;
+
+  /* All plan text is written with textContent, never innerHTML. `rationale` and
+   * `clo_id` come from the service, and the service builds them from extracted
+   * PDF text — semi-trusted under §10.6, so a question whose paper contained
+   * markup must render as characters, not as elements. */
+  function planItemNode(item) {
+    var node = el("div", "cm-plan-item", "");
+    var marks = typeof item.marks_budget === "number" ? item.marks_budget : 0;
+
+    node.appendChild(el("div", "cm-plan-clo", item.clo_id + " — " + marks + " marks"));
+
+    var ids = item.question_ids || [];
+    node.appendChild(el(
+      "div", "cm-plan-questions",
+      ids.length ? "Questions: " + ids.join(", ")
+                 : "No question fitted this outcome's share."
+    ));
+
+    /* Shown, not hidden. The rationale is where the planner says "5 of 20 marks
+     * allocated (bank had nothing smaller that fit)" — a student who is told the
+     * bank ran short can go find more practice; one who is not will read the
+     * plan as complete. */
+    if (item.rationale) {
+      node.appendChild(el("div", "cm-plan-rationale", item.rationale));
+    }
+    return node;
+  }
+
+  function renderPlan(plan, requested) {
+    var card = el("div", "cm-plan-card", "");
+    var items = (plan && plan.items) || [];
+
+    var planned = 0;
+    items.forEach(function (i) {
+      planned += typeof i.marks_budget === "number" ? i.marks_budget : 0;
+    });
+
+    card.appendChild(el("div", "cm-plan-heading",
+      "Study plan — " + planned + " of " + requested + " marks"));
+
+    if (!items.length) {
+      /* An empty plan is NOT an error, and must not render as one. The request
+       * was fine; the course has nothing tagged with marks yet. Collapsing the
+       * two would send a student to report a fault that does not exist. */
+      card.appendChild(el("div", "cm-plan-empty",
+        "No past-paper question with a marks value is tagged to this course's "
+        + "outcomes yet, so there is nothing to plan from."));
+      prepLog.appendChild(card);
+      prepLog.scrollTop = prepLog.scrollHeight;
+      return card;
+    }
+
+    items.forEach(function (item) { card.appendChild(planItemNode(item)); });
+
+    /* Unspent budget, stated. The service's PlanReport is deliberately not in
+     * the StudyPlan contract, so this is derived from what IS: the difference
+     * between what was asked for and what the items add up to. Padding the plan
+     * to hit the number, or saying nothing, would both be a lie about a bank
+     * that is short. */
+    var unspent = requested - planned;
+    if (unspent > 0) {
+      card.appendChild(el("div", "cm-plan-unspent",
+        unspent + " marks could not be filled — the question bank has no more "
+        + "tagged questions that fit."));
+    }
+
+    card.appendChild(el("div", "cm-plan-footnote",
+      "Every question above is a real past-paper question. Nothing here is "
+      + "AI-generated."));
+
+    prepLog.appendChild(card);
+    prepLog.scrollTop = prepLog.scrollHeight;
+    return card;
+  }
+
+  function requestStudyPlan(budget) {
+    prepNotice.hidden = true;
+    budgetInput.disabled = true;
+    budgetSend.disabled = true;
+
+    mintToken().then(function (token) {
+      if (token.error) { showPrepNotice(token.error); return; }
+      var base = prepPanel.dataset.base || token.stream_path.replace(/\/chat$/, "/examprep");
+
+      return fetch(base + "/study-plan", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + token.token
+        },
+        /* Exactly StudyPlanRequest, and nothing else. No student id and no
+         * offering id: the contract has no field for either, so scope comes from
+         * the token the service verifies and a forged payload cannot widen it. */
+        body: JSON.stringify({ marks_budget: budget, mastery: mastery })
+      }).then(function (response) {
+        if (!response.ok) {
+          /* A refusal is a fault and renders as one — distinct from the empty
+           * plan above, which is a correct answer. 429 and 403 have their own
+           * wording; anything else is reported as unavailable rather than
+           * guessed at. */
+          showPrepNotice(response.status === 429 ? "rate_limited"
+                       : response.status === 403 ? "not_enrolled"
+                       : "unavailable");
+          return;
+        }
+        return response.json().then(function (plan) { renderPlan(plan, budget); });
+      });
+    }).catch(function () {
+      showPrepNotice("unavailable");
+    }).then(function () {
+      budgetInput.disabled = false;
+      budgetSend.disabled = false;
+    });
+  }
+
+  if (budgetForm) {
+    budgetForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      /* Validated here as well as by the contract. The service would reject a
+       * bad budget with a 422 the student cannot act on, so the browser refuses
+       * first and says what is wrong in the panel's own voice. */
+      var budget = parseInt(budgetInput.value, 10);
+      if (!isFinite(budget) || budget < MIN_BUDGET || budget > MAX_BUDGET) {
+        prepNotice.textContent =
+          "Enter a session length between " + MIN_BUDGET + " and " + MAX_BUDGET + " marks.";
+        prepNotice.className = "cm-prep-notice invalid_budget";
+        prepNotice.hidden = false;
+        return;
+      }
+      requestStudyPlan(budget);
     });
   }
 
