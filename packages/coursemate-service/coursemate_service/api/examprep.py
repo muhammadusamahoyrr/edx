@@ -17,23 +17,28 @@ What to say is decided by `agents/runner.py` or by `plan.py`.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 
 from coursemate_contracts.auth import StudentClaims
 from coursemate_contracts.chat import StreamFrame
+from coursemate_contracts.errors import ErrorCode
 from coursemate_contracts.examprep import (
     CLOOption,
     ExamPrepRequest,
     ExamPrepStatus,
     PracticeRequest,
+    StudyPlan,
+    StudyPlanRequest,
 )
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
+from ..ai.planner import plan_for_offering
 from ..boundary.impl import AuthorizationError, boundary
 from ..config import settings
-from .deps import rate_limited
+from .deps import rate_limited, rate_limiter
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +52,27 @@ def _sse(frame: StreamFrame) -> str:
 async def _encode(source: AsyncIterator[StreamFrame]) -> AsyncIterator[str]:
     async for frame in source:
         yield _sse(frame)
+
+
+async def _encode_holding_slot(
+    source: AsyncIterator[StreamFrame], student_id: str, token: str
+) -> AsyncIterator[str]:
+    """`_encode`, but the concurrency slot is given back when the stream ends.
+
+    The `finally` covers all three endings that matter: the generator finished,
+    it raised, or the student closed the tab — Starlette closes the iterator on
+    disconnect, which arrives here as `GeneratorExit` and still runs the release.
+
+    Releasing here rather than in the endpoint is the whole point. The endpoint
+    returns as soon as the `StreamingResponse` is constructed, long before a
+    single token has been generated, so a release there would free the slot while
+    the stream it was protecting was still running.
+    """
+    try:
+        async for frame in source:
+            yield _sse(frame)
+    finally:
+        rate_limiter.release_stream(student_id, token)
 
 
 @router.get("/status")
@@ -130,6 +156,57 @@ async def plan(
     )
 
 
+@router.post("/study-plan")
+async def study_plan(
+    request: StudyPlanRequest,
+    claims: StudentClaims = Depends(rate_limited),
+) -> StudyPlan:
+    """A revision plan sized by a marks budget (§7.4). JSON, not a stream.
+
+    **Not streamed, deliberately.** This is arithmetic over data the service
+    already has — a few SQL queries and a weighted split, no model call, no tool
+    loop, milliseconds. Streaming it would mean inventing a frame type to carry
+    structured items, and a `StudyPlan` is a value, not a narration. `/plan` next
+    door streams prose because prose arrives a token at a time; this does not.
+
+    **No concurrency slot.** Slots exist to bound how much of the provider's
+    concurrency one student can hold open, and there is no provider here. Taking
+    one would let a free local computation deny a student their practice
+    questions, which is the opposite of what the limit is for. The per-minute
+    rate limit still applies, through the same `rate_limited` dependency every
+    other student route uses.
+
+    Authorization is layered exactly as on `/plan`: this route verifies the JWT
+    and nothing more, and enrollment is re-derived at the `CourseIntelligence`
+    boundary on every read the planner performs — the CLO lookup and one search
+    per outcome each call `_authorize` independently.
+    """
+    log.info(
+        "study-plan: user=%s offering=%s budget=%d",
+        claims.sub, claims.offering_id, request.marks_budget,
+    )
+
+    try:
+        plan, report = await asyncio.to_thread(
+            plan_for_offering,
+            claims,
+            marks_budget=request.marks_budget,
+            snapshot=request.mastery,
+        )
+    except AuthorizationError as exc:
+        # Fails closed, and says which failure it is. A student whose enrollment
+        # cannot be confirmed gets 403 NOT_ENROLLED — never an empty plan, which
+        # would read as "this course has nothing for you".
+        log.warning("study-plan denied: %s", exc)
+        raise HTTPException(status_code=403, detail=ErrorCode.NOT_ENROLLED.value) from exc
+
+    # The report is diagnostic and stays out of the contract, but an empty plan
+    # has four different causes and an operator reading the log needs to know
+    # which one — no pack, no outcomes, nothing tagged, nothing with marks.
+    log.info("study-plan for %s: %s", claims.offering_id, report.as_dict())
+    return plan
+
+
 @router.post("/practice/stream")
 async def practice_stream(
     request: PracticeRequest,
@@ -160,12 +237,26 @@ async def practice_stream(
         claims.sub, claims.offering_id, request.clo_id, request.difficulty_band,
     )
 
+    # Before the generator is touched. A slot taken after generation started
+    # would be counting streams that are already consuming the thing it exists to
+    # protect, and the third student would be refused only after their model call
+    # was already in flight.
+    #
+    # Raises 429 with the same typed code the rate limiter uses, so the browser's
+    # existing handler covers it: to a student, "too many at once" and "too many
+    # per minute" are the same instruction — wait, then retry.
+    token = rate_limiter.acquire_stream(claims.sub)
+
     from ..ai.quiz_generator import generator
 
     return StreamingResponse(
-        _encode(generator.stream(
-            claims, clo_id=request.clo_id, difficulty_band=request.difficulty_band
-        )),
+        _encode_holding_slot(
+            generator.stream(
+                claims, clo_id=request.clo_id, difficulty_band=request.difficulty_band
+            ),
+            claims.sub,
+            token,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",

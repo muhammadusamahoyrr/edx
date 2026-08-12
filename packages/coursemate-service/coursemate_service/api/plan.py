@@ -37,6 +37,7 @@ from coursemate_contracts.errors import ErrorCode
 from coursemate_contracts.examprep import CLO, ExamPrepRequest, QuestionRecord
 from coursemate_contracts.mastery import CLOMastery
 
+from ..ai.planner import weakness_key
 from ..boundary.impl import AuthorizationError, boundary
 
 log = logging.getLogger(__name__)
@@ -50,19 +51,6 @@ PROVIDER_NAME = "deterministic"
 _MAX_CLOS = 5
 #: Questions attached per outcome.
 _PER_CLO = 3
-
-
-def _weakness(clo: CLO, mastery: dict[str, CLOMastery]) -> tuple:
-    """Sort key. Lower sorts first, i.e. weakest first.
-
-    The first element separates *unknown* from *known*: unattempted outcomes lead,
-    because resolving an unknown is worth more to a revision session than
-    re-drilling a known weakness.
-    """
-    m = mastery.get(clo.clo_id)
-    if m is None or m.attempts == 0:
-        return (0, 0.0, 0)
-    return (1, m.accuracy or 0.0, m.attempts)
 
 
 def _render(clo: CLO, m: CLOMastery | None, questions: list[QuestionRecord]) -> str:
@@ -137,7 +125,10 @@ async def deterministic_plan(
             snapshot.offering_id, offering_id,
         )
 
-    ranked = sorted(clos, key=lambda c: _weakness(c, mastery))[:_MAX_CLOS]
+    # The same key the budgeted planner uses. Two orderings meant to agree would
+    # drift, and the drift would show up as this plan and a budgeted one
+    # recommending different outcomes to the same student on the same day.
+    ranked = sorted(clos, key=lambda c: weakness_key(c, mastery))[:_MAX_CLOS]
 
     header = (
         "Here is a revision plan for this course, weakest outcome first.\n\n"

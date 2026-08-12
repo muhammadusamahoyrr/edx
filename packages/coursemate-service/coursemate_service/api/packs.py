@@ -30,7 +30,7 @@ router = APIRouter()
 
 
 @router.post("/load", dependencies=[Depends(service_credential)])
-async def load_pack(pack: ExamPrepPack) -> dict:
+async def load_pack(pack: ExamPrepPack, force: bool = False) -> dict:
     """Replace this offering's questions and CLOs, atomically.
 
     Returns counts, never a bare `{"status": "ok"}`. A loader that reports success
@@ -66,7 +66,31 @@ async def load_pack(pack: ExamPrepPack) -> dict:
             detail=f"question(s) scoped to another offering: {', '.join(mismatched[:5])}",
         )
 
-    counts = get_examprep_store().load_pack(pack)
+    store = get_examprep_store()
+
+    # Refuse a document already imported into this offering. A pack load
+    # REPLACES the offering's questions, so a duplicate is not merely wasteful:
+    # re-importing paper A after paper B silently discards B, and the counts
+    # returned would look like a successful load.
+    #
+    # 409, not 400: the request is well-formed and the operator did nothing
+    # wrong — the state is what conflicts. `force` exists because a corrected
+    # extraction of the same PDF is a legitimate reload.
+    previous = store.already_imported(
+        tenant=pack.tenant, offering_id=pack.offering_id,
+        content_sha256=pack.content_sha256,
+    )
+    if previous and not force:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"this document was already imported into {pack.offering_id} "
+                f"({previous['questions']} questions, at {previous['loaded_at']}). "
+                "Pass force=true to load it again."
+            ),
+        )
+
+    counts = store.load_pack(pack)
 
     unconfirmed = sum(1 for c in pack.clos if not c.confirmed_by)
     if unconfirmed:
@@ -76,4 +100,12 @@ async def load_pack(pack: ExamPrepPack) -> dict:
             pack.offering_id, unconfirmed, len(pack.clos),
         )
 
-    return {**counts, "offering_id": pack.offering_id, "unconfirmed_clos": unconfirmed}
+    return {
+        **counts,
+        "offering_id": pack.offering_id,
+        "unconfirmed_clos": unconfirmed,
+        # Stated rather than implied: a pack with no hash cannot be checked for
+        # duplication, and the operator should know that before loading again.
+        "duplicate_checked": pack.content_sha256 is not None,
+        "reloaded": bool(previous),
+    }
