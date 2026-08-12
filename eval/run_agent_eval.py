@@ -54,10 +54,10 @@ for _key, _placeholder in (
 ):
     os.environ.setdefault(_key, _placeholder)
 
-from coursemate_contracts.auth import AUDIENCE_STUDENT, StudentClaims  # noqa: E402
-from coursemate_contracts.chat import FrameType  # noqa: E402
-from coursemate_contracts.errors import ErrorCode  # noqa: E402
-from coursemate_contracts.examprep import ExamPrepRequest  # noqa: E402
+from coursemate_contracts.auth import AUDIENCE_STUDENT, StudentClaims
+from coursemate_contracts.chat import FrameType
+from coursemate_contracts.errors import ErrorCode
+from coursemate_contracts.examprep import ExamPrepRequest
 
 DATASET = Path(__file__).parent / "datasets" / "agent_gold.yaml"
 
@@ -70,7 +70,7 @@ def load_cases(path: Path) -> tuple[str, list[dict]]:
     harness runs inside the service image, and a YAML dependency there would be
     a container rebuild for no gain."""
     text = path.read_text(encoding="utf-8")
-    offering = re.search(r'^offering_id:\s*"([^"]+)"', text, re.M).group(1)
+    offering = re.search(r'^offering_id:\s*"([^"]+)"', text, re.MULTILINE).group(1)
 
     cases: list[dict] = []
     current: dict | None = None
@@ -156,7 +156,7 @@ class ScriptedRouter:
         self.pending = list(tool_names)
         self.planning_calls = 0
 
-    async def acompletion(self, *, model, messages, stream=False, **kw):  # noqa: ARG002
+    async def acompletion(self, *, model, messages, stream=False, **kw):
         if stream:
             return self._stream()
         self.planning_calls += 1
@@ -195,7 +195,7 @@ async def run_case(case: dict, offering: str) -> dict:
         r.registry.invoke, r.registry.schemas, r.get_router
     )
     r.registry.invoke = lambda name, args, ctx: queue.pop(0) if queue else make_result(name, "empty")
-    r.registry.schemas = lambda: []
+    r.registry.schemas = list
     r.get_router = lambda: router
     try:
         frames = [f async for f in r.ExamPrepAgent().stream(

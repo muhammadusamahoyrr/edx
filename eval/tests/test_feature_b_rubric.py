@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from feature_b_rubric import DUPLICATE_THRESHOLD, jaccard, score, tokens  # noqa: E402
+from feature_b_rubric import DUPLICATE_THRESHOLD, jaccard, score, tokens
 
 BANK = [
     {"question_id": "P1", "clo_id": "CLO-1", "marks": 10, "difficulty": 0.6,
