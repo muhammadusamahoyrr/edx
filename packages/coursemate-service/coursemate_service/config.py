@@ -210,11 +210,17 @@ class Settings(BaseSettings):
     #: limits above bound how OFTEN and how MANY AT ONCE, and twenty questions a
     #: minute all day is within both.
     #:
-    #: 100,000 is roughly 30–35 full answers — a prompt carrying retrieved
-    #: context runs ~2,200 tokens and `max_output_tokens` caps the reply at 800.
-    #: That is more than a heavy revision session and far under a scripted one.
-    #: Worst case at hosted Sonnet-class pricing is about $0.50 per student per
-    #: course per day, and under $0.30 at a realistic input/output mix.
+    #: **Measured on the live stack 2026-08-12**, replacing the estimate this
+    #: comment shipped with (which said ~2,200 prompt tokens and 30–35 answers —
+    #: both wrong, and wrong in the direction that undersold the ceiling).
+    #: Across seven real generations: 660–785 tokens for a first turn, ~908 for a
+    #: short conversation, 1,295 for a nine-turn one — the prompt grows with the
+    #: history the browser carries. So 100,000 is roughly **75–150 answers** per
+    #: student per course per day. Production runs `max_output_tokens=400`.
+    #:
+    #: At hosted Sonnet-class pricing that is under $0.50 per student per course
+    #: per day worst case. On this deployment the provider is local, so the
+    #: ceiling bounds compute rather than money. See BENCHMARKS §3.9.
     #:
     #: Counted in tokens, not dollars, because a price table is wrong the moment
     #: a provider reprices or the router falls back to another deployment.

@@ -28,6 +28,14 @@ retrieving the wrong lesson**, so they are answered rather than abstained. The
 gate catches a weak match; it does not catch a confident match on wrong content.
 See BENCHMARKS §3.5.
 
+**The largest instance of that same failure was conversational, and is now
+fixed.** Before 2026-08-12 the retriever never saw the conversation, so 7 of 12
+multi-turn cases answered confidently from the wrong lesson — one at score 1.000.
+Searching the reconstructed question took multi-turn recall@3 from 0.333 to 0.917
+and the wrong-and-answered count from 7 to 1, with both single-turn arms
+unchanged (BENCHMARKS §3.8). That does not fix the lexical gap above; it removes
+a second cause that was being read as one.
+
 **Next:** add an embedding retriever *alongside* BM25 and merge — not replace.
 Lexical keeps exact technical terms that embeddings blur.
 
@@ -184,16 +192,73 @@ leave us unable to say what it bought.
 
 ---
 
-## 4. No response cache
+## 4. The response cache is wired, and its hit rate is near zero
 
-`knowledge/cache/` contains the key derivation and the isolation policy, with
-tests — **and nothing calls it.** The tests pass vacuously. Its README says this
-before anything else, because a green test named *"personal results are never
-cacheable"* otherwise reads as an active control.
+**Updated 2026-08-12.** This section used to say no response cache existed and
+that `knowledge/cache/` passed its tests vacuously. Both were true for six
+phases. The response tier is now wired (`response_cache.py`, first turn only) and
+verified in a real browser: 74,973 ms → 133 ms on a repeated first-turn question,
+with zero budget charged, so the provider genuinely was not called
+(BENCHMARKS §3.10). `assert_cacheable` now runs on every write, which is what
+makes the *"personal results are never cacheable"* test an active control rather
+than a name.
 
-The rules exist ahead of the cache because they encode bugs already found once: a
-staff-scope answer served to a student, and personal uploads surviving in a cache
-after every filter was correct.
+The embedding and metadata tiers are still specified and **not** wired.
+
+**The honest limitation is now the opposite one: it will almost never hit.** The
+key carries the caller's effective scope *including `student_id`*, so a hit
+requires the same student to ask the same question as a first turn twice — and
+their conversation history persists between attempts, which makes the second ask
+a follow-up rather than a first turn. In normal use the cache is close to inert.
+
+Sharing between students with an *identical* authorization scope is what would
+make it pay, and it is defensible: retrieval is fully determined by scope, so two
+callers with the same offering, roles and group tokens retrieve the same chunks
+and would receive the same answer. It has not been enabled because it is a
+security trade, and §10.2 is specifically about caching being how isolation
+quietly fails after every filter is already correct. Verified live that scope is
+load-bearing here rather than theoretical: this deployment's students really do
+carry group tokens (`cm_student` mints `["50:1"]`).
+
+Two smaller gaps, both known:
+
+- **Only the index version invalidates.** A prompt edit, a model swap or a τ
+  change is not in the key and is bounded only by the 1 h TTL.
+- **`history` is not in the key but is passed to `build_messages`**, so a client
+  sending `history=[]` and the browser sending `history=[echo]` map to one key
+  while building marginally different prompts. Same question, same retrieval,
+  same scope — a fidelity gap, not an isolation one.
+
+---
+
+## 4.1 The spend ceiling is enforced on an estimate here
+
+**Added 2026-08-12.** A student may spend 100,000 tokens per course per UTC day
+(`cm:budget:{offering}:{student}:{YYYYMMDD}`), checked before the provider call.
+Measured cost is 660–1,295 tokens per answer depending on how long the
+conversation has grown, so roughly 75–150 answers a day. BENCHMARKS §3.9.
+
+Three caveats worth stating plainly:
+
+1. **The number charged here is an estimate, not the provider's.** Verified by
+   probing the running router: `ollama_chat/qwen2.5:7b` reports no usage on any
+   stream chunk, so the ledger falls back to counting characters over the real
+   prompt and the real answer (`chars // 4`). It is a measurement of work done
+   rather than a request counter, and it agreed exactly with the observed ledger
+   delta when reconstructed — but it is not the provider's meter, and on a hosted
+   provider that reports usage the reported figure is used instead.
+2. **The overshoot is not contract-bounded.** The check runs before generation
+   and the charge lands after, so the last permitted question can exceed the
+   ceiling by one answer. The reply is capped by `max_output_tokens`; the
+   *prompt* is not capped by anything (§6, "Per-request input limits").
+3. **A cache hit is free and is not refused.** The C2 read sits before the
+   ceiling check, so an over-budget student can still be served a cached answer.
+   That costs nothing, so it does not weaken the spend bound — but it does mean
+   "over budget" is not the same as "no answers".
+
+A Redis outage degrades to **per-process** counting, not to unlimited and not to
+refusing everyone: worst case becomes `replicas × ceiling`, which is exactly the
+ceiling on this single-replica deployment.
 
 ---
 
@@ -586,7 +651,8 @@ question.
 | **XBlockAside** | Tutor must be added per-unit by hand. The aside would auto-attach, filtered to `vertical` |
 | Instructor-visible opt-in state | `coursemate_reindex --all` now indexes only courses carrying the tutor block, matching what the sweep already required. There is no UI showing an admin which courses opted in — `--all` prints the counts and nothing else |
 | Socratic mode | Prompt written, never evaluated |
-| Query rewriting | Not built — *"that algorithm from week 4"* will retrieve poorly |
+| Query rewriting | **Conversational reconstruction only** (2026-08-12): a follow-up carrying a pro-form is searched together with the previous student turn, which took multi-turn recall@3 from 0.333 to 0.917 (BENCHMARKS §3.8). That is not general rewriting. *"That algorithm from week 4"* still retrieves poorly — it needs to know which nouns are topical in this corpus, and so does the one multi-turn case still missed (*"Can you give an example?"*, under-specified by ellipsis rather than by a pronoun) |
+| Per-request input limits | `ChatRequest.history` is capped at 20 turns, but `question` and `Turn.content` have no `max_length`. Self-limiting for spend — an oversized request exhausts the sender's own daily ceiling — but it means the ceiling's overshoot is not contract-bounded (§4.1) |
 | Cross-encoder reranking | Lexical reranker only |
 | Multi-tenancy | `tenant` threaded through; single-valued |
 | User retirement | Endpoint designed; tubular pipeline registration not done |
@@ -595,9 +661,23 @@ question.
 
 ## 7. Evaluation limitations
 
-- **n=18 questions, generation sampled at 6.** Indicative, not settled.
+- **n=46 questions across five arms, generation sampled at 6.** Indicative, not
+  settled — and the per-arm n is what matters, not the total: `topic_change` is
+  4 cases and `usage_key_conflict` is 2, so neither supports a confident
+  percentage. The headline retrieval figures cover the 28 single-turn cases only;
+  the conversational arms are reported separately because a blend of arms
+  measures nothing (BENCHMARKS "Dataset").
 - **Single rater — the author.** No blind scoring; the person who built the
   retriever wrote the gold set.
+- **The gold set is the instrument, and the temptation is to tune it.** `t02` was
+  scored a miss and its expected label looked arguable; resolving it by *reading
+  the block* rather than by adjusting the label kept the miss, and adding the
+  block would have taken `topic_change` wrong-and-answered from 1 to 0 — an
+  improvement produced entirely by editing the dataset. Three tests now pin that
+  decision in both directions.
+- **Offline fixtures were written from the contract, not captured from the
+  client**, and that hid two shipped defects that every test passed (BENCHMARKS
+  §4.5). Regression tests for both now use the verbatim wire payload.
 - **Groundedness is a token-overlap floor**, not entailment. A paraphrased but
   supported sentence can score as unsupported.
 - **Latency figures are not comparable across runs** — model cache state and the

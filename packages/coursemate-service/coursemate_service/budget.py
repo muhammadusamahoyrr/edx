@@ -102,11 +102,24 @@ class DailyTokenLedger:
 
     Two operations, deliberately not one: `would_exceed` runs BEFORE the provider
     call and `record` runs after it, because the true cost is not known until the
-    answer exists. The consequence is that the last permitted question can
-    overshoot the ceiling by up to one answer — bounded by `max_output_tokens`
-    plus its prompt, and accepted. Reserving an estimate up front instead would
-    charge abstentions and provider failures for tokens nobody spent, which is a
-    worse error: it bills students for the system saying "I don't know".
+    answer exists. Reserving an estimate up front instead would charge
+    abstentions and provider failures for tokens nobody spent, which is a worse
+    error: it bills students for the system saying "I don't know".
+
+    The consequence is that the last permitted question can overshoot the ceiling
+    by one answer. **How far is not currently bounded by the contract**, and an
+    earlier version of this docstring claimed otherwise — it said "bounded by
+    `max_output_tokens` plus its prompt", which is only true if the prompt has a
+    limit. The reply does (`max_output_tokens`), but `ChatRequest.question` and
+    `Turn.content` have no `max_length`; only the turn *count* is capped, at 20.
+    So a single request's prompt is student-controlled and unbounded by anything
+    here, and whatever practical limit exists comes from the web server and has
+    not been measured.
+
+    In practice the overshoot is one answer's worth of a normal question, and it
+    is self-limiting — an oversized request spends the sender's own day. Closing
+    it properly means putting a length cap on those two fields, which is a
+    contract decision rather than a change to this module.
     """
 
     def __init__(self) -> None:

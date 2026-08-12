@@ -36,12 +36,32 @@ token-overlap groundedness is a **floor**, not a verdict.
 
 ### Dataset
 
-18 questions built by **sampling the actual index**, not invented — a gold set
-written without looking at the corpus measures the author's imagination. 12
-covered, 6 uncovered (4 clearly off-topic, 2 adversarial: plausible-sounding
-platform questions absent from this course).
+Started as 18 questions built by **sampling the actual index**, not invented — a
+gold set written without looking at the corpus measures the author's
+imagination. 12 covered, 6 uncovered (4 clearly off-topic, 2 adversarial:
+plausible-sounding platform questions absent from this course).
 
-**n=18 is small.** Every figure below should be read with that attached.
+It has grown twice since, and the arms are **not interchangeable**. Each was
+added to measure something the previous ones could not:
+
+| Arm | n | Added | Measures |
+|---|---|---|---|
+| `original` | 18 | initial | retrieval when the question shares the lesson's words |
+| `paraphrase` | 10 | 2026-08-05 | retrieval when it deliberately does not (§3.5) |
+| `multiturn` | 12 | 2026-08-12 | a follow-up that cannot be searched alone (§3.8) |
+| `topic_change` | 4 | 2026-08-12 | a self-contained question *after* a conversation (§3.8) |
+| `usage_key_conflict` | 2 | 2026-08-12 | page context disagreeing with the conversation — **carried, not yet a target** |
+| **total** | **46** | | 40 covered, 6 uncovered |
+
+**The headline retrieval figures in §3.1 cover the single-turn arms only**
+(`original` + `paraphrase`, n = 28 of which 22 covered). That is what they
+measured before the conversational cases existed, and averaging the new arms in
+would have silently turned "retrieval quality" into a blend of retrieval quality
+and an unfixed conversational defect. `run_eval.py` reports per arm; a blend of
+arms is not a measurement of anything.
+
+**n is small in every arm.** Every figure below should be read with that
+attached.
 
 ---
 
@@ -305,6 +325,227 @@ answer path (invariant 1). SSE headers survived the reverse proxy:
 
 ---
 
+## 3.8 The conversational arms — added 2026-08-12
+
+Until this point the retriever was given `request.question` and nothing else. The
+conversation reached the **model** through `history` and never reached the
+**retriever**, so a follow-up like *"why would I use one?"* was searched with no
+idea what "one" referred to.
+
+Measured against the live DemoX index, before any change:
+
+| Arm | n | recall@3 | Answered from the **wrong** lesson |
+|---|---|---|---|
+| `multiturn` | 12 | **0.333** | **7 of 12** |
+| `topic_change` | 4 | 0.750 | 1 |
+
+The second column is the one that matters. Those seven were not abstentions — the
+blended rerank score cleared τ = 0.35, so the pipeline answered fluently, with a
+citation, from the wrong lesson. The sharpest case scored **1.000**: *"How do I
+try it out?"* after *"What is Studio?"* matched a block literally named
+`Try it -`. Maximum confidence, wrong content.
+
+### The fix, in two measured stages
+
+**B1** prepended the previous student turn to every query. Multi-turn recovered
+and `topic_change` regressed — recall@1 fell **0.750 → 0.250**, because the
+previous subject's terms competed with a question that never needed them. A
+correct block still retrieved, just no longer first.
+
+**B2** made the reconstruction conditional on the question actually being
+under-specified — a closed set of pro-forms (`it`, `one`, `this`, `them`, …).
+Pronouns only, deliberately: it is a finite grammatical class, so the list cannot
+quietly become a lookup table for the eval set.
+
+| Arm | n | recall@3 before | recall@3 after | wrong-and-answered |
+|---|---|---|---|---|
+| `original` | 18 | 1.000 | **1.000** | unchanged |
+| `paraphrase` | 10 | 0.300 | **0.300** | unchanged |
+| `multiturn` | 12 | 0.333 | **0.917** | **7 → 1** |
+| `topic_change` | 4 | 0.750 | **0.750** | 1 |
+
+**0.333 → 0.917 on multi-turn, with both single-turn arms held exactly.** The one
+remaining multi-turn miss (`m05`, *"Can you give an example?"*) is
+under-specified by **ellipsis** rather than anaphora — "an example *of what*" —
+and contains no pronoun to find. Catching it needs to know which nouns are
+topical in this corpus, which is a different signal and is not attempted.
+
+**No LLM query rewriter, deliberately.** The standard answer is to ask a model to
+rewrite the follow-up into a standalone question. That puts a model call *before*
+the confidence gate and destroys the property the system is built on: abstention
+costs ~3 ms and no spend. On this CPU model it would add ~25 s to every question
+including the ones we refuse.
+
+### What the offline numbers missed
+
+**B1/B2 passed every test and were a complete no-op in production.** `tutor.js`
+pushes the question onto its history array *before* building the request, so the
+wire payload carries the question in `history` **and** in `question`. The
+"previous" turn was the current question echoed back, and the reconstructed query
+came out as `"Why would I use one? Why would I use one?"`.
+
+The unit tests and the offline harness both build history the way the *contract
+reads* — prior turns only. Production sends a different shape. Verified in a real
+browser before and after:
+
+| | turn 2 citations after *"What is a cohort?"* → *"Why would I use one?"* |
+|---|---|
+| before | `Design a Logic Gate`, `Content Groups` |
+| after | `Setting up Cohorts`, `Cohorts, Content Groups, and Components`, `Content Groups` |
+
+The regression tests for the fix use the **verbatim payload captured off the
+wire**, not a hand-written one. See §4.5.
+
+---
+
+## 3.9 Per-student spend ceiling (C1) — added 2026-08-12
+
+Rate limiting caps how *often* a student asks; the concurrency limit caps how
+many streams they hold open. Neither bounds total spend — 20 questions a minute
+all day is inside both.
+
+| | |
+|---|---|
+| Ceiling | **100,000 tokens** per student, per course, per **UTC** day |
+| Setting | `COURSEMATE_STUDENT_DAILY_TOKEN_BUDGET` (0 or less disables) |
+| Redis key | `cm:budget:{offering_id}:{student_id}:{YYYYMMDD}`, TTL 48 h |
+| Enforced | before the provider call, after the confidence gate |
+| Unit | tokens, not dollars |
+
+**Tokens, not dollars**, because a price table is wrong the moment a provider
+reprices or the router falls back to another deployment. The date in the key
+rolls the budget over; the TTL only reclaims memory.
+
+**Placed after the gate, deliberately.** Retrieval and the gate are local and
+free, so a student who is out of budget and asks something the course does not
+cover still gets `abstained` — the true answer, which was never going to be
+charged.
+
+### Provider usage vs. the estimate — measured live
+
+Usage is taken from what the provider reports. **This deployment's provider
+reports nothing.** Verified 2026-08-12 by probing the running router directly:
+`ollama_chat/qwen2.5:7b` returned three chunks with `usage=None` on every one and
+`total_tokens` never present.
+
+So **production charges the estimate**, a token count over the actual prompt and
+the actual generated text. Confirmed by arithmetic as well as by the probe: for
+one real browser question the prompt rebuilt to 4,759 chars + a 423-char answer =
+5,182 chars → `5182 // 4 = 1295`, matching the observed ledger delta **exactly**.
+
+That fallback exists because the alternative — charging nothing when a provider
+is silent — would make an unmetered tutor out of a deployment detail. It is an
+estimate and is named one; it will be wrong in the third significant figure and
+the ceiling has enough headroom that this does not matter.
+
+**What is never charged:** an abstention (no provider call), or a provider that
+failed before emitting a token. A failure *after* partial output **is** charged —
+those tokens exist on the bill and the student read them.
+
+### Measured cost per answer
+
+Observed ledger deltas across seven real generations on 2026-08-12:
+
+| Shape | Tokens charged |
+|---|---|
+| first turn, no history | 660 – 785 |
+| short conversation (3 turns) | ~908 |
+| long conversation (9 turns) | 1,295 |
+
+So **roughly 75–150 answers per student per course per day**, depending on how
+long the conversation has grown. Production runs `max_output_tokens = 400`.
+
+### Redis failure
+
+Degrades to **per-process counting**, not fail-open and not fail-closed. Failing
+closed turns a cache outage into a total tutor outage — the trade `shared_state`
+already rejected for the rate limiter. Per-process is bounded: worst case during
+an outage is `replicas × ceiling` rather than unlimited, and exactly the ceiling
+on this single-replica deployment. Pinned by
+`test_budget_ledger.py::test_a_redis_outage_is_not_unlimited_spending`.
+
+---
+
+## 3.10 First-turn response cache (C2) — added 2026-08-12
+
+The tutor's cost is one ~55 s provider call; retrieval is ~3 ms of local SQLite.
+So the only cache worth having skips generation, and the only questions safe to
+skip it for are the ones whose answer depends on nothing but the question.
+
+| | |
+|---|---|
+| Scope | **first turn only** (`history` empty after normalisation) |
+| Key | `resp:` + sha256[:32] over tenant, offering, index version, effective scope, filters, normalised query, mode |
+| Invalidated by | a new **index version** (any reindex), or the TTL |
+| TTL | 3,600 s |
+| Cached | successful answers **and** abstentions |
+| Not cached | `preparing`, degraded (fallback-deployment) answers, anything touching a personal namespace |
+
+**Isolation is the point, not the speed.** §10.2 calls response caching the place
+isolation quietly fails *after* every filter is written correctly. The key
+carries the caller's effective scope — student, roles, offering — and the
+`group_tokens` the block-level access filter runs on. Verified live: two students
+in this deployment genuinely do carry group tokens (`cm_student` mints
+`["50:1"]`), so that component is doing real work, not just passing a test.
+
+**Authorization cannot be bypassed, structurally.** The read sits *after*
+retrieval, which is what enforces enrollment, applies the group filter and writes
+the audit record. A denied caller's retrieval returns `index_version=None`, and
+the pipeline only builds a key when it has a version — so there is no ordering in
+which a cache hit can precede the enrollment check.
+
+### Measured live, in a real browser
+
+Same question, twice, each as a genuinely fresh first turn (history cleared
+between them, 0 rendered turns before each):
+
+| | request 1 | request 2 |
+|---|---|---|
+| total | **74,973 ms** | **133 ms** |
+| time to first token | 51,561 ms | 130 ms |
+| token frames | 78 (streamed) | 1 (replayed) |
+| citations | Content Groups, Content groups, Cohorts Content Groups and Components | **identical** |
+| answer | 445 chars | **byte-identical** |
+| budget charged | 785 | **0** |
+
+**564× faster, and the provider was not called** — the zero budget delta is the
+proof, since C1 charges every generation.
+
+A multi-turn request for the same question (history `[student, tutor, student]`)
+took 35,958 ms, streamed 78 frames and charged 908: it generated, as it must.
+A request with a different `group_tokens` scope took 33,110 ms and charged 811 —
+it did not read the other scope's entry.
+
+### The browser-history normalisation
+
+**The same defect as B1/B2, and it made C2 unreachable.** The first
+implementation asked `not request.history`. `tutor.js` pushes the question into
+`history` before building the request, so the browser never sends an empty one —
+not even on a student's first question in a block. Live verification on a freshly
+cleared block: a full 50-second generation and `resp:*` still zero.
+
+`is_cacheable_request` now strips a trailing **student** turn whose content
+equals the question, then checks whether anything remains:
+
+```
+[]                                        -> first turn
+[student "Q"]                  (browser)  -> first turn
+[student "P"]                             -> NOT first turn
+[student "P", tutor "A", student "Q"]     -> NOT first turn
+```
+
+By role and content, not by position — the browser sends the echo on *every*
+turn, so a positional rule would make every follow-up look like a first turn and
+the cache would start serving one student's conversation to another.
+
+**Hit rate is low by design, and this is an honest limitation.** `student` is in
+the key, so a hit needs the same student to ask the same question as a first turn
+twice — and their history persists between attempts. Sharing across students with
+identical scope would be a large win and is defensible, since retrieval is
+scope-determined; it is a security trade that has not been made.
+
+---
+
 ## 4. Bugs the benchmark found
 
 The benchmark's value was not the numbers. It was these.
@@ -347,6 +588,31 @@ operators → `sqlite3.OperationalError`. A student could 500 the endpoint by ty
 Flagged `"...as highlighted in the course material:"` as hallucination. The metric
 was measuring discourse style, not fidelity.
 
+### 4.5 A hand-built fixture hid the same defect twice — 2026-08-12
+
+Not a benchmark finding. **Both times it took a real browser to see it**, and
+both times every offline test was green.
+
+`tutor.js` pushes the student's question onto its history array *before*
+building the request, so the wire payload carries the question in `history` as
+well as in `question`. Two features shipped assuming otherwise:
+
+1. **B1/B2** took the "previous student turn" and got the current question back,
+   producing the query `"Why would I use one? Why would I use one?"` — a no-op
+   dressed as a fix (§3.8).
+2. **C2** tested `not request.history` for "first turn", which the browser can
+   never satisfy. The cache was unreachable: a full 50-second generation on a
+   freshly cleared block left `resp:*` at zero (§3.10).
+
+The shared root cause is not the push. It is that **every fixture was written
+from the contract rather than captured from the client**, and the contract says
+`history` holds prior turns. A harness that constructs its own input cannot
+discover what a real client actually sends.
+
+Both fixes now carry regression tests built from the **verbatim payload captured
+off the wire**, kept as raw JSON rather than rebuilt with `Turn(...)` — because
+rebuilding it is precisely how the bug survived.
+
 ---
 
 ## 5. Reproduction
@@ -357,9 +623,12 @@ docker exec tutor_local-coursemate-1 python /eval/run_eval.py --gen 6
 # → /eval/reports/latest.json
 ```
 
-Retrieval is measured on all 18 questions; generation is sampled at 6. Full
-generation coverage costs ~12 minutes of CPU inference and, at this sample size,
-would not change the conclusions.
+Retrieval is measured on all 46 questions and reported per arm; generation is
+sampled at 6 **from the single-turn arms only** — running the generator on a bare
+follow-up like *"why would I use one?"* would measure how the model copes with a
+question stripped of its conversation, which is not what the benchmark reports.
+Full generation coverage costs ~12 minutes of CPU inference and, at this sample
+size, would not change the conclusions.
 
 **Feature B end to end from a real PDF (§3.6):**
 
@@ -391,7 +660,9 @@ measure different things and must not be averaged.
    paraphrase questions — *"what helps deaf learners follow videos?"* → Transcripts
    — which is exactly where lexical retrieval should fail.
 2. **Groundedness is a floor**, measured by token overlap, not entailment.
-3. **n=18, single rater (the author).** Indicative, not settled.
+3. **n=46 across five arms, single rater (the author).** Indicative, not settled.
+   Read the per-arm n, not the total: `topic_change` is 4 cases and
+   `usage_key_conflict` is 2, so neither carries a confident percentage.
 4. **One course, one model.** DemoX is curated; real institutional courses are
    messier.
 5. **The real-PDF Feature B run is n = 4** (§3.6) and demonstrates that the

@@ -61,7 +61,11 @@ wrong; the system wins.
 |---|---|---|
 | Everything through the sweep | Done, verified live | `git log --oneline` |
 | Plugin migrations | **0001–0004 applied**, incl. 0003 (mastery) + 0004 (difficulty_band), against the live DB with real data | `tools/ops/migrate.sh` |
-| Service image | **Rebuilt 2026-08-12** — carries the planner, tagger, generator, WAL setup. 16 API routes live | `docker exec tutor_local-coursemate-1 python -c "import urllib.request,json;print(len(json.load(urllib.request.urlopen('http://127.0.0.1:8000/openapi.json'))['paths']))"` |
+| Service image | **`542e73c1`, rebuilt 2026-08-12** — planner, tagger, generator, WAL, plus B1/B2 conversational retrieval, the C1 spend ceiling and the C2 first-turn cache. 16 API routes live | `docker exec tutor_local-coursemate-1 python -c "import urllib.request,json;print(len(json.load(urllib.request.urlopen('http://127.0.0.1:8000/openapi.json'))['paths']))"` |
+| Conversational retrieval (B1/B2) | **LIVE and browser-verified.** multi-turn r@3 0.333 → 0.917 | BENCHMARKS §3.8 |
+| Daily spend ceiling (C1) | **LIVE.** 100k tokens/student/course/UTC day. Provider reports no usage here, so it charges an estimate | BENCHMARKS §3.9, LIMITATIONS §4.1 |
+| First-turn response cache (C2) | **LIVE and browser-verified.** 74,973 ms → 133 ms, 0 charged on the hit | BENCHMARKS §3.10 |
+| **`tutor.js` notices NOT deployed** | The `unauthenticated` and `budget_exceeded` messages are committed but live in the **openedx** image, which has not been rebuilt since. Students still see "Something went wrong." for an expired session | `docker exec tutor_local-lms-1 grep -c unauthenticated ...static/js/src/tutor.js` |
 | openedx image carries the package | **YES — rebuilt 2026-08-12**, all 4 containers adopted it; carries the Phase 4C study-plan UI. (First baked in 2026-08-05, ~29 min) | `tools/ops/adopt_new_image.sh` |
 | Feature B end to end | **VERIFIED IN A REAL BROWSER** — tab, 100-mark plan, generated question, abstention, as enrolled `cm_student` | BENCHMARKS §3.7 |
 | OEX101 exam pack | **Loaded live** — 5 questions, 3 CLOs, 35 marks, 4 tagged | `/examprep/status` |
@@ -83,8 +87,18 @@ wrong; the system wins.
 
 **Done 2026-08-12:** both images rebuilt and adopted, migrations 0003/0004
 applied to the live database, the OEX101 pack loaded, and Feature B verified end
-to end in a real browser. The one thing left unhealthy is still the host, not
-CourseMate — see the warning above.
+to end in a real browser. Then Feature A: conversational retrieval (B1/B2), the
+daily spend ceiling (C1) and the first-turn response cache (C2) — all three built,
+deployed to the service image and verified in a real browser.
+
+**Two of those shipped broken and passed every test.** B1/B2 and C2 both assumed
+`request.history` holds prior turns; `tutor.js` pushes the current question into
+it first, so the browser sends a shape no fixture in this repo had. Only a real
+browser found either. If you add anything that reads `history`, capture a payload
+off the wire before writing the test — see BENCHMARKS §4.5.
+
+The one thing left unhealthy is still the host, not CourseMate — see the warning
+above.
 
 ### Do not do these without asking
 
@@ -152,9 +166,9 @@ upstream `edX+DemoX+Demo_Course`).
 
 ## Tests
 
-    make check        # 6 contracts + OpenAPI drift check + 590 backend
-                      # + 44 browser tests
-    make coverage     # gated at 80% for service+contracts (now 89.5%); platform ungated
+    make check        # 6 contracts + OpenAPI drift check + 736 backend
+                      # + 63 browser tests
+    make coverage     # gated at 80% for service+contracts (now 90.4%); platform ungated
     make agent-eval   # the 4 agent regression gates — needs no provider
     make openapi      # regenerate docs/openapi.json from the routes
 

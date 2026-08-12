@@ -26,7 +26,11 @@ live stack with a Celery worker and a nightly sweep container.
 Browser ──1── XBlock.mint() → JWT (0.115 ms, LMS released)
    └────2──── /coursemate/* → Caddy → FastAPI service
                                         ├── boundary: identity → enrollment → filter → audit
-                                        ├── FTS5 retrieval → rerank → confidence gate
+                                        ├── query: reconstruct a follow-up from the conversation
+                                        ├── FTS5 retrieval → rerank
+                                        ├── first-turn cache? → replay, no provider call
+                                        ├── confidence gate → abstain, no provider call
+                                        ├── daily token ceiling → refuse, no provider call
                                         └── LiteLLM → SSE tokens → browser
    └────3──── persist turn → Scope.user_state (platform owns chat history)
 ```
@@ -131,8 +135,10 @@ tell you whether your retrieval changed or the judge did.
 | Tool-selection accuracy | **NOT MEASURED** — needs a hosted provider; see below |
 | Feature B, real PDF → scored question | CLO alignment **1.000**, duplicate-free **1.000** (**n=4**) |
 | Feature B band plausibility | **not measured** on extracted packs — the extractor does not derive difficulty |
-| Coverage (service + contracts) | **89.5%**, gated. Platform 26%, reported ungated — most of it needs Open edX to execute |
-| Tests / contracts | 590 backend + 44 browser / 6 |
+| Multi-turn retrieval recall@3 | **0.917** (was 0.333); answered-from-wrong-lesson **7 → 1** of 12 |
+| First-turn cache, real browser | **74,973 ms → 133 ms**, 0 tokens charged on the hit |
+| Coverage (service + contracts) | **90.4%**, gated at 80%. Platform 26%, reported ungated — most of it needs Open edX to execute |
+| Tests / contracts | 736 backend + 63 browser / 6 |
 
 **Tool-selection accuracy was attempted against a real model on 2026-08-12 and
 still is not a number.** The local `qwen2.5:7b` timed out on nine of ten planning
