@@ -86,18 +86,28 @@ wrong; the system wins.
 > `APIConnectionError: Cannot connect to host 172.18.0.1:11435` and an
 > `unavailable` frame. `setsid` detaches it into its own session, which survives.
 > Verify it outlived the shell with a SEPARATE `wsl` call, not the one that
-> started it.
+> started it. **And check its parent, not just that it is listening** — on
+> 2026-08-13 the forwarder was serving happily with `parent=540`, i.e. still
+> attached to a shell despite having been started under `setsid`:
+>
+>     ps -o ppid= -p "$(pgrep -f 'TCP-LISTEN:11435')"   # want 1
+>
+> Listening now is not the same as surviving the next shell exit, and the failure
+> arrives later and elsewhere as `APIConnectionError` on 172.18.0.1:11435.
 
 | What | State | Check |
 |---|---|---|
 | Everything through the sweep | Done, verified live | `git log --oneline` |
 | Plugin migrations | **0001–0004 applied**, incl. 0003 (mastery) + 0004 (difficulty_band), against the live DB with real data | `tools/ops/migrate.sh` |
-| Service image | **`542e73c1`, rebuilt 2026-08-12** — planner, tagger, generator, WAL, plus B1/B2 conversational retrieval, the C1 spend ceiling and the C2 first-turn cache. 16 API routes live | `docker exec tutor_local-coursemate-1 python -c "import urllib.request,json;print(len(json.load(urllib.request.urlopen('http://127.0.0.1:8000/openapi.json'))['paths']))"` |
+| Service image | **`8fb7f3fd`, rebuilt 2026-08-13 from `d0fb288`** — planner, tagger, generator, WAL, B1/B2 retrieval, the C1 ceiling, the C2 cache, plus the audit work: contract-version guard, real readiness, metrics. 16 API routes live | `docker exec tutor_local-coursemate-1 python -c "import urllib.request,json;print(len(json.load(urllib.request.urlopen('http://127.0.0.1:8000/openapi.json'))['paths']))"` |
+| openedx image | **`834436d9`, rebuilt 2026-08-13 from `d0fb288`**, all 4 containers adopted it. Carries the study-plan UI, the D1 mark replay, the D2 self-assessment UI and the platform half of the contract lock | `tools/ops/adopt_new_image.sh` |
 | Conversational retrieval (B1/B2) | **LIVE and browser-verified.** multi-turn r@3 0.333 → 0.917 | BENCHMARKS §3.8 |
 | Daily spend ceiling (C1) | **LIVE.** 100k tokens/student/course/UTC day. Provider reports no usage here, so it charges an estimate | BENCHMARKS §3.9, LIMITATIONS §4.1 |
-| First-turn response cache (C2) | **LIVE and browser-verified.** 74,973 ms → 133 ms, 0 charged on the hit | BENCHMARKS §3.10 |
-| **`tutor.js` notices NOT deployed** | The `unauthenticated` and `budget_exceeded` messages are committed but live in the **openedx** image, which has not been rebuilt since. Students still see "Something went wrong." for an expired session | `docker exec tutor_local-lms-1 grep -c unauthenticated ...static/js/src/tutor.js` |
-| openedx image carries the package | **YES — rebuilt 2026-08-12**, all 4 containers adopted it; carries the Phase 4C study-plan UI. (First baked in 2026-08-05, ~29 min) | `tools/ops/adopt_new_image.sh` |
+| First-turn response cache (C2) | **LIVE, and effectively inert.** The mechanism is browser-verified (74,973 ms → 133 ms, 0 charged) but `student_id` is in the key, so a hit needs the same student to re-ask as a *first* turn — and their history persists. Live counters after real traffic: **hits 0, misses 1** | `curl -H "Authorization: Bearer $CRED" .../coursemate/metrics` |
+| `tutor.js` notices | **DEPLOYED 2026-08-13.** `unauthenticated` and `budget_exceeded` now render. Still missing: `disabled` has no entry, and the exam-prep status path falls back to `""` (silent) | `grep -c "unauthenticated:" .../static/js/src/tutor.js` |
+| Contract version lock | **LIVE both directions.** Platform stamps `X-CourseMate-Contract-Version` and learns the peer's from `/health` on first contact; service refuses a mismatch with `CONTRACT_MISMATCH`/409. A **missing** header is allowed by design so rollout order stays free | `tools/verification/auth_probe.sh`, BENCHMARKS n/a — see `contracts/version.py` |
+| `/health/ready` | **Real check now.** Returns 503 when the index cannot be opened; Redis reported, never gating. An empty index is still *ready* (that is `preparing`) | `curl .../coursemate/health/ready` |
+| Metrics | **LIVE**, service-credential only, absent from the published spec. Six counters; verified moving under real traffic (`chat_requests_total` 0→1) | `curl -H "Authorization: Bearer $CRED" .../coursemate/metrics` |
 | Feature B end to end | **VERIFIED IN A REAL BROWSER** — tab, 100-mark plan, generated question, abstention, as enrolled `cm_student` | BENCHMARKS §3.7 |
 | OEX101 exam pack | **Loaded live** — 5 questions, 3 CLOs, 35 marks, 4 tagged | `/examprep/status` |
 | Package in all 4 containers | From the IMAGE now, not container layers | `tools/ops/check_install.sh` |
@@ -128,8 +138,35 @@ it first, so the browser sends a shape no fixture in this repo had. Only a real
 browser found either. If you add anything that reads `history`, capture a payload
 off the wire before writing the test — see BENCHMARKS §4.5.
 
+**Done 2026-08-13:** the D1/D2 work and the nine-item audit. Both images rebuilt
+from `d0fb288`, adopted, and verified live; all 25 commits pushed. What the audit
+changed is mostly *things that claimed to be true and were not* — a version lock
+nothing called, a readiness probe that could not fail, a tie-break setting that
+stated the opposite of the code, and three settings enforcing nothing.
+
+**The recurring failure in this codebase is reachability, not correctness.**
+B1/B2, C2 and the practice loop were each correct in isolation and unwired in
+production; the audit found four more of the same shape. Before believing a
+control works, check that something calls it. `test_error_contract.py` now
+enforces exactly that for error codes, and it has caught two of my own changes.
+
 The one thing left unhealthy is still the host, not CourseMate — see the warning
 above.
+
+**Known and still open** (evidence in the 2026-08-13 review):
+
+* **No cross-vendor failover.** `fallback_model` is empty and the only provider
+  is the local `ollama_chat/qwen2.5:7b`. `DEGRADED`, the fallback chain and
+  `provider_failures_total` all exist and cannot fire.
+* **The C2 cache is inert**, not broken — see the table row above.
+* **Coverage holes where it matters least comfortably**: `api/ingest.py` 36%,
+  `boundary/authz.py` 71%, `api/invalidation.py` 67% — the write path and the
+  authorization path.
+* **`question` and `Turn.content` have no `max_length`**, so the C1 overshoot is
+  not contract-bounded.
+* **The Groq key is still unrotated.** Not present in the repo, history, tutor
+  config or the running container — nothing to scrub, but disclosure is
+  compromise. Revoke it at the provider.
 
 ### Do not do these without asking
 
