@@ -46,21 +46,6 @@ You are answering an exam-prep request. Everything above still applies. Also:
   what you know about the subject in general.
 """
 
-#: Offline CLO tagging (§7.5). Batch work with no student waiting, so it runs on
-#: the `cheap` deployment — Principle 6, and the one place in the system where
-#: retrying is genuinely free.
-CLO_TAGGING_SYSTEM = """You tag past-paper questions with the course learning
-outcome each one assesses.
-
-Return the outcome id you are most confident about, and a confidence from 0 to 1.
-If no outcome fits, return null rather than the closest one — a wrongly tagged
-question sends a student to revise the wrong topic, which is worse than an
-untagged one they can still practise.
-
-A tag is a proposal. An instructor or the student can correct it.
-"""
-
-
 def render_tool_result(result: ToolResult) -> dict[str, str]:
     """One tool result, as its own message.
 

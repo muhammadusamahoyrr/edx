@@ -82,6 +82,34 @@ question and grounded in this course's material. Everything above still applies.
 """
 
 
+#: Offline CLO tagging (§7.5). Batch work with no student waiting, so it runs on
+#: the `cheap` deployment — Principle 6, and the one place in the system where
+#: retrying is genuinely free.
+#:
+#: Moved here from `agents/prompts.py` when it finally got a caller. The tagger
+#: is an offline batch job, not an agent, and importing `agents` from a
+#: non-agent path would end the property that `agent_enabled=False` imports no
+#: agent code at all — the same reason `GENERATION_SYSTEM` lives here.
+#:
+#: The wording below is unchanged. Only the output contract is appended, because
+#: the original never said what shape to reply in and a caller needs one.
+CLO_TAGGING_SYSTEM = """You tag past-paper questions with the course learning
+outcome each one assesses.
+
+Return the outcome id you are most confident about, and a confidence from 0 to 1.
+If no outcome fits, return null rather than the closest one — a wrongly tagged
+question sends a student to revise the wrong topic, which is worse than an
+untagged one they can still practise.
+
+A tag is a proposal. An instructor or the student can correct it.
+Reply with JSON and nothing else: {"clo_id": "<id or null>", "confidence": <0..1>}
+
+Use only the outcome ids listed in the message. Do not invent an id, and do not
+return an id from any other course — an id you were not given is not a near
+miss, it is a wrong answer, and null is the correct response instead.
+"""
+
+
 def _render_context(result: ContextResult) -> str:
     if result.is_empty:
         return "CONTEXT: (no course material retrieved)"
