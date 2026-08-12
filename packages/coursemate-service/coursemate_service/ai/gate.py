@@ -60,6 +60,20 @@ def evaluate(result: ContextResult) -> GateOutcome:
     score check, because an empty index trivially scores 0.0 and would otherwise
     be reported as "not covered in this course" — telling a student the material
     does not exist when it has simply not been ingested yet.
+
+    **The tie answers.** The comparison is `top_score < threshold`, so a score
+    exactly equal to tau passes the gate. Stated here, beside the comparison,
+    because it used to be stated in `config.py` as `abstain_on_tie = True` — a
+    setting nothing read, whose declared default was the opposite of this line.
+    Written down in one place, next to the code that decides it, it cannot
+    disagree with itself.
+
+    Tau is a *floor a match must reach*, and reaching it is meeting it. The
+    alternative reading — that a tie is too close to call and should abstain —
+    is defensible, but it is a different threshold, not a different tie rule:
+    with a continuous score, "abstain at exactly tau" is indistinguishable from
+    a fractionally higher tau, and tau is the number that was measured (0.35 on
+    n=28). Changing the comparison would silently move a calibrated value.
     """
     if not settings.require_grounding:
         return GateOutcome.PASS

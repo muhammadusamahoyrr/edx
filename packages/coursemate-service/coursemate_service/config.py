@@ -47,9 +47,14 @@ class Settings(BaseSettings):
     #: appears, at 0.40 a correct answer is lost. n=28, one course, one rater —
     #: indicative, and the interval above is still the honest caveat.
     confidence_threshold: float = 0.35
-    #: We tune toward abstention: a confidently wrong answer costs a student more
-    #: than an unnecessary "not covered".
-    abstain_on_tie: bool = True
+    #
+    # `abstain_on_tie` used to sit here, defaulting True with a comment saying
+    # "we tune toward abstention". It was read by nothing, and its stated default
+    # was the opposite of the implemented rule: `ai/gate.py` compares
+    # `top_score < threshold`, so a score exactly AT tau answers. A setting that
+    # contradicts the code is worse than no setting — it is a claim a reader
+    # believes. The tie rule now lives in `gate.evaluate`, next to the comparison
+    # that decides it. Removed 2026-08-13; behaviour unchanged.
 
     # --- claim verification (§8.5) -------------------------------------------
     #: Emit UNSUPPORTED_CLAIM for sentences whose content words are largely
