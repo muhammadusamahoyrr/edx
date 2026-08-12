@@ -13,11 +13,13 @@ from coursemate_contracts.invalidation import InvalidationNotice, InvalidationRe
 from fastapi import APIRouter, Depends
 
 from ..boundary.authz import verifier
-from .deps import service_credential
+from .deps import contract_version_guard, service_credential
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(service_credential)])
+router = APIRouter(
+    dependencies=[Depends(service_credential), Depends(contract_version_guard)]
+)
 
 
 @router.post("")

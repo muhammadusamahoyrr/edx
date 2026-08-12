@@ -14,16 +14,22 @@ distributed protocol.
 from __future__ import annotations
 
 import logging
+
 from coursemate_contracts.ingest import DeleteRequest, IngestAccepted, IngestRequest
 from fastapi import APIRouter, Depends
 
 from ..ingestion.chunking import chunk_block
 from ..knowledge import get_store
-from .deps import service_credential
+from .deps import contract_version_guard, service_credential
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(service_credential)])
+# Both dependencies are router-level so a NEW route on this router inherits
+# them. §3.4 keeps the credential here; §3.5's version lock joins it, because
+# these are the routes another deployment of our own code calls.
+router = APIRouter(
+    dependencies=[Depends(service_credential), Depends(contract_version_guard)]
+)
 
 
 @router.post("/blocks", response_model=IngestAccepted)
@@ -66,7 +72,7 @@ async def ingest_blocks(request: IngestRequest) -> IngestAccepted:
                         "group_tokens": tuple(block.group_tokens),
                     }
                 )
-        except Exception:  # noqa: BLE001
+        except Exception:
             # A block that fails must be *detectable*, never a silent gap
             # (Principle 8) — it is returned so the worker records it.
             log.exception("chunking failed for %s", block.usage_key)

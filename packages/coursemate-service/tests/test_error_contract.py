@@ -41,27 +41,32 @@ TUTOR_JS = (
 #: Declared, deliberately not produced yet, and therefore not required to have a
 #: student-facing message either.
 #:
-#: ``BUDGET_EXCEEDED`` was here until Phase C1 and is the worked example of this
-#: mechanism doing its job: adding the producer in `ai/pipeline.py` turned
+#: **Empty as of 2026-08-13, and that is the mechanism working twice.**
+#: ``BUDGET_EXCEEDED`` left in Phase C1 and ``CONTRACT_MISMATCH`` left when the
+#: version lock was wired: each time, adding a producer turned
 #: `test_the_allowlist_has_not_rotted` red, and clearing that failure forced the
-#: student-facing message to be written in the same change. The list got smaller
-#: by one, which is the only direction it is supposed to move.
+#: rest of the wiring in the same change. The list only ever shrinks.
+INTENTIONALLY_UNPRODUCED: frozenset[ErrorCode] = frozenset()
+
+#: Produced, but on routes a BROWSER never calls — so they are exempt from
+#: needing a student-facing message, and only from that.
 #:
-#: * ``CONTRACT_MISMATCH`` — reserved for a service/platform version skew that
-#:   the deployment cannot currently produce: both ship in the same repo and the
-#:   XBlock pins no version, so there is no skew to detect.
+#: ``CONTRACT_MISMATCH`` is raised by `api/deps.contract_version_guard`, a
+#: router-level dependency on the ingest and invalidation routers. Those carry
+#: the *service* credential and are called by the platform's Celery tasks, never
+#: by a student's page. Writing a notice for it would put a string in the UI that
+#: no student can reach — the exact dead-wiring this file exists to prevent.
 #:
-#: **This list is small on purpose and is asserted in both directions.** An entry
-#: here is a claim that the code has NO producer, and `test_the_allowlist_has_not
-#: _rotted` fails if one appears. So the day Phase C raises `BUDGET_EXCEEDED`,
-#: this test goes red and the fix is to delete the line — which then makes the UI
-#: test demand a message for it. That ordering is the point: a code cannot become
-#: producible without someone being told to write what the student reads.
-INTENTIONALLY_UNPRODUCED: frozenset[ErrorCode] = frozenset(
-    {ErrorCode.CONTRACT_MISMATCH}
-)
+#: The exemption is narrow and is itself checked: `test_a_server_to_server_code
+#: _is_never_produced_on_a_student_path` fails if such a code appears anywhere
+#: the browser can reach, so this cannot become a way to skip writing a message
+#: for a code students actually see.
+SERVER_TO_SERVER_ONLY: frozenset[ErrorCode] = frozenset({ErrorCode.CONTRACT_MISMATCH})
 
 PRODUCIBLE = [c for c in ErrorCode if c not in INTENTIONALLY_UNPRODUCED]
+
+#: Producible AND reachable by a browser. This is the set that must have wording.
+STUDENT_FACING = [c for c in PRODUCIBLE if c not in SERVER_TO_SERVER_ONLY]
 
 
 def service_source() -> str:
@@ -139,7 +144,7 @@ def test_the_allowlist_has_not_rotted():
 # --- end two: produced -> handled in the UI --------------------------------
 
 
-@pytest.mark.parametrize("code", PRODUCIBLE, ids=lambda c: c.value)
+@pytest.mark.parametrize("code", STUDENT_FACING, ids=lambda c: c.value)
 def test_every_producible_code_has_a_student_facing_message(code):
     assert code.value in ui_notice_keys(), (
         f"{code.value} can reach the browser and has no entry in NOTICES, so a "
@@ -164,3 +169,36 @@ def test_the_states_that_are_not_faults_still_have_wording():
     rather than broken."""
     for code in NOT_A_FAULT:
         assert code.value in ui_notice_keys()
+
+
+def test_a_server_to_server_code_is_never_produced_on_a_student_path():
+    """The exemption above must not become a way to skip writing a message.
+
+    A code is exempt from needing UI wording only because no browser can reach
+    the route that raises it. That claim is checked here rather than trusted: if
+    `CONTRACT_MISMATCH` ever appears in the chat, exam-prep or pipeline modules —
+    anything a student's page calls — the exemption is wrong and this fails.
+    """
+    student_reachable = [
+        SERVICE_SRC / "api" / "chat.py",
+        SERVICE_SRC / "api" / "examprep.py",
+        SERVICE_SRC / "api" / "plan.py",
+        SERVICE_SRC / "api" / "packs.py",
+        *(SERVICE_SRC / "ai").glob("*.py"),
+        *(SERVICE_SRC / "agents").glob("*.py"),
+    ]
+    for code in SERVER_TO_SERVER_ONLY:
+        for path in student_reachable:
+            if not path.exists():
+                continue
+            assert f"ErrorCode.{code.name}" not in path.read_text(encoding="utf-8"), (
+                f"{code.value} is exempt from needing UI wording because a browser "
+                f"cannot reach it — but it is produced in {path.name}"
+            )
+
+
+def test_the_unproduced_allowlist_is_empty_and_should_stay_that_way():
+    """Not a style preference. An entry here is a declared code that nothing
+    raises: a promise the type makes that no code path keeps. It reached empty
+    on 2026-08-13 and every future entry should be temporary."""
+    assert INTENTIONALLY_UNPRODUCED == frozenset()

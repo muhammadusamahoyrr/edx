@@ -20,6 +20,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 import jwt
+from coursemate_contracts import CONTRACT_VERSION
 from coursemate_contracts.auth import AUDIENCE_SERVICE, AUDIENCE_STUDENT, StudentClaims
 from coursemate_contracts.errors import ErrorCode
 from fastapi import Depends, Header, HTTPException, status
@@ -330,3 +331,74 @@ async def holding_stream_slot(
             yield chunk
     finally:
         rate_limiter.release_stream(student_id, token)
+
+
+#: The header the platform's server-to-server client stamps on every call.
+#: A header rather than a body field on purpose: the wire contract keeps its
+#: shape, the OpenAPI request schemas are untouched, and a version check does not
+#: become a reason to version the thing it is checking.
+CONTRACT_VERSION_HEADER = "X-CourseMate-Contract-Version"
+
+
+def contract_version_guard(
+    x_coursemate_contract_version: str | None = Header(default=None),
+) -> None:
+    """Refuse a peer that speaks a different wire contract (§3.5).
+
+    Applied as a router-level dependency on the two server-to-server routers —
+    ingest and invalidation — because those are the only routes another
+    *deployment* of our own code calls. Student traffic is excluded deliberately:
+    a browser does not have a contract version, and the student path is already
+    scoped by a signed short-lived token.
+
+    **Absent means unknown, and unknown is allowed.** A platform old enough not
+    to send the header cannot be told apart from one that failed to, and refusing
+    it would make this check break the very upgrade it exists to make safe:
+    whichever side is deployed first would reject the other. It is logged once so
+    the gap is visible without a per-request line. Once both sides send it, a
+    real mismatch is refused.
+
+    Governed by `contract_version_lock`. With the lock off nothing is checked —
+    that is the kill switch working, not the check being broken.
+    """
+    if not settings.contract_version_lock:
+        return
+    if x_coursemate_contract_version is None:
+        _warn_missing_contract_header()
+        return
+
+    try:
+        peer = int(x_coursemate_contract_version)
+    except (TypeError, ValueError):
+        # Unparseable is not "unknown": something is sending this header and
+        # getting it wrong, which is a real disagreement about the wire.
+        raise HTTPException(
+            status_code=409, detail=ErrorCode.CONTRACT_MISMATCH.value
+        ) from None
+
+    if peer != CONTRACT_VERSION:
+        log.error(
+            "contract mismatch: peer speaks v%s, we speak v%s. Deploy both "
+            "packages together.", peer, CONTRACT_VERSION,
+        )
+        raise HTTPException(status_code=409, detail=ErrorCode.CONTRACT_MISMATCH.value)
+
+
+_warned_missing_header = False
+
+
+def _warn_missing_contract_header() -> None:
+    """Once, not per request. A per-request line during a rollout buries the
+    thing that actually matters in the same file."""
+    global _warned_missing_header
+    if not _warned_missing_header:
+        _warned_missing_header = True
+        log.warning(
+            "peer sent no %s header; version skew cannot be detected until both "
+            "sides are deployed", CONTRACT_VERSION_HEADER,
+        )
+
+
+def reset_contract_warning_for_tests() -> None:
+    global _warned_missing_header
+    _warned_missing_header = False
