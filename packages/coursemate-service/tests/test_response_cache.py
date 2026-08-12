@@ -154,11 +154,92 @@ def test_usage_key_is_part_of_the_key_before_anything_reads_it():
     assert a != b
 
 
-def test_first_turn_only():
+# ---------------------------------------------------------- first-turn guard --
+#
+# `not request.history` was the original rule. It passed every test here and was
+# unreachable in production: `tutor.js` pushes the question into `history` before
+# building the request, so the browser never sends an empty one — not even on a
+# student's first question in a block. Live verification found it after a full
+# 50-second generation left `resp:*` at zero.
+#
+# The captured payload below is the fix's real specification. The synthetic cases
+# around it are there to show the normalisation does not overreach.
+
+#: Copied verbatim off the wire during C2 live verification, 2026-08-12, from a
+#: block whose history had just been cleared — a genuine first question. Kept as
+#: raw JSON rather than reconstructed with `Turn(...)`, because reconstructing it
+#: is exactly how the bug survived: a hand-built fixture encodes what the
+#: contract says, and the contract is not what the client sends.
+BROWSER_FIRST_TURN_PAYLOAD = json.loads(
+    '{"question":"What is a cohort?",'
+    '"history":[{"role":"student","content":"What is a cohort?"}],'
+    '"mode":"direct"}'
+)
+
+
+def test_a_truly_empty_history_is_first_turn():
     assert RC.is_cacheable_request(ChatRequest(question="q?")) is True
-    assert RC.is_cacheable_request(
-        ChatRequest(question="q?", history=[Turn(role=Role.STUDENT, content="prior")])
-    ) is False
+
+
+def test_the_verbatim_browser_payload_is_first_turn():
+    """The regression. This exact body produced a 50-second generation and zero
+    cache entries in production."""
+    request = ChatRequest(**BROWSER_FIRST_TURN_PAYLOAD)
+    assert request.history, "precondition: the browser really does send history"
+    assert len(request.history) == 1
+    assert request.history[0].content == request.question
+    assert RC.is_cacheable_request(request) is True
+
+
+def test_the_browser_shape_is_first_turn():
+    assert RC.is_cacheable_request(ChatRequest(
+        question="What is a cohort?",
+        history=[Turn(role=Role.STUDENT, content="What is a cohort?")],
+    )) is True
+
+
+def test_a_genuine_prior_conversation_is_not_first_turn():
+    assert RC.is_cacheable_request(ChatRequest(
+        question="Why would I use one?",
+        history=[Turn(role=Role.STUDENT, content="What is a cohort?")],
+    )) is False
+
+
+def test_the_echo_alongside_a_real_prior_turn_is_not_first_turn():
+    """The overreach case. Stripping the echo must not strip the conversation
+    underneath it — this is a follow-up and its answer depends on the first
+    turn, so caching it would serve one student's conversation to another."""
+    assert RC.is_cacheable_request(ChatRequest(
+        question="Why would I use one?",
+        history=[
+            Turn(role=Role.STUDENT, content="What is a cohort?"),
+            Turn(role=Role.TUTOR, content="A cohort is a group of learners."),
+            Turn(role=Role.STUDENT, content="Why would I use one?"),
+        ],
+    )) is False
+
+
+def test_a_tutor_turn_repeating_the_question_is_not_stripped():
+    """Only a STUDENT turn is the echo. A tutor turn is conversation the model
+    produced, and its presence means this is not a first turn however it reads."""
+    assert RC.is_cacheable_request(ChatRequest(
+        question="What is a cohort?",
+        history=[Turn(role=Role.TUTOR, content="What is a cohort?")],
+    )) is False
+
+
+def test_a_different_question_in_history_is_not_stripped():
+    assert RC.is_cacheable_request(ChatRequest(
+        question="What is a cohort?",
+        history=[Turn(role=Role.STUDENT, content="What is a content group?")],
+    )) is False
+
+
+def test_the_echo_is_matched_after_trimming_whitespace():
+    assert RC.is_cacheable_request(ChatRequest(
+        question="What is a cohort?",
+        history=[Turn(role=Role.STUDENT, content="  What is a cohort?  ")],
+    )) is True
 
 
 # ======================================================== store and retrieve ==
@@ -294,6 +375,58 @@ async def test_the_second_identical_question_is_served_from_cache(redis, monkeyp
     assert [f.citation.usage_key for f in second if f.type == FrameType.CITATION] == \
            [f.citation.usage_key for f in first if f.type == FrameType.CITATION]
     assert second[-1].type == FrameType.DONE
+
+
+@pytest.mark.asyncio
+async def test_the_browser_payload_reaches_the_cache_end_to_end(redis, monkeypatch):
+    """The whole defect, end to end, driven by the body captured off the wire.
+
+    Before the fix this generated twice and stored nothing — which is precisely
+    what production did. Asserting on the pipeline rather than only on
+    `is_cacheable_request` is deliberate: the unit-level guard passed for the
+    broken version too, because it was called with a fixture nobody had checked
+    against a real client.
+    """
+    calls = _install(monkeypatch)
+    ctx = _Ctx()
+    request = ChatRequest(**BROWSER_FIRST_TURN_PAYLOAD)
+
+    first = await _ask(ctx, request, _claims())
+    assert redis.kv, "the browser's first turn was not cached"
+
+    second = await _ask(ctx, request, _claims())
+
+    assert len(calls) == 1, "the provider was called again for a browser first turn"
+
+    def text(fs):
+        return "".join(f.text or "" for f in fs if f.type == FrameType.TOKEN)
+
+    assert text(second) == text(first)
+    assert second[-1].type == FrameType.DONE
+
+
+@pytest.mark.asyncio
+async def test_a_browser_follow_up_still_misses(redis, monkeypatch):
+    """The other side of the same change. The browser sends the echo on EVERY
+    turn, so if the normalisation were positional rather than content-matched,
+    every follow-up would look like a first turn and the cache would start
+    serving conversations."""
+    calls = _install(monkeypatch)
+    ctx = _Ctx()
+    follow_up = ChatRequest(
+        question="Why would I use one?",
+        history=[
+            Turn(role=Role.STUDENT, content="What is a cohort?"),
+            Turn(role=Role.TUTOR, content="A cohort is a group of learners."),
+            Turn(role=Role.STUDENT, content="Why would I use one?"),
+        ],
+    )
+
+    await _ask(ctx, follow_up, _claims())
+    await _ask(ctx, follow_up, _claims())
+
+    assert len(calls) == 2, "a follow-up was served from the first-turn cache"
+    assert redis.kv == {}, "a follow-up was written to the first-turn cache"
 
 
 @pytest.mark.asyncio

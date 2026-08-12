@@ -39,7 +39,7 @@ import json
 import logging
 
 from coursemate_contracts.auth import StudentClaims
-from coursemate_contracts.chat import ChatRequest
+from coursemate_contracts.chat import ChatRequest, Role
 
 from . import shared_state
 from .config import settings
@@ -55,8 +55,39 @@ PAYLOAD_VERSION = 1
 
 
 def is_cacheable_request(request: ChatRequest) -> bool:
-    """First turn only. Everything else in this module assumes this returned True."""
-    return not request.history
+    """First turn only — after discounting the question's own echo.
+
+    **`not request.history` was wrong in production and passed every test.**
+    `tutor.js` does `history.push({role, content: question})` *before* building
+    the request, so the wire payload on a student's very first question in a
+    block is `history=[{student: "<the question>"}]`, not `[]`. Live
+    verification on a freshly cleared block confirmed it: a full 50-second
+    generation, and `resp:*` keys still zero. The cache was unreachable from the
+    only client that exists.
+
+    This is the second time that push has broken something. B1/B2 shipped as a
+    no-op for the same reason and was fixed with `last_student_turn(exclude=…)`;
+    this applies the same normalisation at the other end of the pipeline, which
+    is why it strips by role-and-content rather than by position.
+
+    A trailing student turn equal to the question is the echo, so it is dropped.
+    Whatever remains is real conversation:
+
+        []                                   -> first turn
+        [student "Q"]            (browser)   -> first turn
+        [student "P"]                        -> NOT first turn
+        [student "P", tutor "A", student "Q"] -> NOT first turn
+
+    The rule is safe because it agrees with what retrieval already does: with
+    nothing left after the echo, `retrieval_query` finds no previous turn and
+    searches the bare question, so the answer depends on the question alone —
+    which is the property the cache key assumes.
+    """
+    question = request.question.strip()
+    turns = list(request.history)
+    while turns and turns[-1].role == Role.STUDENT and turns[-1].content.strip() == question:
+        turns.pop()
+    return not turns
 
 
 def cache_key(request: ChatRequest, claims: StudentClaims, index_version: str) -> str:
