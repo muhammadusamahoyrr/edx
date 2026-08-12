@@ -10,6 +10,13 @@ that a naive implementation would collapse into one generic error:
 
 They are typed here, in the shared contract, so neither side can render them
 identically by accident.
+
+**Two of these are declared and not yet produced** — `BUDGET_EXCEEDED` and
+`CONTRACT_MISMATCH`, both marked below. That is deliberate and it is enforced:
+`tests/test_error_contract.py` holds the pair in an allowlist and fails if either
+gains a producer while the browser still has no wording for it, and equally if
+any other code loses its producer or its message. A declared code with neither
+end wired is a promise the type makes that nothing keeps.
 """
 
 from __future__ import annotations
@@ -27,11 +34,16 @@ class ErrorCode(StrEnum):
     # --- states that are faults, reported honestly ----------------------------
     UNAVAILABLE = "unavailable"
     RATE_LIMITED = "rate_limited"
+    #: NOT PRODUCED. Spend is tracked but nothing refuses on it, so there is no
+    #: ceiling to exceed. Phase C owns the producer, and must add the wording.
     BUDGET_EXCEEDED = "budget_exceeded"
 
     # --- states that mean someone is doing something wrong --------------------
     UNAUTHENTICATED = "unauthenticated"
     NOT_ENROLLED = "not_enrolled"
+    #: NOT PRODUCED. Reserved for service/platform version skew, which this
+    #: deployment cannot have: both ship from one repo and the XBlock pins no
+    #: service version, so there is nothing to compare and disagree about.
     CONTRACT_MISMATCH = "contract_mismatch"
 
 

@@ -32,6 +32,11 @@ function CourseMateTutor(runtime, element, initArgs) {
     unavailable: "The tutor is unavailable right now.",
     rate_limited: "Too many questions just now — give it a moment.",
     not_enrolled: "You don't have access to this course's tutor.",
+    /* The only notice whose fix is not "wait and retry". Retrying is exactly
+     * what a student does when told "Something went wrong", and it cannot work
+     * — the session is gone, so every retry mints nothing and fails the same
+     * way. Say the thing that ends the loop. */
+    unauthenticated: "Your session has expired — reload the page and sign in again.",
     truncated: "That answer was cut short. Try asking for a smaller piece of it."
   };
 
