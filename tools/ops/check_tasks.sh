@@ -25,9 +25,22 @@ for c in tutor_local-cms-worker-1 tutor_local-lms-worker-1; do
   echo "--- $c ---"
   echo "  started: $(docker inspect "$c" --format '{{.State.StartedAt}}')"
 
-  BANNER=$(docker logs "$c" 2>&1 | grep -oE "coursemate_platform\.tasks\.[a-z_]+\.[a-z_]+" | sort -u || true)
+  # Waited for, not sampled once. The banner is printed a few seconds AFTER the
+  # container reports running, so reading it immediately after a recreate finds
+  # nothing and reports the missing-dist-info failure — which is a lie, and
+  # exactly the "check that reports failure on a healthy system" this file's own
+  # docstring warns about. Observed on 2026-08-11: adopt_new_image.sh called this
+  # 0 seconds after `tutor local start` and printed FAILED while both workers had
+  # in fact registered all six tasks.
+  BANNER=""
+  for _ in $(seq 1 30); do
+    BANNER=$(docker logs "$c" 2>&1 | grep -oE "coursemate_platform\.tasks\.[a-z_]+\.[a-z_]+" | sort -u || true)
+    [ -n "$BANNER" ] && break
+    sleep 2
+  done
+
   if [ -z "$BANNER" ]; then
-    echo "  NO coursemate tasks in the startup banner."
+    echo "  NO coursemate tasks in the startup banner after 60s."
     echo "  Most likely: no dist-info in this container, so the app never reached"
     echo "  INSTALLED_APPS and Celery autodiscovered nothing. Check check_install.sh."
     STATUS=1
