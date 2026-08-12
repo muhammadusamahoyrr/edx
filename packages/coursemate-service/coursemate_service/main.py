@@ -12,14 +12,18 @@ from __future__ import annotations
 import logging
 
 from coursemate_contracts import CONTRACT_VERSION
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Response, status
+from fastapi.responses import PlainTextResponse
 
+from . import metrics, shared_state
 from .api.chat import router as chat_router
+from .api.deps import service_credential
 from .api.examprep import router as examprep_router
 from .api.ingest import router as ingest_router
 from .api.invalidation import router as invalidation_router
 from .api.packs import router as packs_router
 from .config import settings
+from .knowledge import get_store
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -70,7 +74,76 @@ def health() -> dict:
 
 
 @app.get("/coursemate/health/ready")
-def ready() -> dict:
-    """Readiness. Distinct from liveness because an empty index is not a fault —
-    it is the `preparing` state (§5.1), and the difference matters to a student."""
-    return {"status": "ready"}
+def ready(response: Response) -> dict:
+    """Readiness: can this instance actually serve a student request?
+
+    Distinct from liveness, and distinct in a way that matters: an **empty index
+    is not a fault** — it is the `preparing` state (§5.1) — but an index that
+    cannot be *opened* is, because every answer starts with a retrieval.
+
+    Until 2026-08-13 this returned `{"status": "ready"}` unconditionally. A
+    readiness probe that cannot fail is a liveness check with a misleading name:
+    it would have reported ready throughout the D2 verification, while the
+    service was up and unable to answer anything.
+
+    What is checked, and what is deliberately not:
+
+    * **The index store** — one cheap query that proves the file opens and the
+      schema is there. Failing this means no question can be answered, so it is
+      the one hard gate.
+    * **Redis** — reported, never gating. `shared_state` documents unreachable
+      Redis as a supported degraded mode: the limiter and authz cache fall back
+      to per-process state. Refusing traffic because an optimisation is down
+      would turn that documented degradation into an outage.
+    * **The model provider** — not probed at all. A provider call per readiness
+      check would cost a generation every few seconds, and provider failure is
+      already a per-request state the student is told about (`unavailable`).
+    * **The LMS** — not probed. The service legitimately starts before it, and
+      enrollment is re-derived per request at the boundary anyway.
+
+    Returns 503 when not ready, so an orchestrator can act on it rather than
+    having to parse the body.
+    """
+    checks: dict[str, str] = {}
+
+    try:
+        get_store().indexed_offerings()
+        checks["index"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        log.error("readiness: index store unavailable: %s", type(exc).__name__)
+        checks["index"] = "unavailable"
+
+    # Reported for operators, never gating — see above.
+    try:
+        client = shared_state.get_redis()
+        checks["redis"] = "ok" if client is not None and client.ping() else "degraded"
+    except Exception:  # noqa: BLE001
+        checks["redis"] = "degraded"
+
+    ready_now = checks["index"] == "ok"
+    if not ready_now:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+    return {"status": "ready" if ready_now else "not_ready", "checks": checks}
+
+
+@app.get(
+    "/coursemate/metrics",
+    response_class=PlainTextResponse,
+    dependencies=[Depends(service_credential)],
+    include_in_schema=False,
+)
+def prometheus_metrics() -> str:
+    """Six counters, Prometheus text format.
+
+    **Behind the service credential**, not open like `/health`. The numbers carry
+    no student data — no identifiers, no question text — but `/coursemate/*` is
+    reachable same-origin by any logged-in browser, and request volume is still a
+    signal about an institution. A scraper sends the credential it already needs
+    for ingest.
+
+    `include_in_schema=False` because this is an operational surface, not part of
+    the API anyone integrates against; publishing it in the spec would invite it
+    to be treated as one.
+    """
+    return metrics.render()

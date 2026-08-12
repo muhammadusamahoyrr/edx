@@ -21,7 +21,7 @@ from coursemate_contracts.auth import StudentClaims
 from coursemate_contracts.chat import ChatRequest, Citation, FrameType, StreamFrame
 from coursemate_contracts.errors import ErrorCode
 
-from .. import response_cache
+from .. import metrics, response_cache
 from ..budget import estimate_tokens, ledger
 from ..config import settings
 from . import gate
@@ -59,6 +59,8 @@ class AnswerPipeline:
         # is built from the conversation as well. `build_messages` below still
         # gets `request.question`: the model must see what was actually asked,
         # and only the retriever needs the reconstruction.
+        metrics.increment("chat_requests_total")
+
         query = retrieval_query(request.question, request.history, request.usage_key)
         try:
             context = await self.context.fetch(query, claims)
@@ -89,9 +91,11 @@ class AnswerPipeline:
         if response_cache.is_cacheable_request(request) and context.index_version:
             cache_key = response_cache.cache_key(request, claims, context.index_version)
             if (hit := response_cache.read(cache_key)) is not None:
+                metrics.increment("cache_hits_total")
                 async for frame in _replay(hit):
                     yield frame
                 return
+            metrics.increment("cache_misses_total")
 
         # --- 2. confidence gate, BEFORE generating a token (§8.5) ----------
         # Free, and it is why abstention costs no latency: nothing streams that
@@ -109,6 +113,8 @@ class AnswerPipeline:
             # is a statement that the index is about to change, and caching a
             # claim whose whole content is "this is temporary" is the one entry
             # guaranteed to be wrong before its TTL expires.
+            if code is ErrorCode.ABSTAINED:
+                metrics.increment("abstentions_total")
             if cache_key is not None and code is ErrorCode.ABSTAINED:
                 response_cache.write(
                     cache_key, {"kind": "abstained"}, context.chunks
@@ -128,6 +134,7 @@ class AnswerPipeline:
         # has no field that could name a different student, so a request cannot
         # ask to be billed to someone else — it can only be refused (invariant 9).
         if ledger.would_exceed(claims.offering_id, claims.sub):
+            metrics.increment("budget_refusals_total")
             yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.BUDGET_EXCEEDED)
             return
 
@@ -228,6 +235,7 @@ class AnswerPipeline:
 
         except asyncio.TimeoutError:
             log.warning("generation timed out after %ss", settings.model_timeout_seconds)
+            metrics.increment("provider_failures_total")
             # A timeout after partial output still spent those tokens. The
             # student sees UNAVAILABLE — unchanged — but the bill is real and
             # not charging it would make a timing-out provider the cheapest way
@@ -240,6 +248,7 @@ class AnswerPipeline:
             # providers down means the tutor is unavailable and says so, rather
             # than fabricating an answer (§8.4).
             log.exception("generation failed: %s", type(exc).__name__)
+            metrics.increment("provider_failures_total")
             _bill()
             yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.UNAVAILABLE)
             return
