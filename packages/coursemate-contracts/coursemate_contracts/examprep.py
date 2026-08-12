@@ -60,9 +60,23 @@ class QuestionRecord(BaseModel):
     #: AI-proposed, correctable by instructor or student (§7.5).
     clo_id: str | None = None
 
+    #: How sure the EXTRACTOR was that this is a whole, correctly-bounded
+    #: question. About the parse, never about the question's quality.
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     extraction_method: ExtractionMethod | None = None
-    #: Low-confidence items are shown as such rather than quietly trusted.
+
+    #: How sure the offline tagger was about `clo_id`. A SEPARATE field, because
+    #: overwriting `confidence` would silently destroy the extractor's signal —
+    #: two different questions ("did we read it right?" and "did we file it
+    #: right?") that a single number cannot answer.
+    #:
+    #: `None` when untagged, which includes every question the tagger refused.
+    clo_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    #: Shown as uncertain for ANY reason — a shaky parse or a shaky tag. One
+    #: flag because the consumer's question is "should I trust this item?", and
+    #: the two confidences above are there when someone needs to know which half
+    #: was weak.
     low_confidence_flag: bool = False
 
 
@@ -118,6 +132,19 @@ class ExamPrepPack(BaseModel):
     tenant: str
     clos: list[CLO] = Field(default_factory=list)
     questions: list[QuestionRecord] = Field(default_factory=list)
+
+    #: sha256 of the SOURCE DOCUMENT this pack was extracted from.
+    #:
+    #: Of the document bytes, not of the pack: hashing the pack would change
+    #: whenever the parser improved, so re-running a better extractor over the
+    #: same paper would look like a new document and silently double the bank.
+    #: Hashing the bytes answers the question actually being asked — have we
+    #: already imported this paper?
+    #:
+    #: `None` for a hand-written pack, which is the only kind that existed
+    #: before extraction. An absent hash cannot be checked for duplication, and
+    #: the loader says so rather than treating "unknown" as "new".
+    content_sha256: str | None = Field(default=None, min_length=64, max_length=64)
 
 
 class StudyPlanItem(BaseModel):
@@ -221,6 +248,41 @@ class PracticeRequest(BaseModel):
     #: band. Not defaulted to `easy` — an absent preference is not a preference,
     #: and guessing one would silently narrow what the student is offered.
     difficulty_band: Literal["easy", "medium", "hard"] | None = None
+
+
+class StudyPlanRequest(BaseModel):
+    """Browser -> service, for one budgeted study plan.
+
+    Separate from `ExamPrepRequest` rather than a field added to it. That request
+    is free text answered by prose (or by the agent); this one is a number
+    answered by arithmetic, and the deterministic planner needs an integer it can
+    rely on. Widening `ExamPrepRequest` would have made `marks_budget` optional on
+    a route that cannot use it, and optional-and-ignored is how a field becomes a
+    lie.
+
+    Same absence as every other request contract here, and it is the contract:
+    no `student_id`, no `offering_id`. Scope comes from the verified JWT, so a
+    forged payload cannot widen it — `plan_for_offering` takes no `offering_id`
+    parameter at all, which is the same rule enforced one level down.
+    """
+
+    #: §7.4's unit. A two-hour session is 100 marks, not 8 questions — "8
+    #: questions" means nothing until you know whether they are 2-mark or 25-mark
+    #: questions.
+    #:
+    #: Bounded at both ends. Zero or negative is not a session, and the planner
+    #: already refuses it; rejecting it here means a caller learns it from a 422
+    #: naming the field rather than from an empty plan they have to interpret.
+    #: The ceiling is what stops an absurd budget turning into a query for every
+    #: question in the bank — a real exam is well under 500 marks.
+    marks_budget: int = Field(ge=1, le=500)
+
+    #: The memory layer, carried from platform-owned `Scope.user_state` (§3.1),
+    #: exactly as `ExamPrepRequest` carries it. `None` means the browser sent
+    #: none, which is a legitimate state — a new student — and shapes the plan as
+    #: "nothing practised yet", never as an error. A snapshot minted for another
+    #: offering is ignored by the planner, not trusted.
+    mastery: MasterySnapshot | None = None
 
 
 class CLOOption(BaseModel):
