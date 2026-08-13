@@ -174,12 +174,35 @@ class CourseMateTutorXBlock(XBlock):
             "truncated": len(rows) > MASTERY_WINDOW_CLOS,
         }
 
+    def _index_status(self) -> dict:
+        """What the Studio panel says about the index, read from stored state.
+
+        Read-only on purpose: `CourseIndexState.for_course` would `get_or_create`,
+        and rendering a config panel must not write a bootstrap-progress row for a
+        course nobody has indexed. A missing row is a real answer — "never" — not
+        a row to be conjured.
+        """
+        from ..models import CourseIndexState
+
+        state = CourseIndexState.objects.filter(course_id=self._course_id()).first()
+        if state is None:
+            return {"last_indexed": "never", "block_count": 0}
+        return {
+            "last_indexed": state.last_indexed_display(),
+            "block_count": state.block_count,
+        }
+
     def studio_view(self, context=None) -> Fragment:
         """Config, plus the "Index this course" button.
 
         That button is the normal path for bootstrap (§5.1) and it lives here
         deliberately: it puts the action in front of the person who just added the
         block, in a surface that already exists, needing no new MFE.
+
+        The status line is filled from stored state at render time. It used to be
+        hardcoded "never · 0 blocks" in the template, so a course indexed at any
+        point before this page loaded still reported that it had never been
+        indexed — the panel was accurate about a variable it never read.
         """
         fragment = Fragment(
             loader.render_django_template(
@@ -188,6 +211,7 @@ class CourseMateTutorXBlock(XBlock):
                     "display_name": self.display_name,
                     "enabled": self.enabled,
                     "mode": self.mode,
+                    **self._index_status(),
                 },
             )
         )

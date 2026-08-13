@@ -12,6 +12,10 @@
        person who just added the block. Without an index, the tutor answers
        "not covered in this course" for every question. -->
   <button class="cm-index" type="button">Index this course for the tutor</button>
-  <p class="cm-index-status">Last indexed: <span class="cm-last-indexed">never</span>
-     &middot; <span class="cm-block-count">0</span> blocks</p>
+  <!-- Bound to stored state, not hardcoded. These two spans read "never" and "0"
+       literally until 2026-08-13, which reported a fully indexed course as never
+       indexed until someone clicked the button again. studio.js overwrites both
+       after a click; this is what they say on load. -->
+  <p class="cm-index-status">Last indexed: <span class="cm-last-indexed">{{ last_indexed }}</span>
+     &middot; <span class="cm-block-count">{{ block_count }}</span> blocks</p>
 </div>
