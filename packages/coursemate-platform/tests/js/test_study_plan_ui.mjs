@@ -249,8 +249,8 @@ const tests = {
   async "renders allocated marks per outcome"() {
     const { root } = await drive();
     const clos = findAll(find(root, ".cm-plan-card"), ".cm-plan-clo");
-    assert.match(clos[0].textContent, /CLO-2 — 15 marks/);
-    assert.match(clos[1].textContent, /CLO-1 — 5 marks/);
+    assert.match(clos[0].textContent, /CLO-2 · 15 marks/);
+    assert.match(clos[1].textContent, /CLO-1 · 5 marks/);
   },
 
   async "renders the question ids"() {
@@ -261,11 +261,19 @@ const tests = {
     assert.match(qs[1].textContent, /oex101_final_2024\.pdf#4/);
   },
 
-  async "renders the rationale"() {
+  /* The rationale opens with the same mastery clause the badge now shows, so
+   * the clause is lifted into the badge and the remainder stays as the
+   * sentence. Both halves are still on screen — this asserts the information
+   * survived the split, not just that something rendered. */
+  async "renders the rationale, with mastery lifted into a badge"() {
     const { root } = await drive();
     const card = find(root, ".cm-plan-card");
-    assert.match(card.text, /not practised yet; 15 of 15 marks allocated/);
+    assert.match(find(card, ".cm-plan-mastery").textContent, /not practised yet/);
+    assert.match(card.text, /15 of 15 marks allocated/);
     assert.match(card.text, /bank had nothing smaller that fit/);
+    // Said once, not twice.
+    assert.equal((card.text.match(/not practised yet/g) || []).length, 2,
+      "one badge per outcome, and no leftover copy in the rationale");
   },
 
   async "reports the total planned marks against what was asked for"() {
@@ -444,7 +452,10 @@ CourseMateTutor;`, { filename: JS });
   async "the html template carries the budget control with the contract bounds"() {
     const html = readFileSync(
       resolve(here, "../../coursemate_platform/xblock/static/html/student_view.html"), "utf8");
-    assert.match(html, /class="cm-budget-input"/);
+    // Class-token match, not the whole attribute: the control also carries the
+    // shared `cm-field` styling class, and pinning the exact attribute string
+    // made this fail for a purely visual change.
+    assert.match(html, /class="[^"]*\bcm-budget-input\b[^"]*"/);
     assert.match(html, /min="1"/);
     assert.match(html, /max="500"/);
   },

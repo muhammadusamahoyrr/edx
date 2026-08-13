@@ -203,9 +203,13 @@ const tests = {
     ]);
     const prov = find(find(root, ".cm-practice-card"), ".cm-provenance");
     assert.ok(prov, "no provenance line");
-    assert.match(prov.text, /Derived from:/);
+    // A label followed by one chip per source, rather than a comma-joined
+    // sentence: the sources are separate facts and each is its own link.
+    assert.match(find(prov, ".cm-sources-label").textContent, /Derived from/);
     assert.match(prov.text, /final-2024\.pdf/);
     assert.match(prov.text, /Deadlock avoidance/);
+    assert.equal(findAll(prov, ".cm-chip-link").length, 2,
+      "each source should be its own chip");
   },
 
   async "says so when a question arrives with no citation"() {

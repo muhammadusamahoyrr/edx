@@ -1,75 +1,114 @@
 <div class="coursemate-tutor" data-enabled="{{ enabled }}">
-  <div class="cm-header">{{ display_name }}</div>
+  <div class="cm-appbar">
+    <div class="cm-appbar-top">
+      <div class="cm-brand">
+        <span class="cm-avatar" aria-hidden="true">CT</span>
+        <span class="cm-header">{{ display_name }}</span>
+      </div>
 
-  {% if exam_prep_enabled %}
-  <!-- Tabs, not a second block. The exam-prep planner needs this student's
-       mastery and this offering's scope, both of which the tutor block already
-       has — a separate block would mint a second token and keep a second copy of
-       the same state. -->
-  <div class="cm-tabs" role="tablist">
-    <button class="cm-tab is-active" role="tab" data-panel="chat"
-            aria-selected="true">Ask</button>
-    <button class="cm-tab" role="tab" data-panel="prep"
-            aria-selected="false">Exam prep</button>
+      {% if exam_prep_enabled %}
+      <!-- Tabs, not a second block. The exam-prep planner needs this student's
+           mastery and this offering's scope, both of which the tutor block already
+           has — a separate block would mint a second token and keep a second copy of
+           the same state. -->
+      <div class="cm-tabs" role="tablist">
+        <button class="cm-tab is-active" role="tab" data-panel="chat"
+                aria-selected="true">Ask</button>
+        <button class="cm-tab" role="tab" data-panel="prep"
+                aria-selected="false">Exam prep</button>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- One sub-line per tab, both living in the bar so the panel below starts
+         with content rather than with a status message. -->
+    <p class="cm-subline cm-chat-subline">Answers are grounded in your course
+       materials and cite where they come from.</p>
+    {% if exam_prep_enabled %}
+    <!-- Filled from /examprep/status before anything is enabled, so the panel
+         can say WHY it is empty rather than offering a control that does
+         nothing (§5.1). -->
+    <p class="cm-subline cm-prep-status" aria-live="polite" hidden>Checking the question bank…</p>
+    {% endif %}
   </div>
-  {% endif %}
 
   <div class="cm-panel" data-panel="chat">
     <div class="cm-log" role="log" aria-live="polite"></div>
     <div class="cm-notice" hidden></div>
-    <form class="cm-form">
-      <input class="cm-input" type="text" autocomplete="off"
-             placeholder="Ask about this lesson…" aria-label="Ask the tutor" />
-      <button class="cm-send" type="submit">Ask</button>
-    </form>
-    <p class="cm-disclaimer">AI-generated. Answers cite the lesson they come from.</p>
+    <div class="cm-composer">
+      <form class="cm-form">
+        <input class="cm-input" type="text" autocomplete="off"
+               placeholder="Ask about this lesson…" aria-label="Ask the tutor" />
+        <button class="cm-send cm-btn cm-btn-primary" type="submit">Ask</button>
+      </form>
+      <p class="cm-disclaimer">Tutoring answers are AI-generated and cite course
+        materials.{% if exam_prep_enabled %} To practise with real questions,
+        switch to Exam prep.{% endif %}</p>
+    </div>
   </div>
 
   {% if exam_prep_enabled %}
   <div class="cm-panel" data-panel="prep" hidden>
-    <!-- Filled from /examprep/status before anything is enabled, so the panel
-         can say WHY it is empty rather than offering a control that does
-         nothing (§5.1). -->
-    <div class="cm-prep-status" aria-live="polite">Checking the question bank…</div>
-    <div class="cm-prep-log" role="log" aria-live="polite"></div>
     <div class="cm-prep-notice" hidden></div>
-    <form class="cm-prep-form" hidden>
-      <input class="cm-prep-input" type="text" autocomplete="off"
-             placeholder="What should I revise?" aria-label="Ask for a study plan" />
-      <button class="cm-prep-send" type="submit">Plan</button>
-    </form>
 
-    <!-- Budgeted study plan (§7.4). A third form, and a third request shape:
-         the one above is free text answered by prose, this one is a number
-         answered by arithmetic. `min`/`max` mirror StudyPlanRequest's own
-         bounds so the browser refuses what the contract would reject anyway —
-         a 422 the student never sees is better than one they do. -->
-    <form class="cm-budget-form" hidden>
-      <label class="cm-practice-label" for="cm-budget">Session length</label>
-      <input class="cm-budget-input" id="cm-budget" type="number"
-             min="1" max="500" step="1" value="100"
-             aria-label="Marks budget for this revision session" />
-      <span class="cm-budget-unit">marks</span>
-      <button class="cm-budget-send" type="submit">Build a study plan</button>
-    </form>
+    <!-- Each control sits in the card that holds its output. The previous layout
+         put all three forms in one rail at the bottom feeding one shared log,
+         and which control produced which block was left to be inferred. -->
+    <section class="cm-card">
+      <h3 class="cm-card-title">Practice a question</h3>
+      <form class="cm-practice-form" hidden>
+        <label class="cm-sr-only" for="cm-clo">Learning outcome</label>
+        <select class="cm-practice-clo cm-field" id="cm-clo"></select>
 
-    <!-- Practice generation. Separate form from the plan above because they are
-         different requests: a plan is free text, a practice question is a
-         structured pick of outcome + level (PracticeRequest). -->
-    <form class="cm-practice-form" hidden>
-      <label class="cm-practice-label" for="cm-clo">Outcome</label>
-      <select class="cm-practice-clo" id="cm-clo" aria-label="Learning outcome"></select>
+        <div class="cm-practice-row">
+          <label class="cm-sr-only" for="cm-band">Difficulty</label>
+          <select class="cm-practice-band cm-field" id="cm-band">
+            <option value="">Level · Any</option>
+            <option value="easy">Level · Easy</option>
+            <option value="medium">Level · Medium</option>
+            <option value="hard">Level · Hard</option>
+          </select>
+          <button class="cm-practice-send cm-btn cm-btn-primary" type="submit">
+            Generate a question →</button>
+        </div>
+      </form>
+    </section>
 
-      <label class="cm-practice-label" for="cm-band">Level</label>
-      <select class="cm-practice-band" id="cm-band" aria-label="Difficulty">
-        <option value="">Any</option>
-        <option value="easy">Easy</option>
-        <option value="medium">Medium</option>
-        <option value="hard">Hard</option>
-      </select>
+    <!-- One question at a time, replaced rather than appended: a revision tool
+         is for the question in front of you, and a growing stack pushed the
+         self-check controls below the fold of a pane most people never
+         noticed scrolled. -->
+    <div class="cm-practice-slot"></div>
 
-      <button class="cm-practice-send" type="submit">Generate a question</button>
-    </form>
+    <section class="cm-card">
+      <div class="cm-card-head">
+        <h3 class="cm-card-title">Study plan</h3>
+        <!-- §7.4. `min`/`max` mirror StudyPlanRequest's own bounds so the
+             browser refuses what the contract would reject anyway — a 422 the
+             student never sees is better than one they do. -->
+        <form class="cm-budget-form" hidden>
+          <label class="cm-sr-only" for="cm-budget">Session length in marks</label>
+          <input class="cm-budget-input cm-field" id="cm-budget" type="number"
+                 min="1" max="500" step="1" value="100" />
+          <span class="cm-budget-unit">marks</span>
+          <button class="cm-budget-send cm-btn cm-btn-ghost" type="submit">Build</button>
+        </form>
+      </div>
+
+      <div class="cm-plan-slot"></div>
+
+      <!-- The prose planner. A different request from the budgeted plan above —
+           that one is a number answered by arithmetic, this is free text
+           answered by prose — so it keeps its own form and its own output. -->
+      <form class="cm-prep-form" hidden>
+        <label class="cm-sr-only" for="cm-prep-input">Ask for a study plan</label>
+        <input class="cm-prep-input cm-field" id="cm-prep-input" type="text"
+               autocomplete="off" placeholder="What should I revise?" />
+        <button class="cm-prep-send cm-btn cm-btn-ghost" type="submit">Plan</button>
+      </form>
+      <div class="cm-prep-log" role="log" aria-live="polite"></div>
+    </section>
+
     <p class="cm-disclaimer">
       Past-paper questions are quoted as printed and cite their source paper.
       Anything AI-generated is labelled as such.

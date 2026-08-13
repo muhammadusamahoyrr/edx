@@ -61,6 +61,15 @@ function CourseMateTutor(runtime, element, initArgs) {
     return node;
   }
 
+  /* Empty a container without innerHTML (§10.6 forbids it for anything derived
+   * from document text, and using two mechanisms invites the wrong one). Reads
+   * `children` from the end so the live collection cannot shift underneath. */
+  function clearNode(node) {
+    while (node.children.length) {
+      node.removeChild(node.children[node.children.length - 1]);
+    }
+  }
+
   function showNotice(code) {
     notice.textContent = NOTICES[code] || "Something went wrong.";
     notice.className = "cm-notice " + code;
@@ -84,34 +93,65 @@ function CourseMateTutor(runtime, element, initArgs) {
     }
   }
 
-  /* One place that builds a citation line, used by both the live stream and the
+  /* One place that builds a citation chip, used by both the live stream and the
    * reloaded history — so a persisted answer looks identical to a fresh one. */
   function citationNode(citation) {
-    var wrap = el("div", "cm-citation");
+    var wrap = el("span", "cm-citation");
     var link = el("a", null, citation.display_name || citation.usage_key);
     link.href = safeHref(citation.url);
-    wrap.appendChild(document.createTextNode("Source: "));
     wrap.appendChild(link);
     return wrap;
   }
 
+  /* Citations collect into ONE labelled row rather than a stack of "Source:"
+   * lines. Created on first use, so an answer with no citations shows no empty
+   * row — an answer that cited nothing must not look like one that cited. */
+  function sourcesRow(container) {
+    var row = container.querySelector(".cm-sources");
+    if (!row) {
+      row = el("div", "cm-sources");
+      row.appendChild(el("span", "cm-sources-label", "Sources"));
+      container.appendChild(row);
+    }
+    return row;
+  }
+
+  /* A turn is an avatar plus a bubble, and the streamed text goes in a child of
+   * the bubble rather than the bubble itself. That is load-bearing: the token
+   * handler assigns `textContent` on every frame, and assigning it to a node
+   * that also holds citations would delete them on the next token. */
+  function turnNode(role, content) {
+    var node = el("div", "cm-turn " + role);
+    if (role === "tutor") { node.appendChild(el("span", "cm-avatar-sm", "CT")); }
+    var bubble = el("div", "cm-bubble");
+    bubble.appendChild(el("div", "cm-answer", content || ""));
+    node.appendChild(bubble);
+    return node;
+  }
+
+  function bubbleOf(node) { return node.querySelector(".cm-bubble") || node; }
+  function answerOf(node) { return node.querySelector(".cm-answer") || node; }
+
   function renderHistory() {
-    while (log.firstChild) { log.removeChild(log.firstChild); }
+    clearNode(log);
     history.forEach(function (turn) {
-      var node = el("div", "cm-turn " + turn.role, turn.content);
+      var node = turnNode(turn.role, turn.content);
+      var bubble = bubbleOf(node);
       /* Marks first, so a doubtful sentence is flagged above its sources rather
        * than below them. Persisted with the turn since 2026-08-12: before that a
        * refresh dropped the warning and kept the sentence, so a reloaded answer
        * read as MORE trustworthy than the live one. `|| []` is the
        * compatibility path — turns written earlier have no such key. */
       (turn.unsupported || []).forEach(function (text) {
-        node.appendChild(el("div", "cm-unsupported", text));
+        bubble.appendChild(el("div", "cm-unsupported", text));
       });
       /* Citations are persisted with the turn, so a reloaded answer keeps its
        * sources. Before this they existed only during the live stream, and a
        * refresh silently stripped them — which undercuts the whole point of a
        * tutor that cites. */
-      (turn.citations || []).forEach(function (c) { node.appendChild(citationNode(c)); });
+      (turn.citations || []).forEach(function (c) {
+        sourcesRow(bubble).appendChild(citationNode(c));
+      });
       log.appendChild(node);
     });
     log.scrollTop = log.scrollHeight;
@@ -199,7 +239,9 @@ function CourseMateTutor(runtime, element, initArgs) {
     history.push({ role: "student", content: question });
     renderHistory();
 
-    var answerNode = el("div", "cm-turn tutor", "");
+    var answerNode = turnNode("tutor", "");
+    var answerBubble = bubbleOf(answerNode);
+    var answerText = answerOf(answerNode);
     log.appendChild(answerNode);
     var answer = "";
     var citations = [];
@@ -231,21 +273,21 @@ function CourseMateTutor(runtime, element, initArgs) {
           switch (frame.type) {
             case "token":
               answer += frame.text || "";
-              answerNode.textContent = answer;
+              answerText.textContent = answer;
               log.scrollTop = log.scrollHeight;
               break;
             case "citation":
               citations.push(frame.citation);
-              answerNode.appendChild(citationNode(frame.citation));
+              sourcesRow(answerBubble).appendChild(citationNode(frame.citation));
               break;
             case "unsupported_claim":
               // Mark it; never silently rewrite text the student already read.
               unsupported.push(frame.text || "");
-              answerNode.appendChild(el("div", "cm-unsupported", frame.text || ""));
+              answerBubble.appendChild(el("div", "cm-unsupported", frame.text || ""));
               break;
             case "degraded":
               // An outage must not read as "the tutor got worse this week".
-              answerNode.appendChild(
+              answerBubble.appendChild(
                 el("div", "cm-degraded", "Answered by a fallback model (" + (frame.provider || "") + ")")
               );
               break;
@@ -253,7 +295,7 @@ function CourseMateTutor(runtime, element, initArgs) {
               // Distinct from "degraded", which says a different MODEL answered.
               // This says the EVIDENCE was incomplete, which is the more serious
               // of the two and the one a student should weigh.
-              answerNode.appendChild(
+              answerBubble.appendChild(
                 el("div", "cm-incomplete",
                    "Some information could not be checked (" + (frame.text || "") + ").")
               );
@@ -311,8 +353,50 @@ function CourseMateTutor(runtime, element, initArgs) {
   var prepPanel = root.querySelector('.cm-panel[data-panel="prep"]');
   if (!prepPanel) { return; }
 
-  var prepStatus = prepPanel.querySelector(".cm-prep-status");
+  /* Queried from the root, not the panel: the status line lives in the app bar
+   * so the panel below can start with content instead of a status message. */
+  var prepStatus = root.querySelector(".cm-prep-status");
+  var chatSubline = root.querySelector(".cm-chat-subline");
   var prepLog = prepPanel.querySelector(".cm-prep-log");
+  /* Dedicated slots, so a new question REPLACES the last one instead of piling
+   * up in a shared log. Falling back to the log keeps the script working
+   * against a page rendered before these existed. */
+  var practiceSlot = prepPanel.querySelector(".cm-practice-slot");
+  var planSlot = prepPanel.querySelector(".cm-plan-slot");
+
+  /* Only a real slot is cleared. The fallback is the shared log, and emptying
+   * that would delete a plan because a question was generated next to it. */
+  function slotTarget(slot) {
+    if (!slot) { return prepLog; }
+    clearNode(slot);
+    return slot;
+  }
+
+  function emptyState(slot, icon, title, text, extra) {
+    if (!slot) { return; }
+    clearNode(slot);
+    var box = el("div", "cm-empty");
+    if (icon) { box.appendChild(el("div", "cm-empty-icon", icon)); }
+    if (extra) { box.appendChild(el("div", extra)); }
+    box.appendChild(el("div", "cm-empty-title", title));
+    box.appendChild(el("div", "cm-empty-text", text));
+    slot.appendChild(box);
+  }
+
+  /* First run. A panel of disabled controls with no output reads as broken;
+   * these say what each control will do before it has done it.
+   *
+   * The practice copy promises a labelled generated question and nothing more,
+   * because that is all `/practice/stream` can produce — every question it
+   * returns is `ai_generated=True`, modelled on a real past-paper question
+   * rather than quoted from one. Promising a verbatim past paper here would be
+   * a UI claim the service cannot keep. */
+  emptyState(practiceSlot, "?", "No question yet",
+    "Pick an outcome and generate a question. Every one is modelled on a real "
+    + "past-paper question and clearly labelled as AI-generated.");
+  emptyState(planSlot, null, "No study plan yet",
+    "Set a session length in marks and build one. It allocates real past-paper "
+    + "questions across the outcomes you still need.", "cm-empty-bar");
   var prepNotice = prepPanel.querySelector(".cm-prep-notice");
   var prepForm = prepPanel.querySelector(".cm-prep-form");
   var practiceForm = prepPanel.querySelector(".cm-practice-form");
@@ -343,6 +427,10 @@ function CourseMateTutor(runtime, element, initArgs) {
       root.querySelectorAll(".cm-panel").forEach(function (p) {
         p.hidden = p.getAttribute("data-panel") !== wanted;
       });
+      /* One sub-line per tab. Both live in the app bar, so exactly one is
+       * visible at a time rather than both stacking. */
+      if (chatSubline) { chatSubline.hidden = wanted !== "chat"; }
+      if (prepStatus) { prepStatus.hidden = wanted !== "prep"; }
       if (wanted === "prep") { loadPrepStatus(); }
     });
   });
@@ -374,18 +462,30 @@ function CourseMateTutor(runtime, element, initArgs) {
           prepStatus.textContent = PREP_NOTICES.preparing;
           return;
         }
-        var parts = [status.questions + " past-paper questions",
-                     status.clos + " learning outcomes"];
+        var parts = [[status.questions, "past-paper questions"],
+                     [status.clos, "learning outcomes"]];
         if (status.earliest_year && status.latest_year) {
-          parts.push(status.earliest_year + "–" + status.latest_year);
+          parts.push([status.earliest_year + "–" + status.latest_year, ""]);
         }
         /* Soft spots are shown, not hidden. A student who knows some items were
          * hard to extract can discount them; one who does not will read every
          * one as exact. */
         if (status.low_confidence) {
-          parts.push(status.low_confidence + " flagged for low extraction confidence");
+          parts.push([status.low_confidence, "flagged for low extraction confidence"]);
         }
-        prepStatus.textContent = parts.join(" · ");
+        /* The figures carry the information and the nouns are scaffolding, so
+         * the figures are the part that is emphasised. Built as nodes rather
+         * than one string for that reason — and with textContent throughout,
+         * because `status` is derived from extracted PDF text (§10.6). */
+        prepStatus.textContent = "";
+        clearNode(prepStatus);
+        parts.forEach(function (part, i) {
+          if (i) { prepStatus.appendChild(el("span", "cm-stat-sep", "·")); }
+          prepStatus.appendChild(el("b", "cm-stat", String(part[0])));
+          if (part[1]) {
+            prepStatus.appendChild(document.createTextNode(" " + part[1]));
+          }
+        });
         prepForm.hidden = false;
 
         /* The outcome selector. Only enabled when the course actually declares
@@ -417,8 +517,10 @@ function CourseMateTutor(runtime, element, initArgs) {
     prepInput.disabled = true;
     prepSend.disabled = true;
 
-    var planNode = el("div", "cm-turn tutor", "");
+    var planNode = turnNode("tutor", "");
     prepLog.appendChild(planNode);
+    var bubble = bubbleOf(planNode);
+    var answerNode = answerOf(planNode);
     var answer = "";
 
     mintToken().then(function (token) {
@@ -441,20 +543,20 @@ function CourseMateTutor(runtime, element, initArgs) {
           switch (frame.type) {
             case "token":
               answer += frame.text || "";
-              planNode.textContent = answer;
+              answerNode.textContent = answer;
               prepLog.scrollTop = prepLog.scrollHeight;
               break;
             case "citation":
-              planNode.appendChild(citationNode(frame.citation));
+              sourcesRow(bubble).appendChild(citationNode(frame.citation));
               break;
             case "incomplete":
-              planNode.appendChild(
+              bubble.appendChild(
                 el("div", "cm-incomplete",
                    "Some information could not be checked (" + (frame.text || "") + ").")
               );
               break;
             case "degraded":
-              planNode.appendChild(
+              bubble.appendChild(
                 el("div", "cm-degraded", "Answered by a fallback model (" + (frame.provider || "") + ")")
               );
               break;
@@ -488,11 +590,46 @@ function CourseMateTutor(runtime, element, initArgs) {
    * `clo_id` come from the service, and the service builds them from extracted
    * PDF text — semi-trusted under §10.6, so a question whose paper contained
    * markup must render as characters, not as elements. */
-  function planItemNode(item) {
+  /* The planner opens its rationale with the same mastery clause the badge now
+   * shows ("2/4 correct; 5 of 85 marks allocated (…)"). Printing both would say
+   * it twice, so the clause is lifted out for the badge and the remainder stays
+   * as the sentence. Anchored and narrow on purpose: a rationale that does not
+   * begin with this exact shape is left completely untouched. */
+  var MASTERY_CLAUSE = /^(?:not practised yet|\d+\/\d+ correct)\s*;\s*/;
+
+  function rationaleRemainder(text) {
+    var rest = String(text).replace(MASTERY_CLAUSE, "");
+    if (!rest) { return ""; }
+    return rest.charAt(0).toUpperCase() + rest.slice(1);
+  }
+
+  /* Read from the mastery snapshot the page already carries, not parsed out of
+   * the rationale prose: the snapshot is structured and authoritative, and the
+   * prose is a sentence the service is free to reword. Summed across difficulty
+   * bands, because the badge is about the outcome, not one band of it. */
+  function masteryBadge(cloId) {
+    var rows = (mastery && mastery.clos) || [];
+    var attempts = 0;
+    var correct = 0;
+    rows.forEach(function (row) {
+      if (row.clo_id !== cloId) { return; }
+      attempts += row.attempts || 0;
+      correct += row.correct || 0;
+    });
+    if (!attempts) {
+      return el("span", "cm-plan-mastery unpractised", "not practised yet");
+    }
+    return el("span", "cm-plan-mastery practised", correct + "/" + attempts + " correct");
+  }
+
+  function planItemNode(item, index) {
     var node = el("div", "cm-plan-item", "");
     var marks = typeof item.marks_budget === "number" ? item.marks_budget : 0;
 
-    node.appendChild(el("div", "cm-plan-clo", item.clo_id + " — " + marks + " marks"));
+    var head = el("div", "cm-plan-item-head");
+    head.appendChild(el("span", "cm-plan-clo", item.clo_id + " · " + marks + " marks"));
+    head.appendChild(masteryBadge(item.clo_id));
+    node.appendChild(head);
 
     var ids = item.question_ids || [];
     node.appendChild(el(
@@ -506,36 +643,93 @@ function CourseMateTutor(runtime, element, initArgs) {
      * bank ran short can go find more practice; one who is not will read the
      * plan as complete. */
     if (item.rationale) {
-      node.appendChild(el("div", "cm-plan-rationale", item.rationale));
+      var rest = rationaleRemainder(item.rationale);
+      if (rest) { node.appendChild(el("div", "cm-plan-rationale", rest)); }
     }
     return node;
+  }
+
+  /* Marks as a bar. The shortfall is the reason this exists: "80 marks could
+   * not be filled" is a sentence people skip, and 80% of a bar in hatching is
+   * not. Hatching rather than blank because unavailable is a third state, and
+   * neither a filled bar nor an empty one says it. */
+  function planBar(items, requested, planned) {
+    var bar = el("div", "cm-plan-bar");
+    bar.setAttribute("role", "img");
+    bar.setAttribute("aria-label",
+      planned + " of " + requested + " marks allocated");
+
+    var total = requested > 0 ? requested : planned;
+    items.forEach(function (item, i) {
+      var marks = typeof item.marks_budget === "number" ? item.marks_budget : 0;
+      if (marks <= 0) { return; }
+      var seg = el("span", "cm-plan-seg cm-plan-seg-" + (i % 4), String(marks));
+      if (seg.style) { seg.style.width = (total ? (marks / total) * 100 : 0) + "%"; }
+      bar.appendChild(seg);
+    });
+
+    var unspent = requested - planned;
+    if (unspent > 0) {
+      var gap = el("span", "cm-plan-gap", unspent + " unfilled");
+      if (gap.style) { gap.style.width = (total ? (unspent / total) * 100 : 0) + "%"; }
+      bar.appendChild(gap);
+    }
+    return bar;
+  }
+
+  function planLegend(items, requested, planned) {
+    var legend = el("div", "cm-plan-legend");
+    legend.appendChild(el("span", "cm-plan-total",
+      planned + " of " + requested + " marks allocated"));
+
+    var keys = el("div", "cm-plan-keys");
+    items.forEach(function (item, i) {
+      var marks = typeof item.marks_budget === "number" ? item.marks_budget : 0;
+      if (marks <= 0) { return; }
+      var key = el("span", "cm-plan-key");
+      key.appendChild(el("span", "cm-plan-swatch cm-plan-seg-" + (i % 4)));
+      key.appendChild(el("span", null, item.clo_id));
+      keys.appendChild(key);
+    });
+    legend.appendChild(keys);
+    return legend;
   }
 
   function renderPlan(plan, requested) {
     var card = el("div", "cm-plan-card", "");
     var items = (plan && plan.items) || [];
+    var slot = slotTarget(planSlot);
 
     var planned = 0;
     items.forEach(function (i) {
       planned += typeof i.marks_budget === "number" ? i.marks_budget : 0;
     });
 
-    card.appendChild(el("div", "cm-plan-heading",
-      "Study plan — " + planned + " of " + requested + " marks"));
-
     if (!items.length) {
       /* An empty plan is NOT an error, and must not render as one. The request
        * was fine; the course has nothing tagged with marks yet. Collapsing the
        * two would send a student to report a fault that does not exist. */
+      card.appendChild(el("div", "cm-plan-heading",
+        "Study plan — " + planned + " of " + requested + " marks"));
       card.appendChild(el("div", "cm-plan-empty",
         "No past-paper question with a marks value is tagged to this course's "
         + "outcomes yet, so there is nothing to plan from."));
-      prepLog.appendChild(card);
+      slot.appendChild(card);
       prepLog.scrollTop = prepLog.scrollHeight;
       return card;
     }
 
-    items.forEach(function (item) { card.appendChild(planItemNode(item)); });
+    /* Kept, but not shown, when the bar is there: the legend below already says
+     * "20 of 100 marks allocated" in the same words, and printing it twice was
+     * the first thing that looked wrong on screen. A bar is not readable by a
+     * screen reader, so the sentence still has to exist — it is the same
+     * argument as the aria-label, one level up. */
+    card.appendChild(el("div", "cm-plan-heading cm-sr-only",
+      "Study plan — " + planned + " of " + requested + " marks"));
+    card.appendChild(planBar(items, requested, planned));
+    card.appendChild(planLegend(items, requested, planned));
+
+    items.forEach(function (item, i) { card.appendChild(planItemNode(item, i)); });
 
     /* Unspent budget, stated. The service's PlanReport is deliberately not in
      * the StudyPlan contract, so this is derived from what IS: the difference
@@ -553,7 +747,7 @@ function CourseMateTutor(runtime, element, initArgs) {
       "Every question above is a real past-paper question. Nothing here is "
       + "AI-generated."));
 
-    prepLog.appendChild(card);
+    slot.appendChild(card);
     prepLog.scrollTop = prepLog.scrollHeight;
     return card;
   }
@@ -756,7 +950,8 @@ function CourseMateTutor(runtime, element, initArgs) {
     card.appendChild(badge);
     var body = el("div", "cm-practice-text", "");
     card.appendChild(body);
-    prepLog.appendChild(card);
+    /* Replaces the previous question rather than stacking beneath it. */
+    slotTarget(practiceSlot).appendChild(card);
 
     var answer = "";
     var sources = [];
@@ -806,11 +1001,11 @@ function CourseMateTutor(runtime, element, initArgs) {
               /* Provenance line. §9.0 permits this question to reach the student
                * ungated BECAUSE it is labelled and cited, so a question that
                * arrived with no citation says so rather than looking sourced. */
-              var prov = el("div", "cm-provenance", sources.length ? "Derived from: " : "");
+              var prov = el("div", "cm-provenance", "");
               if (sources.length) {
-                sources.forEach(function (c, i) {
-                  if (i) { prov.appendChild(document.createTextNode(", ")); }
-                  var link = el("a", null, c.display_name || c.usage_key);
+                prov.appendChild(el("span", "cm-sources-label", "Derived from"));
+                sources.forEach(function (c) {
+                  var link = el("a", "cm-chip-link", c.display_name || c.usage_key);
                   link.href = safeHref(c.url);
                   prov.appendChild(link);
                 });

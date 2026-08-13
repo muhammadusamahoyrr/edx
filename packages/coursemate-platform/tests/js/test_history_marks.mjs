@@ -148,7 +148,11 @@ const tests = {
       ],
     });
     const turn = findAll(root, ".cm-turn").find((n) => n.className.includes("tutor"));
-    assert.match(turn.textContent, /Fact\. Fiction\./);
+    // The answer text lives in `.cm-answer` inside the bubble, not on the turn
+    // itself. That separation is load-bearing: the token handler assigns
+    // textContent on every frame, and assigning it to a node that also holds
+    // citations and marks would delete them on the next token.
+    assert.match(find(turn, ".cm-answer").textContent, /Fact\. Fiction\./);
     assert.deepEqual(marks(root), ["Fiction."]);
   },
 
@@ -193,7 +197,7 @@ const tests = {
     });
     assert.deepEqual(marks(root), []);
     const turn = findAll(root, ".cm-turn").find((n) => n.className.includes("tutor"));
-    assert.equal(turn.textContent, "old a");
+    assert.equal(find(turn, ".cm-answer").textContent, "old a");
   },
 
   async "a turn with no citations and no marks renders cleanly"() {

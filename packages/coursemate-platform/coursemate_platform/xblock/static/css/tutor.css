@@ -1,79 +1,733 @@
-.coursemate-tutor { border: 1px solid #ccc; border-radius: 6px; padding: 12px; font-size: 14px; }
-.coursemate-tutor .cm-header { font-weight: 600; margin-bottom: 8px; }
-.coursemate-tutor .cm-log { max-height: 320px; overflow-y: auto; margin-bottom: 8px; }
-.coursemate-tutor .cm-turn { margin: 6px 0; }
-.coursemate-tutor .cm-turn.student { color: #333; }
-.coursemate-tutor .cm-turn.tutor { color: #111; background: #f6f6f6; padding: 6px; border-radius: 4px; }
-.coursemate-tutor .cm-citation { font-size: 12px; }
-/* Three distinct states, never one generic error (design 5.1). */
-.coursemate-tutor .cm-notice { padding: 6px; border-radius: 4px; font-size: 13px; }
-.coursemate-tutor .cm-notice.abstained { background: #eef3fa; }
-.coursemate-tutor .cm-notice.preparing { background: #fdf6e3; }
-.coursemate-tutor .cm-notice.unavailable { background: #fbeaea; }
-.coursemate-tutor .cm-degraded { font-size: 12px; color: #8a6d3b; }
-.coursemate-tutor .cm-unsupported { text-decoration: underline wavy #c0392b; }
-.coursemate-tutor .cm-form { display: flex; gap: 6px; }
-.coursemate-tutor .cm-input { flex: 1; padding: 6px; }
-.coursemate-tutor .cm-disclaimer { font-size: 12px; color: #666; margin: 6px 0 0; }
+/* CourseMate tutor — visual language.
+ *
+ * Scoped entirely under `.coursemate-tutor`. This renders inside an Open edX
+ * courseware unit next to content nobody here controls, so every rule is
+ * prefixed and nothing touches a bare element selector: a `button { }` in this
+ * file would restyle the LMS page around it.
+ *
+ * The one thing this file is really for: **provenance is encoded visually, not
+ * described in prose.** Generated content and course-owned content get
+ * different accent colours, different glyphs AND different words. Three
+ * encodings, because colour alone fails for a colour-blind reader and a label
+ * alone fails for someone scanning. That is the product's central claim, so it
+ * is the part of the design that carries redundancy.
+ *
+ * Green is reserved for "real / course-owned / correct". The primary action
+ * colour is teal, deliberately NOT green, so a student never reads a button's
+ * colour as a provenance claim.
+ */
 
-/* --- Feature B: the exam-prep tab ------------------------------------- */
-.coursemate-tutor .cm-tabs { display: flex; gap: 4px; margin-bottom: 8px; border-bottom: 1px solid #ddd; }
-.coursemate-tutor .cm-tab { background: none; border: none; padding: 6px 10px; font-size: 13px; cursor: pointer; color: #555; }
-.coursemate-tutor .cm-tab.is-active { color: #111; font-weight: 600; box-shadow: inset 0 -2px 0 #333; }
-.coursemate-tutor .cm-prep-status { font-size: 12px; color: #666; margin-bottom: 8px; }
-.coursemate-tutor .cm-prep-log { max-height: 320px; overflow-y: auto; margin-bottom: 8px; }
-.coursemate-tutor .cm-prep-notice { padding: 6px; border-radius: 4px; font-size: 13px; }
-.coursemate-tutor .cm-prep-notice.abstained { background: #eef3fa; }
-.coursemate-tutor .cm-prep-notice.preparing { background: #fdf6e3; }
-.coursemate-tutor .cm-prep-notice.unavailable { background: #fbeaea; }
-.coursemate-tutor .cm-prep-form { display: flex; gap: 6px; }
-.coursemate-tutor .cm-prep-input { flex: 1; padding: 6px; }
-/* Distinct from .cm-degraded: that says a different MODEL answered, this says
-   the EVIDENCE was incomplete — the more serious of the two, so it is louder. */
-.coursemate-tutor .cm-incomplete { font-size: 12px; color: #a94442; background: #fbeaea; padding: 4px 6px; border-radius: 3px; margin-top: 4px; }
+.coursemate-tutor {
+  /* Brand */
+  --cm-ink: #0f2f2b;          /* app bar */
+  --cm-ink-soft: #cfe3df;     /* text on the app bar */
+  /* Every white-on-teal control — the Ask button, Generate, I got this, the
+     active tab, the filled bar segments — takes this one value, so its contrast
+     is a single decision rather than five.
+     #0d9488 was the first choice and measured 3.74:1 against white — below the
+     4.5:1 AA needs for 13px text, which is not "large" by WCAG's
+     definition (18.66px bold or 24px normal). This is 5.2:1. The hue is unchanged; only the value moved,
+     so the palette reads the same and the label is legible. */
+  --cm-teal: #0b7a70;         /* primary action */
+  --cm-teal-dark: #096158;
+  /* Reserved for fills that carry no text on them. */
+  --cm-teal-bright: #0d9488;
+  --cm-teal-soft: #e2f3f0;
+  --cm-teal-ink: #0f6f63;
 
-/* --- Phase 1C: generated practice questions --------------------------- */
-.coursemate-tutor .cm-practice-form { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
-.coursemate-tutor .cm-practice-label { font-size: 12px; color: #555; }
-.coursemate-tutor .cm-practice-clo { flex: 1; min-width: 160px; padding: 5px; }
-.coursemate-tutor .cm-practice-band { padding: 5px; }
-.coursemate-tutor .cm-practice-card { border: 1px solid #d8d8d8; border-radius: 4px; padding: 8px; margin: 8px 0; background: #fcfcfc; }
-/* The badge is the claim 9.0 depends on, not decoration. Always visible, never
-   subtle enough to miss. */
-.coursemate-tutor .cm-ai-badge { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: #6b4d00; background: #fdf0c8; border: 1px solid #e8d38a; border-radius: 3px; padding: 2px 6px; margin-bottom: 6px; }
-.coursemate-tutor .cm-practice-text { white-space: pre-wrap; }
-.coursemate-tutor .cm-provenance { font-size: 12px; color: #555; margin-top: 6px; }
+  /* Surfaces */
+  --cm-canvas: #eff1f0;
+  --cm-card: #ffffff;
+  --cm-line: #e2e6e5;
+  --cm-line-soft: #eef1f0;
 
-/* --- Phase D2: closing the practice loop ------------------------------- *
- * Separated from the question by a rule, because the question is generated
- * content and this is the student's own workspace — the AI-generated badge
- * above must not appear to cover what the student writes below it. */
-.coursemate-tutor .cm-selfcheck { margin-top: 10px; padding-top: 8px; border-top: 1px solid #e6e6e6; }
-.coursemate-tutor .cm-selfcheck-prompt { font-size: 12px; color: #555; margin-bottom: 6px; }
-.coursemate-tutor .cm-practice-answer { width: 100%; box-sizing: border-box; font: inherit; padding: 6px; border: 1px solid #ccc; border-radius: 3px; resize: vertical; }
-.coursemate-tutor .cm-selfcheck-buttons { display: flex; gap: 6px; margin-top: 6px; }
+  /* Type */
+  --cm-text: #16302c;
+  --cm-body: #2c4642;
+  --cm-muted: #6b7c78;
+
+  /* Provenance: violet = generated, green = course-owned */
+  --cm-ai: #7c5cd6;
+  --cm-ai-soft: #f0eafd;
+  --cm-ai-ink: #57399f;
+  --cm-real: #0f7a52;
+  --cm-real-soft: #e2f4ea;
+  --cm-real-ink: #0d6344;
+
+  /* Status */
+  --cm-warn: #8a5a00;
+  --cm-warn-soft: #fdf3e0;
+  --cm-warn-line: #f0dcae;
+  --cm-bad: #a3342c;
+  --cm-bad-soft: #fbecea;
+
+  --cm-radius: 10px;
+  --cm-shadow: 0 1px 2px rgba(16, 47, 43, .06);
+
+  /* Inter is deliberately NOT in this stack, even though it is the LMS's own
+     face. The platform loads Inter at weight 400 only — every other weight in
+     `document.fonts` reports `unloaded` — so anything asking for 600 got
+     Inter 400 smeared into a fake semibold by the browser. That is what
+     "blurry buttons" was. Measured: Inter 400→600 widened the same string by
+     1.6% (synthetic), Segoe UI 400→600 by 3.1% (a real Semibold face). */
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--cm-body);
+  background: var(--cm-canvas);
+  border: 1px solid var(--cm-line);
+  border-radius: var(--cm-radius);
+  overflow: hidden;
+}
+
+.coursemate-tutor *,
+.coursemate-tutor *::before,
+.coursemate-tutor *::after { box-sizing: border-box; }
+
+/* The only `!important` in this file, and it is here to beat one.
+ *
+ * `lms-main-v1.css` sets `font-family: Inter, sans-serif !important` on a
+ * selector list that includes form controls, so every button and input in this
+ * component silently ignored the stack above and rendered in a synthesised
+ * Inter semibold. A normal declaration cannot win against a host `!important`,
+ * and raising specificity does not help — overriding it is the whole reason
+ * this exception exists. Scoped to descendants of the block, so nothing outside
+ * the component is touched. */
+div.coursemate-tutor button,
+div.coursemate-tutor input,
+div.coursemate-tutor select,
+div.coursemate-tutor textarea,
+div.coursemate-tutor option,
+div.coursemate-tutor optgroup {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  box-shadow: none;
+  text-shadow: none;
+  background-image: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Every interactive control gets the same visible focus ring. An LMS component
+   is keyboard-navigated far more than a marketing page, and the browser default
+   disappears against the dark app bar. */
+.coursemate-tutor :focus-visible {
+  outline: 2px solid var(--cm-teal);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.coursemate-tutor .cm-appbar :focus-visible {
+  outline-color: #ffffff;
+}
+
+.coursemate-tutor .cm-sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* --- app bar ---------------------------------------------------------- */
+
+/* 20px, not 16px: the tab group is the rightmost thing in the component and at
+   16px it sat on the corner. The extra 4px is what stops it looking wedged. */
+.coursemate-tutor .cm-appbar {
+  background: var(--cm-ink); padding: 13px 20px;
+  -webkit-font-smoothing: subpixel-antialiased;
+  -moz-osx-font-smoothing: auto;
+}
+
+.coursemate-tutor .cm-appbar-top {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+}
+
+.coursemate-tutor .cm-brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+
+.coursemate-tutor .cm-avatar {
+  flex: none; width: 26px; height: 26px; border-radius: 7px;
+  background: var(--cm-teal); color: #fff;
+  font-size: 11px; font-weight: 700; letter-spacing: .02em;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+.coursemate-tutor .cm-header {
+  font-weight: 650; font-size: 15px; color: #fff;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Segmented control, not underlined tabs: two peers, one visibly chosen.
+ *
+ * The gap was 2px and the two pills read as one smudged block. 6px is the
+ * smallest separation at which the inactive pill is clearly its own control,
+ * and the track padding matches it so the active pill is not pressed against
+ * the track edge either. */
+.coursemate-tutor .cm-tabs {
+  display: flex; flex: none; gap: 6px; padding: 5px;
+  background: rgba(255, 255, 255, .10); border-radius: 10px;
+}
+
+.coursemate-tutor .cm-tab {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  font-size: 13px; font-weight: 600; line-height: 16px;
+  /* Integer size, not 12.5px. A fractional size puts glyph stems between
+     device pixels, and the LMS sets `-webkit-font-smoothing: antialiased`
+     globally — light-on-dark grayscale AA over half-pixel stems is exactly
+     what read as "blurry". Every size in this file is now a whole number. */
+  letter-spacing: .01em;
+  padding: 7px 15px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--cm-ink-soft); cursor: pointer;
+  white-space: nowrap;
+  box-shadow: none; text-shadow: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.coursemate-tutor .cm-tab:hover { color: #fff; background: rgba(255, 255, 255, .08); }
+
+.coursemate-tutor .cm-tab.is-active { background: var(--cm-teal); color: #fff; }
+
+.coursemate-tutor .cm-subline {
+  margin: 8px 0 0; font-size: 13px; color: var(--cm-ink-soft);
+}
+
+/* The numerals carry the information; the nouns are scaffolding. */
+.coursemate-tutor .cm-stat { color: #fff; font-weight: 650; }
+
+.coursemate-tutor .cm-stat-sep { opacity: .45; margin: 0 6px; }
+
+/* --- panels ----------------------------------------------------------- */
+
+.coursemate-tutor .cm-panel { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+
+.coursemate-tutor .cm-panel[hidden] { display: none; }
+
+.coursemate-tutor .cm-card {
+  background: var(--cm-card); border: 1px solid var(--cm-line);
+  border-radius: var(--cm-radius); box-shadow: var(--cm-shadow); padding: 14px 16px;
+}
+
+.coursemate-tutor .cm-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+}
+
+.coursemate-tutor .cm-card-title {
+  margin: 0; font-size: 14px; font-weight: 650; color: var(--cm-text);
+}
+
+/* --- buttons and fields ----------------------------------------------- */
+
+/* Integer line-height, not a unitless ratio: 1.2 × 13px is 15.6px, which puts
+   the text box — and with it the baseline — on a fractional offset. At the
+   1.5× display scaling this machine runs, a fractional baseline is resampled
+   across device pixels and reads as soft. Every control below sets a whole
+   number for the same reason. */
+.coursemate-tutor .cm-btn {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  font-size: 13px; font-weight: 600; line-height: 18px;
+  cursor: pointer;
+  padding: 9px 16px; border-radius: 8px; border: 1px solid transparent;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  box-shadow: none; text-shadow: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.coursemate-tutor .cm-btn-primary { background: var(--cm-teal); color: #fff; }
+.coursemate-tutor .cm-btn-primary:hover:not(:disabled) { background: var(--cm-teal-dark); }
+
+.coursemate-tutor .cm-btn-ghost {
+  background: var(--cm-card); color: var(--cm-text); border-color: var(--cm-line);
+}
+.coursemate-tutor .cm-btn-ghost:hover:not(:disabled) { border-color: #c9d2d0; }
+
+.coursemate-tutor .cm-btn:disabled { opacity: .5; cursor: default; }
+
+.coursemate-tutor .cm-field {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  font-size: 13px; line-height: 18px; color: var(--cm-text);
+  padding: 9px 11px; border: 1px solid var(--cm-line); border-radius: 8px;
+  background: var(--cm-card); max-width: 100%;
+  box-shadow: none;
+}
+
+.coursemate-tutor select.cm-field { cursor: pointer; }
+
+.coursemate-tutor .cm-field:disabled { background: #f6f8f7; color: var(--cm-muted); }
+
+/* --- Ask tab ---------------------------------------------------------- */
+
+.coursemate-tutor .cm-log {
+  display: flex; flex-direction: column; gap: 12px;
+  max-height: 420px; overflow-y: auto;
+}
+
+.coursemate-tutor .cm-log:empty { display: none; }
+
+.coursemate-tutor .cm-turn { display: flex; gap: 9px; align-items: flex-start; }
+
+/* The student's own words sit right, the tutor's sit left behind an avatar —
+   the ordinary chat convention, so no one has to learn which is which. */
+.coursemate-tutor .cm-turn.student { justify-content: flex-end; }
+
+.coursemate-tutor .cm-avatar-sm {
+  flex: none; width: 24px; height: 24px; border-radius: 6px; margin-top: 2px;
+  background: var(--cm-ink); color: #fff; font-size: 10px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+.coursemate-tutor .cm-bubble {
+  border-radius: 10px; padding: 10px 13px; max-width: 84%;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+.coursemate-tutor .cm-turn.student .cm-bubble {
+  background: var(--cm-teal-soft); color: var(--cm-text);
+}
+
+.coursemate-tutor .cm-turn.tutor .cm-bubble {
+  background: var(--cm-card); border: 1px solid var(--cm-line); color: var(--cm-body);
+}
+
+.coursemate-tutor .cm-answer { white-space: pre-wrap; }
+
+/* Sources as one chip row rather than a stack of "Source:" lines: three
+   citations were three lines of boilerplate for three words of information. */
+.coursemate-tutor .cm-sources {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--cm-line-soft);
+}
+
+.coursemate-tutor .cm-sources-label {
+  font-size: 12px; color: var(--cm-muted); margin-right: 2px;
+}
+
+.coursemate-tutor .cm-citation { display: inline-flex; }
+
+.coursemate-tutor .cm-citation a,
+.coursemate-tutor .cm-chip-link {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  font-size: 12px; line-height: 16px; text-decoration: none; color: var(--cm-teal-ink);
+  background: var(--cm-teal-soft); border-radius: 999px; padding: 3px 9px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.coursemate-tutor .cm-citation a:hover,
+.coursemate-tutor .cm-chip-link:hover { text-decoration: underline; }
+
+.coursemate-tutor .cm-composer {
+  background: var(--cm-card); border: 1px solid var(--cm-line);
+  border-radius: var(--cm-radius); box-shadow: var(--cm-shadow); padding: 12px 14px;
+}
+
+.coursemate-tutor .cm-form { display: flex; gap: 9px; align-items: center; }
+
+.coursemate-tutor .cm-input {
+  flex: 1; min-width: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  font-size: 13px; line-height: 18px;
+  padding: 11px 13px; border: 1px solid var(--cm-line); border-radius: 9px;
+  color: var(--cm-text); background: var(--cm-card);
+  box-shadow: none;
+}
+
+.coursemate-tutor .cm-input::placeholder { color: #5e706c; }
+
+.coursemate-tutor .cm-disclaimer {
+  font-size: 12px; color: var(--cm-muted); margin: 9px 0 0;
+}
+
+/* --- notices: never one generic error (design 5.1) --------------------- */
+
+.coursemate-tutor .cm-notice,
+.coursemate-tutor .cm-prep-notice {
+  font-size: 13px; padding: 10px 13px; border-radius: 9px;
+  border: 1px solid var(--cm-line); background: var(--cm-card); color: var(--cm-body);
+}
+
+.coursemate-tutor .cm-notice[hidden],
+.coursemate-tutor .cm-prep-notice[hidden] { display: none; }
+
+.coursemate-tutor .cm-notice.abstained,
+.coursemate-tutor .cm-prep-notice.abstained {
+  background: var(--cm-teal-soft); border-color: #c5e5df; color: #10534b;
+}
+
+.coursemate-tutor .cm-notice.preparing,
+.coursemate-tutor .cm-prep-notice.preparing,
+.coursemate-tutor .cm-prep-notice.invalid_budget,
+.coursemate-tutor .cm-notice.budget_exceeded,
+.coursemate-tutor .cm-notice.rate_limited,
+.coursemate-tutor .cm-notice.truncated {
+  background: var(--cm-warn-soft); border-color: var(--cm-warn-line); color: var(--cm-warn);
+}
+
+.coursemate-tutor .cm-notice.unavailable,
+.coursemate-tutor .cm-prep-notice.unavailable,
+.coursemate-tutor .cm-notice.unauthenticated,
+.coursemate-tutor .cm-notice.not_enrolled,
+.coursemate-tutor .cm-prep-notice.not_enrolled {
+  background: var(--cm-bad-soft); border-color: #f0cfcb; color: var(--cm-bad);
+}
+
+/* --- honesty markers --------------------------------------------------- */
+
+.coursemate-tutor .cm-degraded {
+  font-size: 12px; line-height: 16px; color: var(--cm-warn); background: var(--cm-warn-soft);
+  border-radius: 6px; padding: 5px 8px; margin-top: 8px;
+}
+
+/* Louder than .cm-degraded on purpose: that says a different MODEL answered,
+   this says the EVIDENCE was incomplete — the one a student should weigh. */
+.coursemate-tutor .cm-incomplete {
+  font-size: 12px; line-height: 16px; color: var(--cm-bad); background: var(--cm-bad-soft);
+  border: 1px solid #f0cfcb; border-radius: 6px; padding: 5px 8px; margin-top: 8px;
+}
+
+/* Marks a specific sentence, so it stays inline with the prose it doubts. */
+.coursemate-tutor .cm-unsupported {
+  text-decoration: underline wavy var(--cm-bad); text-underline-offset: 3px;
+  margin-top: 6px; font-size: 13px;
+}
+
+/* --- Exam prep: practice ---------------------------------------------- */
+
+.coursemate-tutor .cm-practice-form { display: flex; flex-direction: column; gap: 9px; }
+
+.coursemate-tutor .cm-practice-form[hidden] { display: none; }
+
+.coursemate-tutor .cm-practice-clo { width: 100%; }
+
+.coursemate-tutor .cm-practice-row { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
+
+.coursemate-tutor .cm-practice-band { flex: none; min-width: 118px; }
+
+.coursemate-tutor .cm-practice-send { flex: 1; }
+
+/* The question card. A coloured rule across the top is the provenance signal;
+   the badge below it says the same thing in words. */
+.coursemate-tutor .cm-practice-card {
+  background: var(--cm-card); border: 1px solid var(--cm-line);
+  border-top: 3px solid var(--cm-ai);
+  border-radius: var(--cm-radius); box-shadow: var(--cm-shadow); padding: 14px 16px;
+}
+
+/* Ready for a verbatim past-paper card the moment the service can serve one.
+   Same geometry, opposite palette, different glyph — see .cm-ai-badge. */
+.coursemate-tutor .cm-practice-card.is-source { border-top-color: var(--cm-real); }
+
+.coursemate-tutor .cm-card-meta { font-size: 12px; color: var(--cm-muted); }
+
+/* Not decoration — this badge is the claim 9.0 depends on. Always visible,
+   never subtle enough to miss, and it names itself in words as well as hue. */
+.coursemate-tutor .cm-ai-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 700; line-height: 14px; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--cm-ai-ink); background: var(--cm-ai-soft);
+  border: 1px solid #ddd0f7; border-radius: 6px; padding: 4px 8px;
+}
+
+.coursemate-tutor .cm-ai-badge::before { content: "+"; font-weight: 800; }
+
+.coursemate-tutor .cm-ai-badge.is-source {
+  color: var(--cm-real-ink); background: var(--cm-real-soft); border-color: #bfe4d1;
+}
+
+.coursemate-tutor .cm-ai-badge.is-source::before { content: "\25A0"; font-size: 8px; }
+
+.coursemate-tutor .cm-practice-text {
+  white-space: pre-wrap; margin-top: 10px;
+  font-size: 15px; font-weight: 600; color: var(--cm-text); line-height: 22px;
+}
+
+/* A quoted past-paper question is set as a quotation, so it reads as somebody
+   else's words rather than the tutor's. */
+.coursemate-tutor .cm-practice-card.is-source .cm-practice-text {
+  font-weight: 500; font-style: normal;
+  background: var(--cm-real-soft); border-left: 3px solid var(--cm-real);
+  border-radius: 0 6px 6px 0; padding: 10px 13px;
+}
+
+.coursemate-tutor .cm-provenance {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--cm-muted); margin-top: 10px;
+}
+
+.coursemate-tutor .cm-provenance a { font-size: 12px; }
+
+/* --- Exam prep: the self-check (the practice loop) --------------------- *
+ * Separated by a rule because the question above is generated content and this
+ * is the student's own workspace: the AI-generated badge must not appear to
+ * cover what the student writes. */
+
+.coursemate-tutor .cm-selfcheck {
+  margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--cm-line-soft);
+}
+
+.coursemate-tutor .cm-selfcheck-prompt {
+  font-size: 12px; color: var(--cm-muted); margin-bottom: 8px;
+}
+
+.coursemate-tutor .cm-practice-answer {
+  width: 100%;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  font-size: 13px; line-height: 18px; color: var(--cm-text);
+  padding: 10px 12px; border: 1px solid var(--cm-line); border-radius: 9px;
+  resize: vertical; background: var(--cm-card);
+  box-shadow: none;
+}
+
+.coursemate-tutor .cm-selfcheck-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
+
 .coursemate-tutor .cm-selfcheck-got,
-.coursemate-tutor .cm-selfcheck-not { font: inherit; padding: 4px 10px; border-radius: 3px; border: 1px solid #bbb; background: #fff; cursor: pointer; }
-.coursemate-tutor .cm-selfcheck-got:disabled,
-.coursemate-tutor .cm-selfcheck-not:disabled { opacity: .55; cursor: default; }
-.coursemate-tutor .cm-selfcheck-status { font-size: 12px; color: #555; margin-top: 6px; min-height: 1em; }
+.coursemate-tutor .cm-selfcheck-not {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  font-size: 13px; font-weight: 600; line-height: 16px;
+  cursor: pointer;
+  padding: 8px 16px; border-radius: 8px; border: 1px solid transparent;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  box-shadow: none; text-shadow: none;
+}
 
-/* --- Phase 4C: budgeted study plan ------------------------------------ */
-.coursemate-tutor .cm-budget-form { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
-.coursemate-tutor .cm-budget-input { width: 90px; padding: 5px; }
-.coursemate-tutor .cm-budget-unit { font-size: 12px; color: #555; }
-/* Visually distinct from .cm-practice-card, and that is the point: this card
-   holds real past-paper questions and that one holds a generated question. Two
-   different trust levels must not look alike. */
-.coursemate-tutor .cm-plan-card { border: 1px solid #cfd8e3; border-left: 3px solid #4a6fa5; border-radius: 4px; padding: 8px; margin: 8px 0; background: #fbfcfe; }
-.coursemate-tutor .cm-plan-heading { font-weight: 600; margin-bottom: 6px; }
-.coursemate-tutor .cm-plan-item { padding: 6px 0; border-top: 1px solid #eef1f5; }
-.coursemate-tutor .cm-plan-clo { font-weight: 600; font-size: 13px; }
-.coursemate-tutor .cm-plan-questions { font-size: 12px; color: #333; margin-top: 2px; }
-.coursemate-tutor .cm-plan-rationale { font-size: 12px; color: #555; font-style: italic; margin-top: 2px; }
-/* The shortfall is information, not a warning: the request was fine and the
-   bank is simply short. Legible, not alarming. */
-.coursemate-tutor .cm-plan-unspent { font-size: 12px; color: #6b4d00; background: #fdf6e3; padding: 4px 6px; border-radius: 3px; margin-top: 6px; }
-.coursemate-tutor .cm-plan-empty { font-size: 13px; color: #444; }
-.coursemate-tutor .cm-plan-footnote { font-size: 11px; color: #666; margin-top: 6px; }
-.coursemate-tutor .cm-prep-notice.invalid_budget { background: #fdf6e3; }
+/* "I got this" is the student's claim about themselves, not a provenance
+   statement, so it takes the action colour rather than the course-owned green. */
+.coursemate-tutor .cm-selfcheck-got { background: var(--cm-teal); color: #fff; }
+.coursemate-tutor .cm-selfcheck-not { background: var(--cm-card); color: var(--cm-text); border-color: var(--cm-line); }
+
+.coursemate-tutor .cm-selfcheck-got:disabled,
+.coursemate-tutor .cm-selfcheck-not:disabled { opacity: .5; cursor: default; }
+
+.coursemate-tutor .cm-selfcheck-status {
+  font-size: 12px; color: var(--cm-muted); margin-top: 8px; min-height: 1em;
+}
+
+/* --- Exam prep: the study plan ---------------------------------------- */
+
+.coursemate-tutor .cm-budget-form { display: flex; gap: 8px; align-items: center; }
+
+.coursemate-tutor .cm-budget-form[hidden] { display: none; }
+
+.coursemate-tutor .cm-budget-input { width: 74px; text-align: center; }
+
+.coursemate-tutor .cm-budget-unit { font-size: 12px; color: var(--cm-muted); }
+
+.coursemate-tutor .cm-plan-card { margin-top: 12px; }
+
+.coursemate-tutor .cm-plan-heading { font-size: 13px; font-weight: 650; color: var(--cm-text); }
+
+/* The allocation bar. The unfilled remainder is drawn, not just described:
+   "80 marks could not be filled" is a sentence people skip, and 80% of a bar
+   in hatching is not. */
+.coursemate-tutor .cm-plan-bar {
+  display: flex; height: 20px; border-radius: 6px; overflow: hidden;
+  background: var(--cm-line-soft); margin: 10px 0 8px;
+}
+
+.coursemate-tutor .cm-plan-seg {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; color: #fff;
+  min-width: 0; overflow: hidden; white-space: nowrap;
+}
+
+/* Four steps down the same hue. The two dark steps carry white numerals; the
+   two light ones flip to dark text rather than keeping white on a pale fill,
+   which measured about 2.3:1 and was unreadable at 11px. */
+.coursemate-tutor .cm-plan-seg-0 { background: var(--cm-ink); }
+.coursemate-tutor .cm-plan-seg-1 { background: var(--cm-teal); }
+.coursemate-tutor .cm-plan-seg-2 { background: #7cc9bf; color: var(--cm-text); }
+.coursemate-tutor .cm-plan-seg-3 { background: #bfe4df; color: var(--cm-text); }
+
+/* Hatched, not empty: unavailable is a third state, and neither a filled bar
+   nor a blank one says it. */
+.coursemate-tutor .cm-plan-gap {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; color: var(--cm-muted); white-space: nowrap; overflow: hidden;
+  background: repeating-linear-gradient(
+    -45deg, #e7ebea, #e7ebea 5px, #f3f5f4 5px, #f3f5f4 10px);
+}
+
+.coursemate-tutor .cm-plan-legend {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 8px; font-size: 12px; color: var(--cm-muted);
+}
+
+.coursemate-tutor .cm-plan-keys { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.coursemate-tutor .cm-plan-key { display: inline-flex; align-items: center; gap: 5px; }
+
+.coursemate-tutor .cm-plan-swatch { width: 9px; height: 9px; border-radius: 2px; }
+
+.coursemate-tutor .cm-plan-item {
+  padding: 11px 0; border-top: 1px solid var(--cm-line-soft);
+}
+
+.coursemate-tutor .cm-plan-item-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+}
+
+.coursemate-tutor .cm-plan-clo { font-size: 13px; font-weight: 650; color: var(--cm-text); }
+
+/* Mastery, pulled out of the prose. "2/4 correct" is the proof the practice
+   loop closes; buried mid-sentence, nobody reads it. */
+.coursemate-tutor .cm-plan-mastery {
+  flex: none; font-size: 11px; font-weight: 650; line-height: 14px; border-radius: 999px; padding: 3px 9px;
+}
+
+.coursemate-tutor .cm-plan-mastery.practised {
+  color: var(--cm-real-ink); background: var(--cm-real-soft);
+}
+
+.coursemate-tutor .cm-plan-mastery.unpractised {
+  color: var(--cm-warn); background: var(--cm-warn-soft);
+}
+
+.coursemate-tutor .cm-plan-questions { font-size: 12px; color: var(--cm-body); margin-top: 4px; }
+
+.coursemate-tutor .cm-plan-rationale {
+  font-size: 12px; color: var(--cm-muted); font-style: italic; margin-top: 3px;
+}
+
+/* Information, not an alarm: the request was fine, the bank is simply short. */
+.coursemate-tutor .cm-plan-unspent {
+  display: flex; gap: 7px; font-size: 12px; color: var(--cm-warn);
+  background: var(--cm-warn-soft); border: 1px solid var(--cm-warn-line);
+  border-radius: 8px; padding: 9px 11px; margin-top: 12px;
+}
+
+.coursemate-tutor .cm-plan-unspent::before { content: "\26A0"; }
+
+.coursemate-tutor .cm-plan-empty { font-size: 13px; color: var(--cm-body); }
+
+.coursemate-tutor .cm-plan-footnote { font-size: 11px; color: var(--cm-muted); margin-top: 10px; }
+
+/* --- empty states ------------------------------------------------------ *
+ * A first-run panel that shows only disabled controls reads as broken. These
+ * say what the control will do before it has done it. */
+
+.coursemate-tutor .cm-empty {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  gap: 8px; padding: 26px 18px;
+  border: 1px dashed #d3dad8; border-radius: var(--cm-radius); background: var(--cm-card);
+}
+
+.coursemate-tutor .cm-empty-icon {
+  width: 34px; height: 34px; border-radius: 9px;
+  background: var(--cm-teal-soft); color: var(--cm-teal-ink);
+  font-size: 16px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+.coursemate-tutor .cm-empty-title { font-size: 14px; font-weight: 650; color: var(--cm-text); }
+
+.coursemate-tutor .cm-empty-text { font-size: 13px; color: var(--cm-muted); max-width: 46ch; }
+
+.coursemate-tutor .cm-plan-slot .cm-empty { padding: 18px; border: 0; }
+
+.coursemate-tutor .cm-plan-slot .cm-empty-bar {
+  width: 100%; height: 20px; border-radius: 6px;
+  background: repeating-linear-gradient(
+    -45deg, #e7ebea, #e7ebea 5px, #f3f5f4 5px, #f3f5f4 10px);
+}
+
+/* --- prose planner ----------------------------------------------------- */
+
+.coursemate-tutor .cm-prep-form { display: flex; gap: 9px; margin-top: 12px; }
+
+.coursemate-tutor .cm-prep-form[hidden] { display: none; }
+
+.coursemate-tutor .cm-prep-input { flex: 1; min-width: 0; }
+
+.coursemate-tutor .cm-prep-log {
+  display: flex; flex-direction: column; gap: 8px;
+  max-height: 380px; overflow-y: auto;
+}
+
+.coursemate-tutor .cm-prep-log:empty { display: none; }
+
+.coursemate-tutor .cm-prep-log .cm-turn { display: block; font-size: 13px; }
+
+/* --- narrow units ------------------------------------------------------ */
+
+@media (max-width: 560px) {
+  .coursemate-tutor .cm-appbar-top { flex-wrap: wrap; }
+  .coursemate-tutor .cm-practice-row { flex-wrap: wrap; }
+  .coursemate-tutor .cm-practice-send { flex: 1 0 100%; }
+  .coursemate-tutor .cm-bubble { max-width: 100%; }
+}
+
+/* --- Studio view (Author Panel) --------------------------------------- */
+
+.coursemate-studio {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  font-size: 13px;
+  color: #16302c;
+  background: #ffffff;
+  border: 1px solid #e2e6e5;
+  border-radius: 10px;
+  padding: 16px 20px;
+  box-shadow: 0 1px 2px rgba(16, 47, 43, .06);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.coursemate-studio label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  color: #16302c;
+}
+
+.coursemate-studio input[type="text"],
+.coursemate-studio select {
+  font-family: inherit !important;
+  font-size: 13px;
+  padding: 7px 11px;
+  border: 1px solid #e2e6e5;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #16302c;
+  box-shadow: none;
+}
+
+.coursemate-studio input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #0b7a70;
+}
+
+.coursemate-studio hr {
+  border: 0;
+  border-top: 1px solid #e2e6e5;
+  margin: 4px 0;
+}
+
+.coursemate-studio .cm-index {
+  font-family: inherit !important;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 16px;
+  color: #ffffff;
+  background: #0b7a70;
+  padding: 9px 16px;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  align-self: flex-start;
+  box-shadow: none;
+  text-shadow: none;
+  transition: background 0.15s ease;
+}
+
+.coursemate-studio .cm-index:hover:not(:disabled) {
+  background: #096158;
+}
+
+.coursemate-studio .cm-index:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.coursemate-studio .cm-index-status {
+  font-size: 12px;
+  color: #6b7c78;
+  margin: 2px 0 0;
+}
