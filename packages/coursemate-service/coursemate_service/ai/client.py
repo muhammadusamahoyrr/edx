@@ -35,8 +35,16 @@ providers answer fine, so nothing fails.
 
 A fallback is now its own `model_name` and is reached through `fallbacks=`, which
 is the mechanism that actually implements "use this one only when the other is
-gone". The different-vendor deployment comes first in the chain and `cheap` last,
-because `cheap` shares the primary's vendor and therefore its outage.
+gone". The dedicated `fallback` deployment comes first in the chain and `cheap`
+last — it is the economy tier, reached only when everything better is gone.
+
+**`cheap` is not necessarily the primary's vendor (2026-08-14).** These docs used
+to say it was, and ordered the chain on that basis. It held while both tiers were
+the same hosted vendor; it stopped holding when `strong` moved to a hosted
+provider and `cheap` became the local model. The ordering is unchanged and still
+correct, but the reason is now "last resort by capability", not "shares the
+outage". See `build_generation_fallback_chain` for where that distinction
+actually changes a decision.
 """
 
 from __future__ import annotations
@@ -122,10 +130,16 @@ def build_model_list() -> list[dict[str, Any]]:
 def build_fallback_chain(model_list: list[dict[str, Any]]) -> list[dict[str, list[str]]]:
     """What `strong` falls back to, in order, skipping what is not configured.
 
-    A different vendor first: that is the outage this exists for. `cheap` is the
-    same vendor as `strong`, so it shares the primary's outage and is a last
-    resort rather than a failover — useful for a content-policy refusal or a
-    model-specific fault, useless when the vendor is down.
+    The dedicated `fallback` first: a different vendor is the outage this exists
+    for. `cheap` last, because it is the economy tier — the weakest thing that
+    can still answer, wanted only when everything better is gone.
+
+    **Ordered by capability, not by vendor.** This used to say `cheap` came last
+    because it shared the primary's vendor and therefore its outage. That was
+    true while both tiers were one hosted vendor and false from 2026-08-14, when
+    `strong` moved to a hosted provider and `cheap` became the local model — at
+    which point `cheap` became the deployment MOST likely to survive a hosted
+    outage. The order did not need to change; the justification did.
 
     Referencing a deployment that was never registered is not harmless: the
     Router would route to a name that does not resolve, turning a recoverable
@@ -143,18 +157,37 @@ def build_generation_fallback_chain(model_list: list[dict[str, Any]]) -> list[di
 
     The default chain is `strong -> fallback -> cheap`, which is right for chat:
     a degraded answer that cites correctly still helps, and the DEGRADED frame
-    says so. Generation is different in two ways.
+    says so. Generation is different, and for exactly one reason.
 
-    First, `cheap` shares the primary's vendor, so it does not survive the outage
-    a fallback exists for — it only helps on a model-specific fault. Second, and
-    decisively, a generated practice question reaches a student with **no
-    instructor gate**, and §9.0 permits that because the output is measured. The
-    Feature B rubric scored the strong model. Quietly serving a weaker one means
-    shipping unmeasured output under a measurement someone else earned.
+    **A generated practice question reaches a student with no instructor gate**,
+    and §9.0 permits that *because the output is measured*. The Feature B rubric
+    scored the strong model. Quietly serving a weaker one means shipping
+    unmeasured output under a measurement someone else earned — the protection
+    would still be claimed in the design while no longer being provided.
 
-    So generation gets the different-vendor fallback (announced by DEGRADED) and
+    So generation gets the different-vendor fallback, announced by DEGRADED, and
     nothing else. With no fallback configured the chain is empty and a `strong`
-    outage becomes UNAVAILABLE, which is the honest outcome.
+    outage becomes UNAVAILABLE, which is the honest outcome: no question at all
+    is better than an unmeasured one presented as if it were measured.
+
+    ---
+
+    **This used to rest on a second argument that is now false (2026-08-14).**
+    The original wording opened with *"`cheap` shares the primary's vendor, so it
+    does not survive the outage a fallback exists for"*. That was true while both
+    tiers were the same hosted vendor. It stopped being true the moment `strong`
+    moved to a hosted provider and `cheap` became the local model: they now share
+    neither vendor, nor machine, nor failure mode.
+
+    The argument has in fact **inverted**. On availability grounds alone `cheap`
+    is now the *best* failover in the list — the only deployment that survives
+    every hosted outage at once. Excluding it is therefore a deliberate trade of
+    availability for measurement, not the free choice it used to look like. Worth
+    stating plainly, because the next person to read this chain will notice that
+    the local floor answers chat and wonder why it may not answer generation.
+
+    If the local model is ever scored by the Feature B rubric, this exclusion
+    should be revisited on the evidence rather than left standing on inertia.
     """
     names = {m["model_name"] for m in model_list}
     if PRIMARY_DEPLOYMENT not in names or "fallback" not in names:

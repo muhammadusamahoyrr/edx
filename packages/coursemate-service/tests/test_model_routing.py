@@ -85,6 +85,98 @@ def test_the_chain_never_names_an_unregistered_deployment(monkeypatch):
     client.reset_router()
 
 
+# --- generation is not chat -----------------------------------------------
+#
+# §9.0 lets a generated practice question reach a student with no instructor
+# gate BECAUSE the output is measured. The Feature B rubric scored the strong
+# model. Anything else answering means unmeasured output shipped under a
+# measurement it never earned.
+#
+# The exclusion used to be justified twice over — §9.0, and "cheap shares the
+# primary's vendor so it fails with it anyway". The second half went false on
+# 2026-08-14 when `strong` moved to a hosted provider and `cheap` became the
+# local model. They now share neither vendor nor machine, so on availability
+# grounds `cheap` is the BEST failover in the list. These tests exist because
+# that makes the exclusion a deliberate trade rather than a free one, and a
+# free-looking rule is the kind someone quietly relaxes.
+
+
+def test_generation_never_falls_back_to_the_local_floor(monkeypatch):
+    """The topology that broke the old rationale: hosted primary, hosted
+    fallback, LOCAL cheap. `cheap` survives every hosted outage and still must
+    not generate — it is unmeasured."""
+    _configure(
+        monkeypatch,
+        strong="openrouter/meta-llama/llama-3.3-70b-instruct",
+        cheap="ollama_chat/qwen2.5:7b",
+        fallback="gemini/gemini-2.0-flash",
+    )
+    model_list = client.build_model_list()
+
+    generation = client.build_generation_fallback_chain(model_list)
+    assert generation == [{"strong": ["fallback"]}]
+
+    # Chat keeps the floor — a cited answer from a weaker model still helps, and
+    # DEGRADED says where it came from. The two chains must differ.
+    chat = client.build_fallback_chain(model_list)
+    assert chat == [{"strong": ["fallback", "cheap"]}]
+    assert generation != chat, "generation inherited chat's chain"
+    client.reset_router()
+
+
+def test_generation_has_no_fallback_at_all_when_only_the_local_floor_remains(monkeypatch):
+    """No hosted fallback configured, local `cheap` available and healthy.
+
+    The chain must be EMPTY, so a `strong` outage becomes UNAVAILABLE rather
+    than a silently-local question. No question is better than an unmeasured one
+    presented as measured. This is the live topology as of 2026-08-14.
+    """
+    _configure(
+        monkeypatch,
+        strong="openrouter/meta-llama/llama-3.3-70b-instruct",
+        cheap="ollama_chat/qwen2.5:7b",
+        fallback=None,
+    )
+    model_list = client.build_model_list()
+
+    assert client.build_generation_fallback_chain(model_list) == []
+    # …while chat still degrades to the floor rather than failing.
+    assert client.build_fallback_chain(model_list) == [{"strong": ["cheap"]}]
+    client.reset_router()
+
+
+def test_the_local_floor_is_registered_but_simply_not_named_for_generation(monkeypatch):
+    """Distinguishes "excluded" from "absent".
+
+    If `cheap` were merely unregistered the chain would also be short, and the
+    test above would pass for the wrong reason — hiding a config bug that
+    removed the floor from chat too.
+    """
+    _configure(
+        monkeypatch,
+        strong="openrouter/x", cheap="ollama_chat/qwen2.5:7b", fallback="gemini/y",
+    )
+    model_list = client.build_model_list()
+
+    assert "cheap" in {m["model_name"] for m in model_list}
+    assert "cheap" not in client.build_generation_fallback_chain(model_list)[0]["strong"]
+    client.reset_router()
+
+
+def test_generation_falls_back_only_to_a_different_vendor_never_a_second_local(monkeypatch):
+    """Two local deployments, no hosted fallback: still nothing to fall back to.
+
+    Guards the reading that "cheap is a different vendor now, so let it
+    generate" — the exclusion is about measurement, not vendor identity.
+    """
+    _configure(
+        monkeypatch,
+        strong="ollama_chat/qwen2.5:7b", cheap="ollama_chat/llama3.2:3b", fallback=None,
+    )
+    assert client.build_generation_fallback_chain(client.build_model_list()) == []
+    client.reset_router()
+
+
 # --- what the Router actually does ----------------------------------------
 
 
