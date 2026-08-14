@@ -37,6 +37,10 @@ TUTOR_JS = (
     ROOT / "packages" / "coursemate-platform" / "coursemate_platform"
     / "xblock" / "static" / "js" / "src" / "tutor.js"
 )
+TUTOR_BLOCK = (
+    ROOT / "packages" / "coursemate-platform" / "coursemate_platform"
+    / "xblock" / "tutor_block.py"
+)
 
 #: Declared, deliberately not produced yet, and therefore not required to have a
 #: student-facing message either.
@@ -202,3 +206,78 @@ def test_the_unproduced_allowlist_is_empty_and_should_stay_that_way():
     raises: a promise the type makes that no code path keeps. It reached empty
     on 2026-08-13 and every future entry should be temporary."""
     assert INTENTIONALLY_UNPRODUCED == frozenset()
+
+
+# --- end three: the XBLOCK's own error vocabulary ---------------------------
+#
+# **The blind spot this file had until 2026-08-14.** Everything above checks the
+# `ErrorCode` enum against `NOTICES`, and both ends were correctly wired. The
+# XBlock's JSON handlers have a SEPARATE vocabulary — plain strings in
+# `return {"error": "..."}` — which reaches the exact same `showNotice(code)`
+# lookup and was in neither set. Four of them had no message:
+#
+#     disabled, forbidden, bad_request, invalid_mode
+#
+# `disabled` is returned by `mint()` whenever an author unchecks "enabled" in
+# Studio. So switching the tutor off — a normal, deliberate act — told every
+# student in the course "Something went wrong."
+#
+# This is the same defect the file was written for, one layer up, and the reason
+# it survived is instructive: the check was bound to the enum rather than to the
+# thing it cared about, which is *every string that can reach showNotice*.
+
+#: Error strings the JS never routes through `showNotice`, with the reason.
+#: These are validation messages for the mastery handler, rendered inline beside
+#: the control that produced them rather than in the notice bar.
+NOT_ROUTED_TO_NOTICES: frozenset[str] = frozenset({
+    "clo_id, question_id and attempt_id are all required",
+    "difficulty_band must be easy, medium or hard",
+    "invalid identifier",
+})
+
+
+def xblock_error_strings() -> set[str]:
+    """Every literal in `return {"error": "..."}` in the XBlock's handlers."""
+    src = TUTOR_BLOCK.read_text(encoding="utf-8")
+    return set(re.findall(r'return \{"error":\s*"([^"]+)"', src))
+
+
+def test_the_scan_finds_the_xblock_error_strings_at_all():
+    """A regex that matches nothing would make every test below vacuous — the
+    exact failure mode this file exists to catch, so it is checked rather than
+    assumed."""
+    found = xblock_error_strings()
+    assert len(found) >= 6, f"the scan found only {found}; the pattern has rotted"
+    assert "disabled" in found
+
+
+@pytest.mark.parametrize(
+    "code", sorted(xblock_error_strings() - NOT_ROUTED_TO_NOTICES)
+)
+def test_every_xblock_error_string_has_a_student_facing_message(code):
+    assert code in ui_notice_keys(), (
+        f"tutor_block.py returns {{'error': '{code}'}}, tutor.js passes it "
+        f"straight to showNotice(), and NOTICES has no entry — so the student "
+        f"sees the generic fallback for a state the block named. Add wording, "
+        f"or add it to NOT_ROUTED_TO_NOTICES with a reason."
+    )
+
+
+def test_the_exemption_list_has_not_rotted():
+    """An exemption for a string the block no longer returns is an exemption
+    that reads as if it still covers something."""
+    stale = NOT_ROUTED_TO_NOTICES - xblock_error_strings()
+    assert not stale, f"these are exempted but no longer returned: {sorted(stale)}"
+
+
+def test_disabled_says_switched_off_rather_than_broken():
+    """The specific regression, pinned by meaning and not only by presence.
+
+    An author unchecking "enabled" is not a fault, and the message must not read
+    like one — that is the same distinction NOT_A_FAULT draws for ABSTAINED and
+    PREPARING."""
+    message = re.search(
+        r'disabled: "([^"]+)"', TUTOR_JS.read_text(encoding="utf-8")
+    ).group(1)
+    assert re.search(r"off|unavailable for|not enabled", message, re.IGNORECASE), message
+    assert "went wrong" not in message.lower()

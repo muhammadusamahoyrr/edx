@@ -201,6 +201,44 @@ const tests = {
     assert.match(framed.textContent, /expired/i);
   },
 
+  /* --- the XBlock's own error vocabulary (2026-08-14) ------------------ */
+  //
+  // Everything above is an `ErrorCode` from the service. The block's handlers
+  // return plain strings that reach the SAME showNotice() lookup and were in
+  // neither the enum nor NOTICES, so four of them rendered as the generic
+  // fallback. `disabled` is the one a real course hits.
+
+  async "a tutor switched off in Studio says so, not 'something went wrong'"() {
+    // `mint()` returns {"error": "disabled"} whenever an author unchecks
+    // "enabled". That is a deliberate act, not a fault, and reporting it as one
+    // sends students to support for a setting working exactly as intended.
+    const notice = noticeOf(await askWithMintError("disabled"));
+    assert.notEqual(notice.textContent, GENERIC,
+      "disabled still falls through to the generic message");
+    assert.match(notice.textContent, /off/i);
+  },
+
+  async "the switched-off message does not read as a breakage"() {
+    const notice = noticeOf(await askWithMintError("disabled"));
+    assert.doesNotMatch(notice.textContent, /wrong|error|failed|unavailable/i);
+  },
+
+  async "a learner refused an authoring handler is told why"() {
+    // submit_studio_edits is reachable on the LMS route too, so a student can
+    // provoke this. It must not look like the tutor broke.
+    const notice = noticeOf(await askWithMintError("forbidden"));
+    assert.notEqual(notice.textContent, GENERIC);
+    assert.match(notice.textContent, /staff/i);
+  },
+
+  async "the remaining block errors are all named"() {
+    for (const code of ["bad_request", "invalid_mode"]) {
+      const notice = noticeOf(await askWithMintError(code));
+      assert.notEqual(notice.textContent, GENERIC, `${code} has no wording`);
+      assert.match(notice.className, new RegExp("\\b" + code + "\\b"));
+    }
+  },
+
   /* --- the daily spend ceiling (Phase C1) ------------------------------ */
 
   async "a spent daily budget is named, not reported as a generic fault"() {

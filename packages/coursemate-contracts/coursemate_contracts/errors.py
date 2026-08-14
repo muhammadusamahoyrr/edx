@@ -11,12 +11,16 @@ that a naive implementation would collapse into one generic error:
 They are typed here, in the shared contract, so neither side can render them
 identically by accident.
 
-**One of these is declared and not yet produced** — `CONTRACT_MISMATCH`, marked
-below. That is deliberate and it is enforced:
-`tests/test_error_contract.py` holds the pair in an allowlist and fails if either
-gains a producer while the browser still has no wording for it, and equally if
-any other code loses its producer or its message. A declared code with neither
-end wired is a promise the type makes that nothing keeps.
+**Every code here has a producer, and every code a browser can reach has
+wording.** `tests/test_error_contract.py` enforces both directions and its
+"declared but unproduced" allowlist is empty — a declared code with neither end
+wired is a promise the type makes that nothing keeps.
+
+That test also covers a third vocabulary the enum does not contain: the XBlock's
+handlers return plain strings (`disabled`, `forbidden`, `bad_request`,
+`invalid_mode`) that reach the same `showNotice` lookup. Four of them had no
+message until 2026-08-14 — `disabled` being the one a real course hits, every
+time an author switches the tutor off.
 """
 
 from __future__ import annotations
@@ -41,9 +45,16 @@ class ErrorCode(StrEnum):
     # --- states that mean someone is doing something wrong --------------------
     UNAUTHENTICATED = "unauthenticated"
     NOT_ENROLLED = "not_enrolled"
-    #: NOT PRODUCED. Reserved for service/platform version skew, which this
-    #: deployment cannot have: both ship from one repo and the XBlock pins no
-    #: service version, so there is nothing to compare and disagree about.
+    #: **Produced since 2026-08-13**, by `api/deps.contract_version_guard`, a
+    #: router-level dependency on the three service-credential routers (ingest,
+    #: invalidation, packs). This comment used to say "NOT PRODUCED... which this
+    #: deployment cannot have", which was true only while the version lock was
+    #: unbuilt; wiring the lock made it false and the comment did not follow.
+    #:
+    #: It is the one code with no student-facing message, and that exemption is
+    #: narrow and checked: `SERVER_TO_SERVER_ONLY` in `test_error_contract.py`
+    #: fails if it ever appears on a route a browser can reach. Writing wording
+    #: for it would put a string in the UI no student can get to.
     CONTRACT_MISMATCH = "contract_mismatch"
 
 

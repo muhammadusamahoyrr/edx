@@ -43,7 +43,28 @@ function CourseMateTutor(runtime, element, initArgs) {
      * — the session is gone, so every retry mints nothing and fails the same
      * way. Say the thing that ends the loop. */
     unauthenticated: "Your session has expired — reload the page and sign in again.",
-    truncated: "That answer was cut short. Try asking for a smaller piece of it."
+    truncated: "That answer was cut short. Try asking for a smaller piece of it.",
+
+    /* --- states the XBLOCK returns, not the service -------------------------
+     * The four below come from `tutor_block.py`'s handlers, which have their own
+     * error vocabulary and are NOT in the `ErrorCode` enum. That is why they
+     * were missing: `test_error_contract.py` checked the enum against this
+     * object and had no reason to look at the block's handlers at all. The
+     * enum-side wiring was complete and this half was invisible.
+     *
+     * `disabled` is the one that actually gets seen. `mint()` returns it
+     * whenever an author unchecks "enabled" in Studio, which is a normal,
+     * deliberate action — and until 2026-08-14 the student was told the tutor
+     * was broken rather than switched off. */
+    disabled: "The tutor is switched off for this unit.",
+    /* The handler is reachable on the LMS route as well as in Studio, so a
+     * learner CAN reach it. Says what is true without hinting at what the
+     * control does. */
+    forbidden: "Only course staff can change these settings.",
+    /* Both are "the page sent something the handler could not use", which a
+     * student can neither cause nor fix. Reloading is the only useful advice. */
+    bad_request: "That request could not be understood — try reloading the page.",
+    invalid_mode: "That tutor mode is not one this block supports."
   };
 
   /* Exam prep reuses every notice above, and overrides the two whose wording
