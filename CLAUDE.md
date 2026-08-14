@@ -155,9 +155,20 @@ above.
 
 **Known and still open** (evidence in the 2026-08-13 review):
 
-* **No cross-vendor failover.** `fallback_model` is empty and the only provider
-  is the local `ollama_chat/qwen2.5:7b`. `DEGRADED`, the fallback chain and
-  `provider_failures_total` all exist and cannot fire.
+* ~~**No cross-vendor failover.**~~ **Resolved 2026-08-14.** The live chain is
+  `strong` → `openrouter/meta-llama/llama-3.3-70b-instruct` (hosted),
+  `cheap` → `ollama_chat/qwen2.5:7b` (local floor). `DEGRADED` and the fallback
+  chain have now fired against a real outage — `failover_probe.sh` disabled the
+  hosted provider and the local model answered with citations intact. What is
+  still missing is narrower: `fallback_model` remains empty, so there is **no
+  second HOSTED vendor**, and practice generation therefore has no fallback at
+  all (deliberate — ADR-0001). Evidence: BENCHMARKS §3.11.
+* **`provider_failures_total` cannot see a silent degradation.** It increments
+  only when an exception reaches `pipeline.py`, and the Router swallows the
+  failure whenever a fallback succeeds — so the degraded step moved it by 0 and
+  only a total outage moved it by 1. A primary degrading every request is
+  invisible in metrics. Needs a separate `degraded_answers_total`; not added,
+  because it is a behaviour change. BENCHMARKS §4.6, LIMITATIONS §2.
 * **The C2 cache is inert**, not broken — see the table row above.
 * **Coverage holes where it matters least comfortably**: `api/ingest.py` 36%,
   `boundary/authz.py` 71%, `api/invalidation.py` 67% — the write path and the
