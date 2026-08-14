@@ -83,11 +83,36 @@ class Settings(BaseSettings):
     #: Swapping providers is configuration, never a code change.
     strong_model: str = "anthropic/claude-opus-5"
     cheap_model: str = "anthropic/claude-haiku-4-5-20251001"
+    #: `strong`'s credential. **Not `cheap`'s** — see `cheap_api_key` below.
     model_api_key: str | None = None
     #: Only needed by providers that are not reachable at a well-known host —
     #: Ollama, vLLM, an OpenAI-compatible gateway. `None` leaves LiteLLM's own
     #: default, which is right for every hosted vendor.
     model_api_base: str | None = None
+
+    #: **`cheap` gets its own credential and base URL (2026-08-14).** Both tiers
+    #: used to be handed `model_api_key` and `model_api_base`, which was fine
+    #: while they were one vendor and became a trap the moment ADR-0001 made
+    #: `strong` hosted (OpenRouter) and `cheap` local (Ollama).
+    #:
+    #: The trap is specific, and the docs walked straight into it. This file and
+    #: `deploy/tutor-plugin/coursemate.yml` both presented `MODEL_API_BASE` as
+    #: *the* provider-agnostic way to point at a local model. Following that
+    #: advice with the current topology hands the OpenRouter deployment the
+    #: Ollama URL as well, and the primary starts failing for a reason nothing
+    #: in the config names. The live deployment only avoided it by leaving
+    #: `MODEL_API_BASE` empty and relying on LiteLLM reading `OLLAMA_API_BASE`
+    #: itself — a provider-specific side channel that works and is not what
+    #: either document describes.
+    #:
+    #: The second half is smaller and still wrong: `cheap` was being sent the
+    #: HOSTED vendor's key. Harmless while Ollama is on the same host; a
+    #: credential leak the day it is not.
+    #:
+    #: `None` on either falls back to the `model_*` value, so a single-vendor
+    #: deployment configures one pair and changes nothing.
+    cheap_api_key: str | None = None
+    cheap_api_base: str | None = None
 
     #: A different *provider*, which is what survives one vendor's outage — not a
     #: second model from the same vendor.
@@ -103,9 +128,18 @@ class Settings(BaseSettings):
     #:     COURSEMATE_FALLBACK_MODEL=ollama/qwen2.5:7b
     #:     COURSEMATE_FALLBACK_API_BASE=http://host.docker.internal:11434
     #:
-    #: Leave it unset and the chain is `strong -> cheap` only, which shares the
-    #: primary's vendor and therefore its outage. That is a real gap, and it is
-    #: named in LIMITATIONS §2 rather than papered over.
+    #: **The old reason for setting this is no longer the reason (2026-08-14).**
+    #: This said: *"Leave it unset and the chain is `strong -> cheap` only, which
+    #: shares the primary's vendor and therefore its outage."* ADR-0001 retracted
+    #: that sentence — `strong` is hosted and `cheap` is local, so they share
+    #: neither vendor, machine, nor failure mode, and `cheap` is in fact the
+    #: deployment most likely to survive a hosted outage. The correction landed in
+    #: `ai/client.py` and in the ADR and was missed here.
+    #:
+    #: The gap that remains is narrower and still real: with this unset there is
+    #: no second HOSTED vendor, and practice generation has no fallback at all —
+    #: `build_generation_fallback_chain` will not use `cheap`, deliberately
+    #: (ADR-0001 decision 4). LIMITATIONS §2 carries it.
     fallback_model: str | None = None
     fallback_api_key: str | None = None
     fallback_api_base: str | None = None

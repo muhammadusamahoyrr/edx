@@ -46,15 +46,27 @@ config:
     # Base URLs for providers that are not at a well-known host: Ollama, vLLM, an
     # OpenAI-compatible gateway. Empty for hosted vendors, which need none.
     #
-    # `OLLAMA_API_BASE` below already covers `ollama/*` because LiteLLM reads that
-    # variable itself. These two are the provider-agnostic form, and they are the
-    # ones `config.py` documents — so they have to exist here or that recipe is a
-    # doc describing something the deployment cannot do.
+    # **MODEL_API_BASE applies to STRONG ONLY.** It used to apply to `cheap` as
+    # well, and this comment used to recommend it as the provider-agnostic way to
+    # point at a local model — advice that broke the deployment it was written
+    # for. With ADR-0001's topology (`strong` hosted, `cheap` local) one base URL
+    # cannot address both, so setting this to the Ollama URL sent the HOSTED
+    # primary to Ollama too. The live stack only escaped it by leaving this empty
+    # and relying on `OLLAMA_API_BASE`, which LiteLLM reads by itself.
+    #
+    # So: to run a local `cheap` tier beside a hosted `strong` one, set
+    # CHEAP_API_BASE (and CHEAP_API_KEY if the gateway wants one). `OLLAMA_API_BASE`
+    # still works for `ollama/*` and is the narrower tool; CHEAP_API_BASE is the
+    # one to reach for with vLLM or an OpenAI-compatible gateway.
     #
     # From a container, the host's Ollama is NOT `localhost`. Use
     # `http://host.docker.internal:11434` together with the `extra_hosts` entry
     # below, which is what makes that name resolve on Linux/WSL.
     MODEL_API_BASE: ""
+    # Empty falls back to MODEL_API_KEY / MODEL_API_BASE, so a single-vendor
+    # deployment configures one pair and ignores these.
+    CHEAP_API_KEY: ""
+    CHEAP_API_BASE: ""
     FALLBACK_API_BASE: ""
     # --- the exam-prep agent (Feature B) -------------------------------------
     # **Ships dark.** Read at the API layer, so `false` routes exam prep to the
@@ -115,6 +127,8 @@ patches:
         COURSEMATE_FALLBACK_MODEL: "{{ COURSEMATE_FALLBACK_MODEL }}"
         COURSEMATE_FALLBACK_API_KEY: "{{ COURSEMATE_FALLBACK_API_KEY }}"
         COURSEMATE_MODEL_API_BASE: "{{ COURSEMATE_MODEL_API_BASE }}"
+        COURSEMATE_CHEAP_API_KEY: "{{ COURSEMATE_CHEAP_API_KEY }}"
+        COURSEMATE_CHEAP_API_BASE: "{{ COURSEMATE_CHEAP_API_BASE }}"
         COURSEMATE_FALLBACK_API_BASE: "{{ COURSEMATE_FALLBACK_API_BASE }}"
         COURSEMATE_AGENT_ENABLED: "{{ COURSEMATE_AGENT_ENABLED }}"
         COURSEMATE_REDIS_URL: "{{ COURSEMATE_REDIS_URL }}"

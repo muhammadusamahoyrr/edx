@@ -94,6 +94,14 @@ def build_model_list() -> list[dict[str, Any]]:
     **Each name appears at most once, and that is load-bearing** — see the module
     docstring. Two deployments sharing a name are load-balanced peers, not a
     priority chain, so naming the fallback `strong` handed it half the traffic.
+
+    **Each name also gets its own credential pair (2026-08-14).** `strong` and
+    `cheap` used to share `model_api_key`/`model_api_base`. That held while both
+    tiers were one vendor and stopped holding when ADR-0001 made `strong` hosted
+    and `cheap` local: one base URL cannot address two providers, so setting the
+    documented `MODEL_API_BASE` to reach Ollama also pointed the hosted primary
+    at Ollama. `cheap_*` falls back to `model_*`, so a single-vendor deployment
+    still configures one pair.
     """
     models: list[dict[str, Any]] = []
 
@@ -106,7 +114,14 @@ def build_model_list() -> list[dict[str, Any]]:
     if settings.cheap_model:
         models.append(
             _deployment(
-                "cheap", settings.cheap_model, settings.model_api_key, settings.model_api_base
+                "cheap",
+                settings.cheap_model,
+                # `or` rather than a None check: an EMPTY string is what the
+                # Tutor plugin renders for an unset variable, and treating "" as
+                # "configured, to nothing" would hand `cheap` an empty key the
+                # moment the template ships a default.
+                settings.cheap_api_key or settings.model_api_key,
+                settings.cheap_api_base or settings.model_api_base,
             )
         )
 

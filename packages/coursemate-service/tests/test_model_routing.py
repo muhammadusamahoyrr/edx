@@ -37,14 +37,90 @@ from coursemate_service.ai.context import ContextChunk, ContextResult
 # --- deployment naming ----------------------------------------------------
 
 
-def _configure(monkeypatch, *, strong, cheap, fallback):
+def _configure(monkeypatch, *, strong, cheap, fallback, cheap_key=None, cheap_base=None):
     client.reset_router()
     monkeypatch.setattr(client.settings, "strong_model", strong)
     monkeypatch.setattr(client.settings, "cheap_model", cheap)
     monkeypatch.setattr(client.settings, "fallback_model", fallback)
     monkeypatch.setattr(client.settings, "model_api_key", "sk-mock")
+    monkeypatch.setattr(client.settings, "model_api_base", None)
+    monkeypatch.setattr(client.settings, "cheap_api_key", cheap_key)
+    monkeypatch.setattr(client.settings, "cheap_api_base", cheap_base)
     monkeypatch.setattr(client.settings, "fallback_api_key", "sk-mock-2")
     monkeypatch.setattr(client.settings, "redis_url", "")
+
+
+def _params(models, name) -> dict:
+    return next(m["litellm_params"] for m in models if m["model_name"] == name)
+
+
+# --- one credential pair per deployment (2026-08-14) ----------------------
+#
+# `strong` and `cheap` shared `model_api_key`/`model_api_base` until ADR-0001
+# split the tiers across two vendors. One base URL cannot address two providers,
+# so the documented recipe for reaching a local model — set MODEL_API_BASE —
+# also pointed the HOSTED primary at the local server. Nothing failed loudly;
+# the primary just stopped working, for a reason no setting named.
+
+
+def test_the_cheap_tier_can_have_its_own_base_url(monkeypatch):
+    """The topology this exists for: hosted primary, local floor."""
+    _configure(
+        monkeypatch,
+        strong="openrouter/meta-llama/llama-3.3-70b-instruct",
+        cheap="ollama_chat/qwen2.5:7b",
+        fallback="",
+        cheap_base="http://172.18.0.1:11435",
+    )
+    models = client.build_model_list()
+
+    assert _params(models, "cheap")["api_base"] == "http://172.18.0.1:11435"
+    assert "api_base" not in _params(models, "strong"), (
+        "the hosted primary was given the local model's base URL — this is the "
+        "exact failure the split prevents"
+    )
+    client.reset_router()
+
+
+def test_the_hosted_key_is_not_handed_to_the_local_model(monkeypatch):
+    _configure(
+        monkeypatch,
+        strong="openrouter/x", cheap="ollama_chat/y", fallback="",
+        cheap_key="sk-local", cheap_base="http://localhost:11434",
+    )
+    models = client.build_model_list()
+
+    assert _params(models, "strong")["api_key"] == "sk-mock"
+    assert _params(models, "cheap")["api_key"] == "sk-local"
+    client.reset_router()
+
+
+def test_one_vendor_still_configures_one_pair(monkeypatch):
+    """The fallback that keeps this from being a breaking change. A deployment
+    with both tiers on one vendor sets `model_*` and nothing else, exactly as
+    before."""
+    _configure(monkeypatch, strong="anthropic/a", cheap="anthropic/b", fallback="")
+    monkeypatch.setattr(client.settings, "model_api_base", "https://gw.example/v1")
+    models = client.build_model_list()
+
+    for name in ("strong", "cheap"):
+        assert _params(models, name)["api_key"] == "sk-mock"
+        assert _params(models, name)["api_base"] == "https://gw.example/v1"
+    client.reset_router()
+
+
+def test_an_empty_cheap_key_falls_back_rather_than_configuring_nothing(monkeypatch):
+    """The Tutor plugin renders an unset variable as `""`, not as absent. Read
+    as "configured, to nothing", that would hand `cheap` an empty credential the
+    day the template ships the default — which is why the code uses `or`."""
+    _configure(
+        monkeypatch, strong="anthropic/a", cheap="anthropic/b", fallback="",
+        cheap_key="", cheap_base="",
+    )
+    models = client.build_model_list()
+
+    assert _params(models, "cheap")["api_key"] == "sk-mock"
+    client.reset_router()
 
 
 def test_the_fallback_is_not_registered_as_a_second_strong(monkeypatch):
@@ -243,7 +319,7 @@ def _claims() -> StudentClaims:
 
 def _grounded():
     class _P:
-        async def fetch(self, question, claims):  # noqa: ARG002
+        async def fetch(self, question, claims):
             return ContextResult(
                 chunks=[ContextChunk(
                     text="Locks are acquired in a fixed order.",
@@ -267,7 +343,7 @@ def _router_answering_as(model_name: str | None):
         yield _Chunk()
 
     class _Router:
-        async def acompletion(self, **kw):  # noqa: ARG002
+        async def acompletion(self, **kw):
             return _stream()
 
     return _Router()
@@ -275,7 +351,7 @@ def _router_answering_as(model_name: str | None):
 
 async def _frames(monkeypatch, resolves_to):
     monkeypatch.setattr(pl, "get_router", lambda: _router_answering_as(resolves_to))
-    monkeypatch.setattr(pl, "deployment_of", lambda part: resolves_to)  # noqa: ARG005
+    monkeypatch.setattr(pl, "deployment_of", lambda part: resolves_to)
     return [f async for f in pl.AnswerPipeline(_grounded()).stream(
         ChatRequest(question="q"), _claims())]
 

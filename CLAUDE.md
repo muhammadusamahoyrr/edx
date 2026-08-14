@@ -73,9 +73,25 @@ wrong; the system wins.
 >            TCP:127.0.0.1:11434 </dev/null >/tmp/socat.log 2>&1 &
 >
 > Run it as root (`wsl -u root`, no password needed) and **re-run it after any WSL
-> restart** — it is not persistent. `COURSEMATE_MODEL_API_BASE` points at
-> `http://172.18.0.1:11435`. If generation starts returning `unavailable`, check
-> this forwarder before anything else.
+> restart** — it is not persistent. If generation starts returning `unavailable`,
+> check this forwarder before anything else.
+>
+> **The variable pointing at it is `OLLAMA_API_BASE`, NOT
+> `COURSEMATE_MODEL_API_BASE` (corrected 2026-08-14).** This note said the latter
+> and it was wrong, in the direction that breaks things. Verified against the
+> running container:
+>
+>     COURSEMATE_MODEL_API_BASE=            <-- empty
+>     OLLAMA_API_BASE=http://172.18.0.1:11435
+>
+> The line was true while both tiers were Ollama and stopped being true when
+> ADR-0001 made `strong` hosted. Acting on it — setting `MODEL_API_BASE` to the
+> forwarder — used to point the HOSTED primary at Ollama too, because `strong`
+> and `cheap` shared one base URL. They no longer do: `cheap` has
+> `COURSEMATE_CHEAP_API_BASE` / `COURSEMATE_CHEAP_API_KEY` of its own, falling
+> back to the `MODEL_*` pair when unset. So the trap is closed at both ends, and
+> for a local `cheap` tier beside a hosted `strong` one, `CHEAP_API_BASE` is now
+> the variable to reach for.
 >
 > **`setsid` is load-bearing; `nohup … &` is not enough (2026-08-12).** Started
 > with plain `nohup` from a `wsl -- bash script.sh` invocation, the forwarder dies
