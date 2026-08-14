@@ -68,7 +68,16 @@ globalThis.document = {
   createTextNode: (txt) => Object.assign(makeNode("#text", ""), { textContent: txt }),
   cookie: "csrftoken=abc",
 };
-globalThis.window = { location: { origin: "https://lms.example" } };
+/* setTimeout/clearTimeout are here because `ask()` schedules the "still
+   working" line on the waiting indicator, and tutor.js reaches them through
+   `window.` — the same way it already reaches `window.location.origin`. The
+   fake window was missing them, which is the harness being incomplete rather
+   than the code being wrong. */
+globalThis.window = {
+  location: { origin: "https://lms.example" },
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (id) => clearTimeout(id),
+};
 globalThis.URL = URL;
 globalThis.TextDecoder = TextDecoder;
 

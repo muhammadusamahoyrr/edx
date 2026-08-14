@@ -34,7 +34,11 @@
 
   <div class="cm-panel" data-panel="chat">
     <div class="cm-log" role="log" aria-live="polite"></div>
-    <div class="cm-notice" hidden></div>
+    <!-- role=status: the notice sits OUTSIDE .cm-log, so unlike the answer
+         stream nothing was announcing it. An expired session or a spent
+         budget is exactly the kind of thing a screen-reader user needs
+         told, and it was silent. -->
+    <div class="cm-notice" role="status" aria-live="polite" hidden></div>
     <div class="cm-composer">
       <form class="cm-form">
         <input class="cm-input" type="text" autocomplete="off"

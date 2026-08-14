@@ -287,6 +287,49 @@ div.coursemate-tutor optgroup {
 
 .coursemate-tutor .cm-answer { white-space: pre-wrap; }
 
+/* --- the waiting state ---------------------------------------------------
+   Shown from Ask until the first token. Measured time to first token here runs
+   from 3.5 s on the hosted primary to 106 s on the local model, and until now
+   that was an empty bubble with nothing saying the tutor was working.
+
+   Violet, matching --cm-ai: the provenance language already uses it for
+   "generated", and this is the model working. Green would claim course
+   material, which is the one thing this moment is NOT. */
+.coursemate-tutor .cm-thinking {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 13px; line-height: 18px; color: var(--cm-muted);
+}
+.coursemate-tutor .cm-thinking-dots { display: inline-flex; gap: 4px; }
+.coursemate-tutor .cm-thinking-dots i {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--cm-ai); opacity: 0.35;
+  animation: cm-thinking-pulse 1.2s ease-in-out infinite;
+}
+.coursemate-tutor .cm-thinking-dots i:nth-child(2) { animation-delay: 0.15s; }
+.coursemate-tutor .cm-thinking-dots i:nth-child(3) { animation-delay: 0.30s; }
+
+/* Appended after ~10s. A static label held for a minute and a half reads as
+   hung, and the student's only move then is a reload that discards the
+   generation they were waiting for. */
+.coursemate-tutor .cm-thinking-slow {
+  flex-basis: 100%; font-size: 12px; color: var(--cm-muted); opacity: 0.85;
+}
+
+@keyframes cm-thinking-pulse {
+  0%, 80%, 100% { opacity: 0.25; }
+  40%           { opacity: 1; }
+}
+
+/* The first animation in this file, so it also sets the precedent: motion is
+   opt-out. Vestibular disorders make looping motion genuinely unpleasant, and
+   a status indicator is the last thing that should be hard to look at. The
+   dots stay visible and simply hold still — the information is the label. */
+@media (prefers-reduced-motion: reduce) {
+  .coursemate-tutor .cm-thinking-dots i {
+    animation: none; opacity: 0.55;
+  }
+}
+
 /* Sources as one chip row rather than a stack of "Source:" lines: three
    citations were three lines of boilerplate for three words of information. */
 .coursemate-tutor .cm-sources {

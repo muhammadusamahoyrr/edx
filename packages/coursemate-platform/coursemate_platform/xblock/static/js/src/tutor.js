@@ -193,6 +193,71 @@ function CourseMateTutor(runtime, element, initArgs) {
     sendButton.disabled = state;
   }
 
+  /* --- the waiting state ---------------------------------------------------
+   *
+   * `busy()` above disabled the input and the button and did nothing else, so
+   * between pressing Ask and the first token the student watched an EMPTY grey
+   * bubble with no sign the tutor was working. Time to first token, measured in
+   * this repo: 3,512 ms on the hosted primary (ADR-0001), and 9.7 s / 24 s /
+   * 106.3 s on the local model (BENCHMARKS §132, §266). A minute and a half of
+   * blank bubble reads as broken, and the student's only move is to reload —
+   * which throws away the generation they were waiting for.
+   *
+   * **Two states, because two are all the client can actually observe.** The
+   * server does retrieval, the gate and the provider call between the request
+   * and the first frame, and none of that is visible from here. Inventing a
+   * third label ("generating…") would be a guess presented as a status, which
+   * is the failure this project keeps naming. So:
+   *
+   *     CONNECTING  ask() -> mint returns          (an LMS handler round trip)
+   *     SEARCHING   stream opened -> first frame   (retrieval + gate + model)
+   *
+   * **No aria-live here, deliberately.** The indicator is appended inside
+   * `.cm-log`, which already carries `role="log" aria-live="polite"`. A nested
+   * live region inside another one is not additive — implementations differ on
+   * which wins, and the usual result is double or dropped announcements.
+   */
+  var THINKING_SLOW_MS = 10000;
+
+  function thinkingNode() {
+    var node = el("div", "cm-thinking");
+    /* aria-hidden: the dots are decoration. The label beside them is the part
+     * worth announcing, and the log's live region carries it. */
+    var dots = el("span", "cm-thinking-dots");
+    dots.setAttribute("aria-hidden", "true");
+    dots.appendChild(el("i"));
+    dots.appendChild(el("i"));
+    dots.appendChild(el("i"));
+    node.appendChild(dots);
+    node.appendChild(el("span", "cm-thinking-label", "Connecting…"));
+    return node;
+  }
+
+  /* A live generation, or null. Holds the timer so it can be cleared on every
+   * exit path — a timer that outlives its node is how an indicator ends up
+   * writing into a detached element. */
+  function startThinking(bubble) {
+    var node = thinkingNode();
+    var label = node.querySelector(".cm-thinking-label");
+    bubble.appendChild(node);
+
+    /* A static label held for 106 seconds still reads as hung. This says the
+     * wait is expected without promising a time nothing here can predict. */
+    var slowTimer = window.setTimeout(function () {
+      node.appendChild(
+        el("span", "cm-thinking-slow", "still working — this can take a minute")
+      );
+    }, THINKING_SLOW_MS);
+
+    return {
+      searching: function () { label.textContent = "Searching this course…"; },
+      stop: function () {
+        window.clearTimeout(slowTimer);
+        if (node.parentNode) { node.parentNode.removeChild(node); }
+      }
+    };
+  }
+
   /* Django rejects a POST without a CSRF token and returns an HTML error page,
    * which then fails to parse as JSON — surfacing as the misleading
    * "Unexpected token '<'". Read the token the platform already set. */
@@ -270,8 +335,26 @@ function CourseMateTutor(runtime, element, initArgs) {
      * once. See renderHistory. */
     var unsupported = [];
 
+    var thinking = startThinking(answerBubble);
+
+    /* Every exit runs through here, and that is the whole point. An indicator
+     * removed on the happy path and left spinning on a failure is worse than
+     * none: it says the tutor is still working when it has already given up.
+     *
+     * It also drops the turn's node when nothing was produced. The empty bubble
+     * was already being orphaned on these paths before the indicator existed —
+     * a failed ask left a blank grey bubble in the log forever — and removing
+     * only the dots would have made that more visible, not less. */
+    function settle() {
+      thinking.stop();
+      if (!answer && answerNode.parentNode) {
+        answerNode.parentNode.removeChild(answerNode);
+      }
+      busy(false);
+    }
+
     mintToken().then(function (token) {
-      if (token.error) { showNotice(token.error); busy(false); return; }
+      if (token.error) { showNotice(token.error); settle(); return; }
 
       return fetch(token.stream_path, {
         method: "POST",
@@ -287,12 +370,17 @@ function CourseMateTutor(runtime, element, initArgs) {
       }).then(function (response) {
         if (!response.ok || !response.body) {
           showNotice("unavailable");
-          busy(false);
+          settle();
           return;
         }
+        /* The stream is open, so the LMS hop is done and the wait is now the
+         * service: retrieval, the gate, then the model. */
+        thinking.searching();
         return readStream(response, function (frame) {
           switch (frame.type) {
             case "token":
+              /* First text: the wait is over even if more is coming. */
+              thinking.stop();
               answer += frame.text || "";
               answerText.textContent = answer;
               log.scrollTop = log.scrollHeight;
@@ -322,17 +410,22 @@ function CourseMateTutor(runtime, element, initArgs) {
               );
               break;
             case "error":
+              // Includes ABSTAINED and PREPARING, which arrive with no tokens
+              // at all — so this is the ONLY thing that stops the indicator on
+              // the two most common non-answers.
+              thinking.stop();
               showNotice(frame.error_code || "unavailable");
               break;
             case "done":
               // A cut-off answer looks identical to a complete one — it just
               // stops, and the student reads that as the tutor not knowing the
               // rest. Say which it was.
+              thinking.stop();
               if (frame.truncated) { showNotice("truncated"); }
               break;
           }
         }).then(function () {
-          busy(false);
+          settle();
           if (!answer) { return; }
           history.push({
             role: "tutor", content: answer,
@@ -351,8 +444,11 @@ function CourseMateTutor(runtime, element, initArgs) {
         });
       });
     }).catch(function () {
+      // The last exit path: a rejected mint, a dropped connection, a read that
+      // threw mid-stream. Without this the indicator outlives the request that
+      // owns it and spins until the page is reloaded.
       showNotice("unavailable");
-      busy(false);
+      settle();
     });
   }
 
