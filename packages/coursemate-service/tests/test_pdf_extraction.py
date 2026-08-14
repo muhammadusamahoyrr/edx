@@ -199,13 +199,13 @@ def test_reimporting_the_same_document_is_refused(tmp_path, monkeypatch):
         FIXTURE, offering_id=OFFERING, tenant=TENANT, year=2024, exam_type="final"
     )
 
-    first = pytest.importorskip("asyncio").run(packs.load_pack(built))
+    first = packs.load_pack(built)
     assert first["questions"] == 5
     assert first["duplicate_checked"] is True
     assert first["reloaded"] is False
 
     with pytest.raises(HTTPException) as exc:
-        pytest.importorskip("asyncio").run(packs.load_pack(built))
+        packs.load_pack(built)
     assert exc.value.status_code == 409
     assert "already imported" in exc.value.detail
 
@@ -213,8 +213,6 @@ def test_reimporting_the_same_document_is_refused(tmp_path, monkeypatch):
 def test_force_allows_a_corrected_reextraction(tmp_path, monkeypatch):
     """A better extraction of the same PDF is legitimate. The refusal is a
     guard, not a wall."""
-    import asyncio
-
     import coursemate_service.api.packs as packs
 
     store = ExamPrepStore(tmp_path / "e.db")
@@ -223,8 +221,8 @@ def test_force_allows_a_corrected_reextraction(tmp_path, monkeypatch):
         FIXTURE, offering_id=OFFERING, tenant=TENANT, year=2024, exam_type="final"
     )
 
-    asyncio.run(packs.load_pack(built))
-    again = asyncio.run(packs.load_pack(built, force=True))
+    packs.load_pack(built)
+    again = packs.load_pack(built, force=True)
     assert again["reloaded"] is True
     assert again["questions"] == 5
     # Replaced, not appended.
@@ -234,18 +232,16 @@ def test_force_allows_a_corrected_reextraction(tmp_path, monkeypatch):
 def test_a_pack_with_no_hash_says_it_was_not_checked(tmp_path, monkeypatch):
     """"Unknown" is not "new". A hand-written pack cannot be duplicate-checked,
     and the loader reports that rather than implying a check happened."""
-    import asyncio
-
     import coursemate_service.api.packs as packs
 
     store = ExamPrepStore(tmp_path / "e.db")
     monkeypatch.setattr(packs, "get_examprep_store", lambda: store)
 
     plain = ExamPrepPack(offering_id=OFFERING, tenant=TENANT)
-    out = asyncio.run(packs.load_pack(plain))
+    out = packs.load_pack(plain)
     assert out["duplicate_checked"] is False
     # And loading it twice is allowed, because nothing can say it is the same.
-    assert asyncio.run(packs.load_pack(plain))["duplicate_checked"] is False
+    assert packs.load_pack(plain)["duplicate_checked"] is False
 
 
 def test_a_different_document_is_not_a_duplicate(tmp_path):

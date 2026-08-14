@@ -282,7 +282,7 @@ async def test_loading_another_tenants_pack_is_refused(tmp_path, monkeypatch):
     monkeypatch.setattr(packs, "get_examprep_store",
                         lambda: ExamPrepStore(tmp_path / "p.db"))
     with pytest.raises(HTTPException) as exc:
-        await packs.load_pack(ExamPrepPack(offering_id=OFFERING, tenant="someone-else"))
+        packs.load_pack(ExamPrepPack(offering_id=OFFERING, tenant="someone-else"))
     assert exc.value.status_code == 400
 
 
@@ -297,7 +297,7 @@ async def test_duplicate_question_ids_are_named_not_swallowed(tmp_path, monkeypa
     monkeypatch.setattr(packs, "get_examprep_store",
                         lambda: ExamPrepStore(tmp_path / "p.db"))
     with pytest.raises(HTTPException) as exc:
-        await packs.load_pack(ExamPrepPack(
+        packs.load_pack(ExamPrepPack(
             offering_id=OFFERING, tenant=TENANT,
             questions=[_question("DUP", "CLO-1"), _question("DUP", "CLO-2")],
         ))
@@ -312,7 +312,7 @@ async def test_loading_reports_unconfirmed_clos(tmp_path, monkeypatch):
 
     monkeypatch.setattr(packs, "get_examprep_store",
                         lambda: ExamPrepStore(tmp_path / "p.db"))
-    out = await packs.load_pack(ExamPrepPack(
+    out = packs.load_pack(ExamPrepPack(
         offering_id=OFFERING, tenant=TENANT,
         clos=[CLO(clo_id="CLO-1", text="a"), CLO(clo_id="CLO-2", text="b", confirmed_by="x")],
     ))

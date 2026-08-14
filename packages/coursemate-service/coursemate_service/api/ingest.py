@@ -31,9 +31,28 @@ router = APIRouter(
     dependencies=[Depends(service_credential), Depends(contract_version_guard)]
 )
 
+# --- every route here is `def`, not `async def`, and that is load-bearing ----
+#
+# `ChunkStore` is synchronous SQLite behind a lock. FastAPI runs a plain `def`
+# endpoint in a threadpool and an `async def` one directly on the event loop, so
+# `async def` here put a full course reindex — hundreds of inserts, a verify and
+# a swap that takes `BEGIN IMMEDIATE` — on the same loop that is streaming
+# answers to students. One bootstrap stalled every open stream in the process.
+#
+# The project already knew the rule and had written it down on the read side.
+# `ai/retrieval.py`: *"SQLite is blocking, so the whole retrieval runs in a
+# worker thread — one slow query must not stall every other student's stream."*
+# The read path wrapped itself in `asyncio.to_thread`; the write path was
+# declared `async` and awaited nothing. Nothing in the signature said so, which
+# is why it survived review: an `async def` that never awaits looks tidier than
+# the `def` that is correct.
+#
+# Fixed 2026-08-14. `test_blocking_routes_are_not_async.py` pins it, because the
+# next person adding a route here will copy the one above it.
+
 
 @router.post("/blocks", response_model=IngestAccepted)
-async def ingest_blocks(request: IngestRequest) -> IngestAccepted:
+def ingest_blocks(request: IngestRequest) -> IngestAccepted:
     """Chunk and index a batch of published leaf blocks.
 
     §5.5 rule 1 — two blocks are never merged into one chunk — is enforced by the
@@ -115,7 +134,7 @@ async def ingest_blocks(request: IngestRequest) -> IngestAccepted:
 
 
 @router.post("/delete")
-async def delete_blocks(request: DeleteRequest) -> dict:
+def delete_blocks(request: DeleteRequest) -> dict:
     """XBLOCK_DELETED, or an orphan found by the reconciliation sweep (§5.4)."""
     store = get_store()
     deleted = store.delete_by_prefix(request.offering_id, request.usage_key)
@@ -123,7 +142,7 @@ async def delete_blocks(request: DeleteRequest) -> dict:
 
 
 @router.get("/manifest/{offering_id:path}")
-async def manifest(offering_id: str) -> dict:
+def manifest(offering_id: str) -> dict:
     """Every block currently served for this offering.
 
     The reconciliation sweep (§5.4) needs this because **no unpublish event
@@ -138,7 +157,7 @@ async def manifest(offering_id: str) -> dict:
 
 
 @router.post("/prune")
-async def prune(request: dict) -> dict:
+def prune(request: dict) -> dict:
     """Remove blocks the sweep found to be orphaned.
 
     Separate from /delete, which drops a subtree on XBLOCK_DELETED. This takes an
@@ -154,7 +173,7 @@ async def prune(request: dict) -> dict:
 
 
 @router.get("/offerings")
-async def offerings() -> dict:
+def offerings() -> dict:
     """Courses the nightly sweep should visit.
 
     Declared before /stats/{offering_id:path} would otherwise be reachable — a
@@ -165,5 +184,5 @@ async def offerings() -> dict:
 
 
 @router.get("/stats/{offering_id:path}")
-async def stats(offering_id: str) -> dict:
+def stats(offering_id: str) -> dict:
     return get_store().stats(offering_id)

@@ -22,15 +22,27 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from ..config import settings
 from ..knowledge import get_examprep_store
-from .deps import service_credential
+from .deps import contract_version_guard, service_credential
 
 log = logging.getLogger(__name__)
 
-router = APIRouter()
+# **The version lock belongs here too (added 2026-08-14).** `deps.py` described
+# the guard as covering "the two server-to-server routers — ingest and
+# invalidation". There are three: this one carries the same service credential
+# and is called by the same operator tooling, and it was simply missed when the
+# lock was wired. A pack load writes a term's worth of extracted papers that
+# cannot be rebuilt from the modulestore, so of the three it is the one where a
+# wire-format disagreement is least recoverable.
+#
+# Router-level, not per-route, so a NEW route here inherits both dependencies —
+# which is the shape that would have prevented the omission in the first place.
+router = APIRouter(
+    dependencies=[Depends(service_credential), Depends(contract_version_guard)]
+)
 
 
-@router.post("/load", dependencies=[Depends(service_credential)])
-async def load_pack(pack: ExamPrepPack, force: bool = False) -> dict:
+@router.post("/load")
+def load_pack(pack: ExamPrepPack, force: bool = False) -> dict:
     """Replace this offering's questions and CLOs, atomically.
 
     Returns counts, never a bare `{"status": "ok"}`. A loader that reports success

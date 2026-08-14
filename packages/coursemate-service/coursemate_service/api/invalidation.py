@@ -23,7 +23,7 @@ router = APIRouter(
 
 
 @router.post("")
-async def invalidate(notice: InvalidationNotice) -> dict:
+def invalidate(notice: InvalidationNotice) -> dict:
     dropped = verifier.invalidate(
         user_id=notice.student_id or None,
         offering_id=notice.offering_id or None,
