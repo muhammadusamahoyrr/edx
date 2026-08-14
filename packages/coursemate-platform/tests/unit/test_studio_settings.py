@@ -194,8 +194,8 @@ def test_unknown_keys_are_ignored():
 # and no control to save FROM. Both are pinned, because either one missing
 # leaves the field unreachable exactly as before.
 
-import re  # noqa: E402
-from pathlib import Path  # noqa: E402
+import re
+from pathlib import Path
 
 XBLOCK = Path(__file__).resolve().parents[2] / "coursemate_platform" / "xblock"
 TEMPLATE = XBLOCK / "static" / "html" / "studio_view.html"
@@ -255,17 +255,27 @@ def test_studio_js_posts_every_settings_field():
 
 # --- what the real guard uses ----------------------------------------------
 #
-# `_can_author` cannot run here — it calls into edx-platform — so what is pinned
+# The decision cannot run here — it calls into edx-platform — so what is pinned
 # is which primitive it calls. Three cheaper signals were tried against the live
 # stack first and all three were wrong: `user_role` and `user_is_staff` are
 # never populated by Studio's user service, and `runtime.is_author_mode` is set
 # only on the preview route, not the handler route. Swapping back to any of them
 # would look correct in a unit test and refuse every real author.
+#
+# **It moved to `adapters/studio_authz.py` on 2026-08-14.** `.importlinter`
+# contract 1 forbids `coursemate_platform.xblock` from importing `common`, and
+# doing the lookup in the block broke the build. These tests follow the code
+# rather than being deleted with it: what they defend is the primitive, not the
+# file it lives in.
+
+AUTHZ_SRC = (
+    Path(__file__).resolve().parents[2]
+    / "coursemate_platform" / "adapters" / "studio_authz.py"
+)
 
 
 def test_the_guard_uses_the_platforms_own_authoring_permission():
-    src = BLOCK_SRC.read_text(encoding="utf-8")
-    body = src.split("def _can_author", 1)[1].split("\n    def ", 1)[0]
+    body = AUTHZ_SRC.read_text(encoding="utf-8").split("def can_author", 1)[1]
     # The docstring NAMES the three rejected signals, so scanning the raw text
     # fails on the explanation rather than on any code. Strip it first — the
     # same mistake this suite is guarding against, made by the guard itself.
@@ -280,10 +290,38 @@ def test_the_guard_uses_the_platforms_own_authoring_permission():
         )
 
 
-def test_the_platform_import_stays_inside_the_function():
-    """This module is imported during LMS startup, which must never pull in
-    Django auth or edx-platform internals (Principle 8)."""
+def test_the_block_delegates_rather_than_reimplementing_the_check():
+    """The block must ASK the adapter, not grow its own copy of the decision.
+
+    Without this, the next person needing an authoring check adds four lines to
+    the block, contract 1 goes red again, and the fix that was made here is
+    undone by someone who never read it."""
+    src = BLOCK_SRC.read_text(encoding="utf-8")
+    body = src.split("def _can_author", 1)[1].split("\n    def ", 1)[0]
+    code = re.sub(r'"""[\s\S]*?"""', "", body, count=1)
+
+    assert "studio_authz import can_author" in code
+    assert "has_studio_write_access" not in code
+
+
+def test_the_platform_import_stays_out_of_lms_startup():
+    """Two modules are imported during LMS startup — the block, and anything it
+    imports at module scope. Neither may pull in Django auth or edx-platform
+    internals (Principle 8).
+
+    The adapter is checked as well as the block: moving the import into a module
+    that the block imports at TOP level would satisfy contract 1 and still drag
+    edx-platform into every boot, which is the failure this pins."""
     src = BLOCK_SRC.read_text(encoding="utf-8")
     header = src.split("class CourseMateTutorXBlock", 1)[0]
     assert "student.auth" not in header
     assert "get_user_model" not in header
+    assert "studio_authz" not in header, (
+        "the adapter must be imported inside _can_author, not at module scope"
+    )
+
+    # And the adapter keeps its own imports lazy, so importing it is free.
+    authz = AUTHZ_SRC.read_text(encoding="utf-8")
+    authz_header = authz.split("def can_author", 1)[0]
+    assert "student.auth" not in authz_header
+    assert "get_user_model" not in authz_header

@@ -225,43 +225,29 @@ class CourseMateTutorXBlock(XBlock):
     def _can_author(self, user) -> bool:
         """May this caller change the block's settings?
 
-        **The platform's own authoring permission, not a proxy for it.** Three
-        cheaper signals were tried against the live stack and all three are
-        wrong here:
+        The decision is the platform's, and asking it is
+        `adapters/studio_authz.can_author` — which is where the reasoning about
+        *which* platform primitive to ask now lives, along with the three
+        cheaper signals that were tried against the live stack and are all wrong
+        on this path.
 
-          `user_role`              Studio never sets it. `DjangoXBlockUserService`
-                                   defaults it to "student", so every author
-                                   looked like a learner and was refused.
-          `user_is_staff`          The same. CMS constructs that service with no
-                                   kwargs, so it is always False in Studio.
-          `runtime.is_author_mode` Set when Studio loads a block for PREVIEW,
-                                   but `component_handler` fetches the block
-                                   straight from the modulestore, so the handler
-                                   route never has it.
+        **Why it moved out of this file (2026-08-14).** `.importlinter`
+        contract 1 forbids `coursemate_platform.xblock` from importing `common`,
+        and it was right to: that contract is the rule that platform coupling
+        lives in `adapters/`. Doing the lookup here broke it, and the honest fix
+        was to move the coupling rather than to exempt the module from the rule.
 
-        `has_studio_write_access` is what Studio gates authoring on, so it is
-        right in Studio — and it refuses a learner on the LMS route, where this
-        handler is equally reachable and nothing else would stop them.
-
-        Imported inside the function on purpose: this module is imported during
-        LMS startup and must not drag Django auth and edx-platform internals in
-        at import time (Principle 8). Any lookup failure is "not proven", which
-        means refused.
+        The adapter is imported inside the function for the older reason, which
+        still holds: this module is imported during LMS startup for every course
+        on the instance, and must not drag Django auth or edx-platform internals
+        in at import time (Principle 8).
         """
-        from django.contrib.auth import get_user_model
-        from opaque_keys.edx.keys import CourseKey
+        from ..adapters.studio_authz import can_author
 
-        from common.djangoapps.student.auth import has_studio_write_access
-
-        try:
-            user_id = (user.opt_attrs or {}).get("edx-platform.user_id")
-            django_user = get_user_model().objects.get(id=user_id)
-            course_key = CourseKey.from_string(self._course_id())
-        except Exception:  # noqa: BLE001 — an unresolvable caller is not an author
-            log.warning("studio edit refused: caller could not be resolved")
-            return False
-
-        return bool(has_studio_write_access(django_user, course_key))
+        return can_author(
+            (getattr(user, "opt_attrs", None) or {}).get("edx-platform.user_id"),
+            self._course_id(),
+        )
 
     # --- handlers: both return in milliseconds -------------------------------
 
