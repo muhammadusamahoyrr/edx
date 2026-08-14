@@ -158,10 +158,16 @@ const tests = {
     });
     const turn = findAll(root, ".cm-turn").find((n) => n.className.includes("tutor"));
     // The answer text lives in `.cm-answer` inside the bubble, not on the turn
-    // itself. That separation is load-bearing: the token handler assigns
-    // textContent on every frame, and assigning it to a node that also holds
-    // citations and marks would delete them on the next token.
-    assert.match(find(turn, ".cm-answer").textContent, /Fact\. Fiction\./);
+    // itself. That separation is load-bearing: the renderer REPLACES the
+    // contents of `.cm-answer` on every frame, and doing that to a node which
+    // also held citations and marks would delete them on the next token.
+    //
+    // Read through `.text`, not `.textContent`. Since answers are formatted the
+    // text lives in child nodes, and this fake DOM stores `textContent` as a
+    // plain field rather than computing it from descendants the way a browser
+    // does — so `.textContent` here is the container's own (empty) string while
+    // in a real browser it would be the whole answer.
+    assert.match(find(turn, ".cm-answer").text, /Fact\. Fiction\./);
     assert.deepEqual(marks(root), ["Fiction."]);
   },
 
@@ -206,7 +212,8 @@ const tests = {
     });
     assert.deepEqual(marks(root), []);
     const turn = findAll(root, ".cm-turn").find((n) => n.className.includes("tutor"));
-    assert.equal(find(turn, ".cm-answer").textContent, "old a");
+    // `.text`, not `.textContent` — see the note above.
+    assert.equal(find(turn, ".cm-answer").text, "old a");
   },
 
   async "a turn with no citations and no marks renders cleanly"() {

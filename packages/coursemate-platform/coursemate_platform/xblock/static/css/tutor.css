@@ -287,6 +287,32 @@ div.coursemate-tutor optgroup {
 
 .coursemate-tutor .cm-answer { white-space: pre-wrap; }
 
+/* --- formatted answers ---------------------------------------------------
+   The model emits markdown and the student used to read it raw — literal
+   asterisks and hyphens. Four constructs, chosen by counting what the
+   configured models actually produce across the answers captured in
+   eval/reports/: paragraphs, bullets, ordered lists, bold.
+
+   The container keeps `pre-wrap` for the STUDENT's turn, which is still a
+   single text node and whose line breaks are their own. The tutor's turn no
+   longer relies on it: structure is carried by real elements, so there are no
+   newline characters left in the text for pre-wrap to honour. */
+.coursemate-tutor .cm-answer > .cm-answer-p { margin: 0 0 8px; }
+.coursemate-tutor .cm-answer > .cm-answer-p:last-child { margin-bottom: 0; }
+
+/* Browser defaults put ~40px of padding here, which inside a chat bubble reads
+   as a broken indent rather than a list. */
+.coursemate-tutor .cm-answer > .cm-answer-list {
+  margin: 0 0 8px; padding-left: 20px;
+}
+.coursemate-tutor .cm-answer > .cm-answer-list:last-child { margin-bottom: 0; }
+.coursemate-tutor .cm-answer > .cm-answer-list li { margin: 0 0 3px; }
+.coursemate-tutor .cm-answer > .cm-answer-list li:last-child { margin-bottom: 0; }
+
+/* 650, not 700: the bubble text is already 15px on a tinted ground, and full
+   bold on every list label made the answer read as a warning notice. */
+.coursemate-tutor .cm-answer strong { font-weight: 650; color: var(--cm-text); }
+
 /* --- the waiting state ---------------------------------------------------
    Shown from Ask until the first token. Measured time to first token here runs
    from 3.5 s on the hosted primary to 106 s on the local model, and until now

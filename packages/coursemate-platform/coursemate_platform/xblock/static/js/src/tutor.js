@@ -91,6 +91,135 @@ function CourseMateTutor(runtime, element, initArgs) {
     }
   }
 
+  /* --- answer formatting ---------------------------------------------------
+   *
+   * The whole answer used to land in one text node. `white-space: pre-wrap`
+   * meant line breaks survived, so it was never chaos — but the model emits
+   * markdown, and the student read the punctuation raw:
+   *
+   *     - **Automatic Cohorts**: Learners are automatically assigned to a…
+   *
+   * **The construct list is measured, not guessed, and it is deliberately
+   * short.** Across the 8 answers captured in `eval/reports/` from the
+   * configured models:
+   *
+   *     blank-line paragraph   6/8      IN
+   *     - bullet               5/8      IN
+   *     **bold**               2/8      IN
+   *     1. ordered list        2/8      IN
+   *     `inline code`          0/8      out
+   *     ``` fenced code        0/8      out
+   *     # heading              0/8      out
+   *     | table |              0/8      out
+   *     [link](url)            0/8      out
+   *
+   * Anything at 0/8 is a feature for a model nobody here runs, and every one of
+   * them is surface that has to be got right for output derived from an
+   * untrusted question and semi-trusted documents. If a future model emits one,
+   * measure it and then add it — `test_answer_formatting.mjs` has a case per
+   * excluded construct asserting it stays literal text, so this list cannot
+   * drift open quietly.
+   *
+   * **Links stay out on their own merits, even if a model starts emitting them.**
+   * A model-authored `javascript:` URL is the injection this whole file is
+   * careful about, and the answer already carries its sources as citation chips
+   * that the service verified. A second, unverified link mechanism beside the
+   * verified one is worse than none.
+   *
+   * **Built as DOM, never as markup.** No `innerHTML`, no string of HTML at any
+   * point — §10.6 makes this structural rather than a matter of escaping well,
+   * and three other test files already hold the same line. A `<script>` in an
+   * answer becomes visible text, because it only ever passes through
+   * `textContent`.
+   */
+
+  //: The one place the inline rule is written down. `**bold**`, nothing else.
+  var BOLD = /\*\*([^*]+)\*\*/g;
+
+  /* Inline text into `node`, with `**bold**` lifted into <strong>.
+   *
+   * Everything not matched by BOLD is appended as a text node, so an unmatched
+   * `**` or a stray `<` is shown, not interpreted. */
+  function appendInline(node, text) {
+    var last = 0;
+    var m;
+    BOLD.lastIndex = 0;
+    while ((m = BOLD.exec(text)) !== null) {
+      if (m.index > last) {
+        node.appendChild(document.createTextNode(text.slice(last, m.index)));
+      }
+      node.appendChild(el("strong", "", m[1]));
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) {
+      node.appendChild(document.createTextNode(text.slice(last)));
+    }
+  }
+
+  var BULLET = /^\s*[-*]\s+(.*)$/;
+  var ORDERED = /^\s*\d+\.\s+(.*)$/;
+
+  /* Render `text` into `container`, replacing whatever was there.
+   *
+   * Called on EVERY token rather than appending, so a partial `**bo` is never
+   * rendered as bold and then reflowed when the closing `**` arrives. The cost
+   * is a re-parse per token over an answer of 255–811 characters (ADR-0001),
+   * which is not worth optimising ahead of a measurement saying it is.
+   *
+   * Used by BOTH the live stream and `renderHistory`. Formatting only the live
+   * path would mean a page reload changed how an answer looks — and this file
+   * has been bitten twice by exactly that shape, with citations and with
+   * unsupported-claim marks. */
+  function renderAnswer(container, text) {
+    clearNode(container);
+    container.textContent = "";
+    if (!text) { return; }
+
+    var lines = String(text).split("\n");
+    var i = 0;
+    var para = null;
+
+    function closePara() {
+      if (para && para.children.length) { container.appendChild(para); }
+      para = null;
+    }
+
+    while (i < lines.length) {
+      var line = lines[i];
+
+      if (!line.trim()) { closePara(); i++; continue; }
+
+      /* A run of adjacent bullets is ONE list. Checked before the paragraph
+       * case so a list interrupting a paragraph starts a list rather than
+       * becoming a line inside it. */
+      var isBullet = BULLET.test(line);
+      var isOrdered = !isBullet && ORDERED.test(line);
+      if (isBullet || isOrdered) {
+        closePara();
+        var list = el(isBullet ? "ul" : "ol", "cm-answer-list");
+        var rule = isBullet ? BULLET : ORDERED;
+        while (i < lines.length && rule.test(lines[i])) {
+          var item = el("li");
+          appendInline(item, lines[i].match(rule)[1]);
+          list.appendChild(item);
+          i++;
+        }
+        container.appendChild(list);
+        continue;
+      }
+
+      if (!para) { para = el("p", "cm-answer-p"); }
+      /* A single newline inside a paragraph is a soft wrap, not a break: the
+       * model wraps prose and `pre-wrap` used to make those look deliberate. */
+      if (para.children.length) {
+        para.appendChild(document.createTextNode(" "));
+      }
+      appendInline(para, line.trim());
+      i++;
+    }
+    closePara();
+  }
+
   function showNotice(code) {
     notice.textContent = NOTICES[code] || "Something went wrong.";
     notice.className = "cm-notice " + code;
@@ -145,7 +274,16 @@ function CourseMateTutor(runtime, element, initArgs) {
     var node = el("div", "cm-turn " + role);
     if (role === "tutor") { node.appendChild(el("span", "cm-avatar-sm", "CT")); }
     var bubble = el("div", "cm-bubble");
-    bubble.appendChild(el("div", "cm-answer", content || ""));
+    var answer = el("div", "cm-answer");
+    /* The TUTOR's turn is model output and gets formatted; the student's is the
+     * student's own words and is left exactly as typed. Formatting a question
+     * would rewrite what someone wrote — a student who types `**` meant `**`. */
+    if (role === "tutor") {
+      renderAnswer(answer, content || "");
+    } else {
+      answer.textContent = content || "";
+    }
+    bubble.appendChild(answer);
     node.appendChild(bubble);
     return node;
   }
@@ -382,7 +520,7 @@ function CourseMateTutor(runtime, element, initArgs) {
               /* First text: the wait is over even if more is coming. */
               thinking.stop();
               answer += frame.text || "";
-              answerText.textContent = answer;
+              renderAnswer(answerText, answer);
               log.scrollTop = log.scrollHeight;
               break;
             case "citation":
@@ -1069,6 +1207,23 @@ function CourseMateTutor(runtime, element, initArgs) {
     card.appendChild(body);
     /* Replaces the previous question rather than stacking beneath it. */
     slotTarget(practiceSlot).appendChild(card);
+
+    /* **This surface deliberately did NOT get the chat's two 2026-08-14
+     * changes** — the waiting indicator and `renderAnswer`. Scoped out, not
+     * forgotten, and written here because the divergence is visible: practice
+     * questions still show raw markdown and still wait on a bare card.
+     *
+     * Two reasons it is a separate decision rather than a copy-paste. The
+     * construct list was measured over CHAT answers in `eval/reports/`, and a
+     * generated practice question is a different prompt and a different output
+     * shape — reusing that list here would be applying a measurement someone
+     * else earned, which is the same move §9.0 refuses for the rubric. And this
+     * card is built by its own code path with its own notice element, so the
+     * indicator is not a drop-in.
+     *
+     * Doing it properly means capturing practice output the way the chat scope
+     * was captured, then deciding. Doing it by assumption is how B1/B2 and C2
+     * shipped broken. */
 
     var answer = "";
     var sources = [];
