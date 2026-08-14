@@ -92,6 +92,13 @@ class AnswerPipeline:
             cache_key = response_cache.cache_key(request, claims, context.index_version)
             if (hit := response_cache.read(cache_key)) is not None:
                 metrics.increment("cache_hits_total")
+                # A replayed abstention is still an abstention. Counting it only
+                # on the generated path would make `abstentions_total` mean
+                # "abstentions we recomputed", so the rate would fall as the
+                # cache warmed and read as the tutor answering more — the
+                # opposite of what happened.
+                if hit.get("kind") == "abstained":
+                    metrics.increment("abstentions_total")
                 async for frame in _replay(hit):
                     yield frame
                 return
@@ -290,8 +297,16 @@ class AnswerPipeline:
             for claim in unsupported_sentences(
                 answer, chunk_texts, settings.claim_support_threshold
             ):
+                # Coverage and length, never the sentence. It was logged in full
+                # (to 80 chars) until 2026-08-14, and an answer is derived from
+                # the student's question — so the log held both halves of a
+                # conversation §3.1 says stays with the platform. The number is
+                # what tuning `claim_support_threshold` actually needs; the text
+                # was never read for that and is on its way to the student's
+                # screen regardless.
                 log.info(
-                    "unsupported claim (coverage %.2f): %.80s", claim.coverage, claim.sentence
+                    "unsupported claim: coverage=%.2f chars=%d",
+                    claim.coverage, len(claim.sentence),
                 )
                 unsupported.append(claim.sentence)
                 yield StreamFrame(type=FrameType.UNSUPPORTED_CLAIM, text=claim.sentence)
@@ -309,6 +324,11 @@ class AnswerPipeline:
         # treated as degradation: a warning the student cannot act on, raised
         # because we failed to look something up, is worse than none.
         if deployment is not None and deployment != PRIMARY_DEPLOYMENT:
+            # Counted here, at the one place that already knows a fallback
+            # answered. `provider_failures_total` cannot see this: the Router
+            # swallows the failure when a fallback succeeds, so a primary
+            # degrading on every request moved that counter by zero.
+            metrics.increment("degraded_answers_total")
             log.warning(
                 "answered by the %s deployment (%s), not the primary",
                 deployment, provider_used,

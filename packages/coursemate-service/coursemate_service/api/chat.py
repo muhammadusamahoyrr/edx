@@ -79,9 +79,25 @@ async def chat(
     what makes it unskippable — every path to course content goes through that
     one method, so a future endpoint cannot forget it.
     """
+    # **The question itself is not logged, and that is the design's rule rather
+    # than caution.** §3.1 keeps conversation text with the platform, and
+    # `boundary/impl.py::_audit` already refuses to record it for exactly this
+    # reason: *"an audit trail does not need the content to record that access
+    # happened."*
+    #
+    # This line contradicted that until 2026-08-14. It logged the first 80
+    # characters of every question at INFO with `claims.sub` beside it — a
+    # student identifier and what that student asked, in a file on a shared LMS
+    # host, from the one module whose docstring says it is transport and nothing
+    # else. The control was real where it was documented and absent in the two
+    # places that actually produce the data.
+    #
+    # The length is kept because it is the operational signal a question's TEXT
+    # was being used for: it distinguishes an empty submit from a wall of pasted
+    # text, and it is what the C1 overshoot note wants measured.
     log.info(
-        "chat: user=%s offering=%s block=%s q=%r",
-        claims.sub, claims.offering_id, claims.block_id, request.question[:80],
+        "chat: user=%s offering=%s block=%s question_chars=%d",
+        claims.sub, claims.offering_id, claims.block_id, len(request.question),
     )
 
     # Before the generator is touched, and for the same reason the practice

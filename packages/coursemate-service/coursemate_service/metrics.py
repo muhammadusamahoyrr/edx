@@ -38,6 +38,18 @@ _COUNTERS: dict[str, str] = {
     "cache_misses_total": "First-turn responses that had to be generated.",
     "budget_refusals_total": "Requests refused by the daily token ceiling.",
     "provider_failures_total": "Generations that failed or timed out upstream.",
+    #: **The blind spot `provider_failures_total` cannot see.** That counter is
+    #: incremented in `pipeline.py` only when an exception reaches the pipeline,
+    #: and the LiteLLM Router swallows a provider failure whenever a fallback
+    #: succeeds. Measured against a real outage (ADR-0001, phase 4): the degraded
+    #: step moved it by 0 and only the total outage moved it by 1.
+    #:
+    #: So a primary degrading on EVERY request was invisible, while the counter's
+    #: name suggested otherwise — the worst combination, because a dashboard
+    #: showing zero reads as health. This one moves whenever a deployment other
+    #: than the primary answered, which is the same condition that raises the
+    #: DEGRADED frame the student sees.
+    "degraded_answers_total": "Answers served by a fallback deployment, not the primary.",
 }
 
 _lock = threading.Lock()
