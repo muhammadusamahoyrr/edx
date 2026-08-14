@@ -90,7 +90,25 @@ this replaced:
 * **Cooldowns and `allowed_fails` are untuned** against real free-tier behaviour.
   They have never been exercised by sustained load.
 
-### `provider_failures_total` cannot see a silent degradation
+### `provider_failures_total` cannot see a silent degradation — CLOSED 2026-08-14
+
+**Resolved.** `degraded_answers_total` now exists and is incremented in
+`pipeline.py` at the one place that already knows a fallback answered — beside
+the `DEGRADED` frame, on the same condition. A primary degrading on every request
+now moves a counter instead of only a badge in the student's browser.
+
+`provider_failures_total` is unchanged and still means *"generations that failed
+entirely"*, which is a real and separate question. The two together are what an
+operator needs: one for "the tutor is down", one for "the tutor is quietly worse".
+
+`test_degradation_controls.py` pins that the counter is wired rather than merely
+declared — this repository has shipped a counter, a setting and a version lock
+that nothing called, which is why declaring it was never the hard part.
+
+The original finding is kept below, because it explains *why* the obvious counter
+was not enough.
+
+---
 
 Found while writing the failover probe. The counter is incremented in
 `pipeline.py` only inside its `except` blocks, and LiteLLM's Router resolves the
@@ -108,8 +126,8 @@ operator most needs to be paged on — moves it by exactly zero, and the only
 visible symptom is a badge in the student's browser.
 
 The fix is a separate `degraded_answers_total` incremented where the DEGRADED
-frame is emitted. Not done, because it is a behaviour change and the work that
-found it was documentation-only.
+frame is emitted. ~~Not done, because it is a behaviour change and the work that
+found it was documentation-only.~~ **Done 2026-08-14** — see the note above.
 
 **And "untested" was doing more work than it looked like.** Two defects sat in
 that untested path until 2026-08-10, both found by driving a real LiteLLM Router
@@ -273,6 +291,31 @@ Two smaller gaps, both known:
   sending `history=[]` and the browser sending `history=[echo]` map to one key
   while building marginally different prompts. Same question, same retrieval,
   same scope — a fidelity gap, not an isolation one.
+
+### Reviewed 2026-08-14: kept as-is, deliberately
+
+An audit raised the obvious question — a mechanism that provably never fires is
+177 lines plus a 617-line test file buying nothing, so either fix the key or
+delete it. **Live counters after real traffic: `cache_hits_total` 0,
+`cache_misses_total` 1.** Both alternatives were considered and neither taken:
+
+* **Dropping `student_id` from the key** is the change that would make it work,
+  and it is a change to the exact surface §10.2 names as the place isolation
+  quietly fails once every filter is already correct. The reasoning above says
+  it is *defensible*, not that it is *verified*, and the difference is a body of
+  isolation tests nobody has written. Not a change to make in an audit pass.
+* **Deleting it** would throw away a mechanism that is correct, browser-verified
+  (74,973 ms → 133 ms, 0 charged) and cheap to leave in place. The cost of an
+  inert cache is a Redis GET per first turn.
+
+So it stays, switched on, and this section is the record that its near-zero hit
+rate is a known property rather than a fault waiting to be found. What is **not**
+acceptable is quoting the cache as a latency or cost saving: it is not currently
+providing either.
+
+One thing did change. A cache HIT used to skip `abstentions_total`, so the
+abstention rate would have fallen as the cache warmed and read as the tutor
+answering more. Replayed abstentions are now counted.
 
 ---
 

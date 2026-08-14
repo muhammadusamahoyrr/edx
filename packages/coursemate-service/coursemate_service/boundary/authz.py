@@ -143,7 +143,7 @@ class EnrollmentVerifier:
                 },
                 timeout=settings.authz_timeout_seconds,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise PlatformUnreachable(f"token exchange failed: {exc}") from exc
 
         if response.status_code != 200:
@@ -173,7 +173,7 @@ class EnrollmentVerifier:
             )
         except PlatformUnreachable:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise PlatformUnreachable(f"enrollment check failed: {exc}") from exc
 
         if response.status_code == 404:
@@ -243,10 +243,31 @@ class EnrollmentVerifier:
         except Exception:  # noqa: BLE001 - a corrupt entry is a miss, never a grant
             return None
 
+    def _prune_local(self) -> None:
+        """Drop entitlements that have outlived their TTL.
+
+        The per-process dict had no eviction at all: `_cache_get` checks
+        `cached.age` and returns None when it is stale, but nothing ever removed
+        the entry, so the dict grew one key per (student, offering) pair the
+        process ever saw and kept it forever. Expired entries are not merely
+        wasted memory here — they are stale ENTITLEMENTS, which is uncomfortable
+        to keep around even though they can no longer be served.
+
+        Same shape as `_RateLimiter._prune_local`, and added in the same change
+        for the same reason: that one turned out to remove nothing, and this one
+        was never written. Both are the Redis-absent path.
+        """
+        if len(self._cache) <= 1000:
+            return
+        ttl = settings.authz_cache_ttl_seconds
+        for k in [k for k, v in self._cache.items() if v.age >= ttl]:
+            self._cache.pop(k, None)
+
     def _cache_put(self, user_id: str, offering_id: str, ent: Entitlement) -> None:
         client = shared_state.get_redis()
         if client is None:
             self._cache[self._key(user_id, offering_id)] = ent
+            self._prune_local()
             return
         try:
             client.setex(

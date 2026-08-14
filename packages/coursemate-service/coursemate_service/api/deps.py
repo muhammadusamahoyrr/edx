@@ -152,13 +152,40 @@ class _RateLimiter:
         if len(window) >= settings.student_requests_per_minute:
             return False
         window.append(now)
-        # Drop students who have gone quiet. Without this the dict kept one key
-        # per student ever seen, for the life of the process — a slow leak that
-        # nothing would surface until memory did.
-        if len(self._hits) > 1000:
-            for k in [k for k, v in self._hits.items() if not v]:
-                self._hits.pop(k, None)
+        self._prune_local(now)
         return True
+
+    def _prune_local(self, now: float) -> None:
+        """Drop students who have gone quiet.
+
+        **The previous version of this removed nothing, and was measured doing
+        so.** It read:
+
+            if len(self._hits) > 1000:
+                for k in [k for k, v in self._hits.items() if not v]:
+                    self._hits.pop(k, None)
+
+        A student's window is only re-filtered on that student's own request, so
+        everyone else keeps their stale timestamps and their list is never empty.
+        `if not v` can be true for a moment inside `_check_local` — between the
+        filter and the `append` on the next line — and never when this runs. With
+        3,000 one-off students ten minutes in the past, 3,000 entries survived 50
+        prune passes; the fiftieth found the same 3,001 keys as the first.
+
+        So the guard was not weak, it was inert, and the leak its comment
+        describes was the live behaviour. It is by AGE now, which is the property
+        actually meant: a window whose newest hit has fallen out of the sliding
+        window can decide nothing, so the key holds no information.
+
+        Fixed 2026-08-14, and pinned by
+        `test_shared_state.py::test_the_local_limiter_actually_drops_quiet_students`,
+        which measures the dict rather than reading the code.
+        """
+        if len(self._hits) <= 1000:
+            return
+        cutoff = now - _WINDOW_SECONDS
+        for k in [k for k, v in self._hits.items() if not v or max(v) < cutoff]:
+            self._hits.pop(k, None)
 
     def check(self, student_id: str) -> None:
         now = time.time()
@@ -345,11 +372,17 @@ def contract_version_guard(
 ) -> None:
     """Refuse a peer that speaks a different wire contract (§3.5).
 
-    Applied as a router-level dependency on the two server-to-server routers —
-    ingest and invalidation — because those are the only routes another
+    Applied as a router-level dependency on the three server-to-server routers —
+    ingest, invalidation and packs — because those are the only routes another
     *deployment* of our own code calls. Student traffic is excluded deliberately:
     a browser does not have a contract version, and the student path is already
     scoped by a signed short-lived token.
+
+    **This said "the two" until 2026-08-14, and it was the docstring that was
+    wrong rather than the count.** `packs` carries the same service credential
+    and was missed when the lock was wired. Written as a number in prose, the
+    omission was invisible; `test_contract_guard_covers_every_service_router`
+    now derives the set from the app instead.
 
     **Absent means unknown, and unknown is allowed.** A platform old enough not
     to send the header cannot be told apart from one that failed to, and refusing
