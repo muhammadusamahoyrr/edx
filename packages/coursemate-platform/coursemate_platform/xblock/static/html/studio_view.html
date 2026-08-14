@@ -1,12 +1,29 @@
 <div class="coursemate-studio">
   <label>Display name <input type="text" class="cm-cfg-name" value="{{ display_name }}" /></label>
   <label>Enabled <input type="checkbox" class="cm-cfg-enabled" {% if enabled %}checked{% endif %} /></label>
+  <!-- Feature B's tab. Missing from this panel until 2026-08-13, and because a
+       custom studio_view REPLACES Studio's automatic settings editor, leaving it
+       out did not fall back to anything — it removed the only way an author
+       could turn the tab on. The field defaults to False, so every block added
+       through Studio had exam prep permanently off with no control to change
+       it. -->
+  <label>Exam prep tab
+    <input type="checkbox" class="cm-cfg-exam-prep"
+           {% if exam_prep_enabled %}checked{% endif %} /></label>
   <label>Default mode
     <select class="cm-cfg-mode">
       <option value="direct" {% if mode == 'direct' %}selected{% endif %}>Direct</option>
       <option value="socratic" {% if mode == 'socratic' %}selected{% endif %}>Socratic</option>
     </select>
   </label>
+
+  <!-- This panel had no save path at all: no submit_studio_edits handler on the
+       block and no save logic in studio.js, so all four controls were
+       decorative. An explicit button rather than hooking Studio's own Save,
+       which lives outside the fragment and needs jQuery and knowledge of the
+       modal's internals — a dependency this file does not otherwise have. -->
+  <button class="cm-cfg-save" type="button">Save settings</button>
+  <span class="cm-cfg-status" role="status" aria-live="polite"></span>
   <hr />
   <!-- The normal bootstrap path (design 5.1): put the action in front of the
        person who just added the block. Without an index, the tutor answers

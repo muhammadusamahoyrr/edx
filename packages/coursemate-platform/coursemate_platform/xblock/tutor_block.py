@@ -210,6 +210,9 @@ class CourseMateTutorXBlock(XBlock):
                 {
                     "display_name": self.display_name,
                     "enabled": self.enabled,
+                    # Absent from this context until 2026-08-13, so the control
+                    # could not render even once it existed in the template.
+                    "exam_prep_enabled": self.exam_prep_enabled,
                     "mode": self.mode,
                     **self._index_status(),
                 },
@@ -219,7 +222,106 @@ class CourseMateTutorXBlock(XBlock):
         fragment.initialize_js("CourseMateTutorStudio")
         return fragment
 
+    def _can_author(self, user) -> bool:
+        """May this caller change the block's settings?
+
+        **The platform's own authoring permission, not a proxy for it.** Three
+        cheaper signals were tried against the live stack and all three are
+        wrong here:
+
+          `user_role`              Studio never sets it. `DjangoXBlockUserService`
+                                   defaults it to "student", so every author
+                                   looked like a learner and was refused.
+          `user_is_staff`          The same. CMS constructs that service with no
+                                   kwargs, so it is always False in Studio.
+          `runtime.is_author_mode` Set when Studio loads a block for PREVIEW,
+                                   but `component_handler` fetches the block
+                                   straight from the modulestore, so the handler
+                                   route never has it.
+
+        `has_studio_write_access` is what Studio gates authoring on, so it is
+        right in Studio — and it refuses a learner on the LMS route, where this
+        handler is equally reachable and nothing else would stop them.
+
+        Imported inside the function on purpose: this module is imported during
+        LMS startup and must not drag Django auth and edx-platform internals in
+        at import time (Principle 8). Any lookup failure is "not proven", which
+        means refused.
+        """
+        from django.contrib.auth import get_user_model
+        from opaque_keys.edx.keys import CourseKey
+
+        from common.djangoapps.student.auth import has_studio_write_access
+
+        try:
+            user_id = (user.opt_attrs or {}).get("edx-platform.user_id")
+            django_user = get_user_model().objects.get(id=user_id)
+            course_key = CourseKey.from_string(self._course_id())
+        except Exception:  # noqa: BLE001 — an unresolvable caller is not an author
+            log.warning("studio edit refused: caller could not be resolved")
+            return False
+
+        return bool(has_studio_write_access(django_user, course_key))
+
     # --- handlers: both return in milliseconds -------------------------------
+
+    @XBlock.json_handler
+    def submit_studio_edits(self, data, suffix=""):
+        """Persist the four `Scope.settings` fields the author can edit.
+
+        This did not exist, and its absence is what made `exam_prep_enabled`
+        unreachable. A custom `studio_view` REPLACES Studio's automatic settings
+        editor, and this class is a plain `XBlock` rather than a
+        `StudioEditableXBlockMixin`, so nothing supplied a save path — the panel
+        rendered four controls that wrote nowhere.
+
+        **Staff only, checked here rather than assumed.** An XBlock handler is
+        reachable in the LMS too, at
+        `/courses/<id>/xblock/<usage>/handler/submit_studio_edits`, and the LMS
+        does not apply Studio's write-access check. Without this guard any
+        enrolled student could disable the tutor or flip its mode for everyone
+        in the course. Roles come from the platform's own user service, so they
+        are not something the caller can fabricate.
+
+        Unknown keys are ignored and an unknown `mode` is rejected rather than
+        stored: `mode` feeds a prompt path that only understands two values, and
+        a third would fail later, elsewhere, as a service-side error nobody
+        could trace back to a Studio checkbox.
+        """
+        user = self._user()
+        if user is None:
+            return {"error": "unauthenticated"}
+
+        if not self._can_author(user):
+            return {"error": "forbidden"}
+
+        if not isinstance(data, dict):
+            return {"error": "bad_request"}
+
+        if "mode" in data:
+            mode = str(data["mode"])
+            if mode not in {m.value for m in Mode}:
+                return {"error": "invalid_mode"}
+            self.mode = mode
+
+        if "display_name" in data:
+            name = str(data["display_name"]).strip()
+            # An empty title would render a nameless component in the unit
+            # outline, which is worse than keeping the previous one.
+            if name:
+                self.display_name = name
+
+        for field in ("enabled", "exam_prep_enabled"):
+            if field in data:
+                setattr(self, field, bool(data[field]))
+
+        return {
+            "saved": True,
+            "display_name": self.display_name,
+            "enabled": self.enabled,
+            "exam_prep_enabled": self.exam_prep_enabled,
+            "mode": self.mode,
+        }
 
     @XBlock.json_handler
     def mint(self, data, suffix=""):
