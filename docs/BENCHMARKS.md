@@ -546,6 +546,112 @@ scope-determined; it is a security trade that has not been made.
 
 ---
 
+## 3.11 Two providers, compared and failed over — added 2026-08-14
+
+Until this date CourseMate ran **one provider and one model**: both logical tiers
+pointed at local `qwen2.5:7b`. The fallback chain, the `DEGRADED` frame and
+`provider_failures_total` all existed and had never executed against a real
+outage. §2 of `LIMITATIONS.md` said so.
+
+The live topology is now `strong` → OpenRouter (hosted), `cheap` → local Ollama.
+`fallback` remains unset, so the chat chain is `strong → cheap`.
+
+### Same question, same context, pinned deployments
+
+`eval/run_model_comparison.py`, n=2 questions. Retrieval runs **once per
+question** and the identical message list goes to every deployment — otherwise a
+retrieval difference reads as a model difference. Each call pins its deployment
+by name **and passes `fallbacks=[]`**, so a failing pin cannot be silently
+answered by another deployment and recorded under the wrong name.
+
+| deployment | answered | median total | median first token | median chars | unsupported |
+|---|---|---|---|---|---|
+| `strong` — `openrouter/meta-llama/llama-3.3-70b-instruct` | 2/2 | **4,316 ms** | 3,512 ms | 335 | **0** |
+| `cheap` — `ollama_chat/qwen2.5:7b` | 2/2 | **49,120 ms** | 1,039 ms | 811 | 1 |
+
+Per question:
+
+| q | deployment | total | first token | chars | unsupported |
+|---|---|---|---|---|---|
+| q01 *What are video transcripts used for?* | `strong` | 5,175 ms | 5,148 ms | 255 | 0 |
+| | `cheap` | 33,877 ms | 1,154 ms | 592 | 1 |
+| q02 *How do I set up cohorts in my course?* | `strong` | 3,457 ms | 1,876 ms | 415 | 0 |
+| | `cheap` | 64,362 ms | 924 ms | 1,030 | 0 |
+
+**The local model starts faster and finishes far slower** — 1,039 ms to first
+token against 3,512 ms, then ~11× the total. For a streaming UI that inversion
+matters more than the totals suggest.
+
+### Three caveats, without which these numbers mislead
+
+1. **Latency compares hardware, not models.** A hosted GPU against local CPU
+   inference is not a property of either model. Nothing here supports "llama-3.3
+   is faster than qwen2.5".
+2. **Free-tier throttling inflates the hosted column**, unpredictably and in the
+   opposite direction to (1).
+3. **Token counts are absent for both.** `ollama_chat` reports no usage on stream
+   chunks (§4.1 of `LIMITATIONS.md`), and OpenRouter reported none either in this
+   run. The report renders `—`, never `0`: a zero would claim the model spent no
+   tokens.
+
+### How much difference is meaningful — a variance floor
+
+Run immediately before, with **both deployments pointing at the same local
+model**, as a control:
+
+| deployment | model | median total | median first token | chars | unsupported |
+|---|---|---|---|---|---|
+| `strong` | `ollama_chat/qwen2.5:7b` | 120,958 ms | 78,089 ms | 786 | 2 |
+| `cheap` | `ollama_chat/qwen2.5:7b` | 37,686 ms | 1,101 ms | 660 | 0 |
+
+**Same model, same context, same prompt — a 3× latency spread and 2 vs 0
+unsupported sentences.** That is the noise floor of local CPU inference under
+contention, and it is the bar a claimed model difference has to clear. The
+harness prints a warning when two deployments resolve to the same model, because
+a table that looks like a comparison while comparing a model with itself is worse
+than no table.
+
+### Failover, against a real outage
+
+`tools/verification/failover_probe.sh`. The probe builds its own Router inside
+the service container from the deployed settings with one field overridden; the
+tutor config, container env and uvicorn workers are untouched, so restoration is
+guaranteed by the process exiting.
+
+| step | answer | citations | DEGRADED | error | `provider_failures_total` |
+|---|---|---|---|---|---|
+| baseline | 255 chars | 3 | no | — | 0 |
+| hosted key invalidated | 334 chars | **3** | **`qwen2.5:7b`** | — | **0** |
+| hosted **and** local unreachable | 0 chars | 0 | no | `unavailable` | **+1** |
+| restored | 255 chars | 3 | no | — | 0 |
+
+Row 2 is the result that matters: **the hosted vendor was gone, the student still
+received a cited answer from course material, and the UI was told it was
+degraded.** Latency went 7,463 ms → 27,084 ms, which is the cost of the floor.
+
+Row 3 is the honest failure. With `fallback` unset there is one hosted provider,
+so disabling it *is* the "all hosted providers down" case; killing the local floor
+as well proves the tutor refuses rather than fabricating.
+
+**`provider_failures_total` did not move on the successful failover, and cannot.**
+See §4.6 and `LIMITATIONS.md` — it counts generations that failed *entirely*, and
+the Router swallows the provider failure whenever a fallback succeeds.
+
+### Two defects in the probe itself, both found by running it
+
+Recorded because both produced confident, wrong output first:
+
+* **Wrong identity.** The first version used `username="probe"`. The boundary
+  re-derives enrollment per call and fails closed, so every step abstained before
+  the model was reached — a failover probe measuring authorization. Now uses the
+  enrolled identity the eval harness uses.
+* **The response cache served every step.** After the baseline populated it,
+  steps 2–4 returned the *identical* 255-char answer in ~15 ms while the provider
+  was unreachable. The cache working exactly as designed, and masking the entire
+  experiment. The probe now disables it.
+
+---
+
 ## 4. Bugs the benchmark found
 
 The benchmark's value was not the numbers. It was these.
@@ -613,11 +719,45 @@ Both fixes now carry regression tests built from the **verbatim payload captured
 off the wire**, kept as raw JSON rather than rebuilt with `Turn(...)` — because
 rebuilding it is precisely how the bug survived.
 
+### 4.6 `provider_failures_total` cannot see a silent degradation — 2026-08-14
+
+Found by Phase 4, by writing the assertion the brief asked for and watching it
+fail for a reason that turned out to be correct.
+
+The intended check was *"a failover emits DEGRADED **and** increments
+`provider_failures_total`"*. Those two are **mutually exclusive**. The counter is
+incremented in `pipeline.py` only inside the `except` blocks — and LiteLLM's
+Router handles the fallback internally, so when a fallback **succeeds** no
+exception ever reaches the pipeline.
+
+Measured:
+
+| scenario | DEGRADED | `provider_failures_total` |
+|---|---|---|
+| primary down, fallback answers | yes | **+0** |
+| whole chain down | no (ERROR instead) | **+1** |
+
+So the counter means *"generations that failed entirely"*, which is what its
+description says — but its **name** says provider failures, and a primary that is
+silently degrading every single request moves it by zero. The one condition an
+operator most needs paged on is the one it cannot report.
+
+Not fixed here, deliberately: the fix is a new counter
+(`degraded_answers_total`, incremented where the DEGRADED frame is emitted), and
+that is a behaviour change. Recorded in `LIMITATIONS.md` and `ADR-0001`.
+
 ---
 
 ## 5. Reproduction
 
 ```bash
+# Two providers on identical context, deployments pinned (§3.11)
+docker exec tutor_local-coursemate-1 python /eval/run_model_comparison.py --limit 2
+#   → eval/reports/model_comparison_<UTC>.{json,md}
+
+# The failover chain against a real outage (§3.11)
+MSYS_NO_PATHCONV=1 tools/verification/failover_probe.sh
+
 bash tools/verification/stage_eval.sh
 docker exec tutor_local-coursemate-1 python /eval/run_eval.py --gen 6
 # → /eval/reports/latest.json

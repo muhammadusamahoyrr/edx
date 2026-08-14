@@ -113,6 +113,57 @@ Full methodology, the reranker A/B, and the bugs measurement exposed:
 
 ---
 
+## Model selection rationale
+
+**Which model answers is configuration, never code.** Three logical deployments
+are registered from environment variables; swapping a provider is an env var and
+a restart. `ADR-0001` records the topology and the decisions behind it.
+
+| slot | job | current |
+|---|---|---|
+| `strong` | every student answer, and all question generation | `openrouter/meta-llama/llama-3.3-70b-instruct` |
+| `fallback` | cross-vendor failover | *unset* |
+| `cheap` | the CLO tagger, and the last-resort floor for chat | `ollama_chat/qwen2.5:7b` (local) |
+
+    chat        strong → fallback → cheap
+    generation  strong → fallback            never the local floor
+
+### Why these, and why in this order
+
+**A hosted model answers, a local model catches.** Measured on identical
+retrieved context (`BENCHMARKS §3.11`): the hosted 70B model answered ~11× faster
+end to end, in half the words, with zero unsupported sentences across both
+questions. The local 7B is ~25 s cold on CPU and times out on nine of ten agent
+planning calls. It is not a credible primary on this hardware.
+
+**But local is the floor, not the discard.** When the hosted provider was
+disabled the local model answered with the same three citations and the UI
+reported `DEGRADED` — verified against a real outage, not a mock. A tutor that
+degrades is better than one that disappears.
+
+**The ordering is a policy, and it is yours to set.** Local-last means student
+questions leave the machine in normal operation. An institution that cannot allow
+that inverts the chain with environment variables — offline-only is a supported
+configuration, not a fork. Quality argues one way, privacy the other, and both
+are right for different operators.
+
+**Generated practice questions never come from the local floor.** They reach a
+student with no instructor gate, which §9.0 permits *because the output is
+measured* — and the Feature B rubric scored the strong model, not qwen. With no
+`fallback` configured, generation fails honestly rather than quietly serving an
+unmeasured model. That asymmetry against chat is deliberate.
+
+### What this does not yet do
+
+`fallback` is unset, so the live chain is hosted → local. That is two providers,
+and it is **not** cross-vendor failover between hosted vendors. Adding a second
+hosted vendor is one env var; it is deferred rather than done.
+
+`provider_failures_total` cannot detect a silently degrading primary — the
+counter only fires when the whole chain fails. See `BENCHMARKS §4.6`.
+
+---
+
 ## What measurement found that review did not
 
 Every one of these passed code review and returned success while being wrong.
@@ -181,6 +232,7 @@ a unit, publish. Full walkthrough: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 | [`docs/PROJECT_STRUCTURE.md`](docs/PROJECT_STRUCTURE.md) | Repository layout and why each boundary exists |
 | [`docs/TECHNICAL_SUMMARY.md`](docs/TECHNICAL_SUMMARY.md) | Engineering decisions, trade-offs, lessons |
 | [`docs/CourseMate_Complete_Design.md`](docs/CourseMate_Complete_Design.md) | Full design document — every decision with its reason and rejected alternative |
+| [`docs/adr/`](docs/adr/) | Decision records for choices made after the design doc was written |
 
 ---
 

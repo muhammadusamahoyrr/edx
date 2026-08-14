@@ -41,7 +41,14 @@ Lexical keeps exact technical terms that embeddings blur.
 
 ---
 
-## 2. Hosted inference exercised once; failover still untested
+## 2. Hosted inference is now the primary; failover verified once, cross-vendor still absent
+
+> **Updated 2026-08-14.** The heading used to read *"Hosted inference exercised
+> once; failover still untested"*. Both halves changed on the same day: a hosted
+> provider is now the live primary, and the chain has been driven by a real
+> outage. What is *still* missing is narrower and is stated at the end of this
+> section. The original text follows, because the local numbers below are still
+> the ones every earlier benchmark was measured against.
 
 Everything routinely verified — chat, Feature B, and the browser run of
 2026-08-12 — uses local `qwen2.5:7b` on CPU, against a 2 s budget. The two paths
@@ -63,8 +70,46 @@ claim: a Groq run on 2026-08-11 (§5.2) cut time-to-first-token from 187–301 s
 into a chat transcript, is treated as compromised, and has not been rotated — so
 no hosted provider has been used since, and the numbers above are all local.
 
-What remains genuinely untested is failover under failure: retries, cooldowns and
-cross-vendor fallback are **implemented and never driven by an actual outage**.
+**Failover has now been driven by an actual outage (2026-08-14).** The live
+topology is `strong` → OpenRouter (hosted), `cheap` → local Ollama.
+`tools/verification/failover_probe.sh` disabled the hosted provider and the local
+model answered with the same three citations while the UI showed `DEGRADED`;
+disabling both produced `UNAVAILABLE` rather than a fabricated answer. Numbers in
+BENCHMARKS §3.11.
+
+Three things remain genuinely missing, and they are smaller than the sentence
+this replaced:
+
+* **No cross-vendor failover between hosted vendors.** `fallback_model` is still
+  empty, so the chain is hosted → local. One hosted outage is survivable; the
+  degraded answer is a 7B model on CPU.
+* **Generation has no fallback at all.** `build_generation_fallback_chain`
+  requires a registered `fallback`, and there is none, so a `strong` outage makes
+  practice generation UNAVAILABLE. Deliberate — see ADR-0001 — but it means
+  Feature B is strictly less available than chat.
+* **Cooldowns and `allowed_fails` are untuned** against real free-tier behaviour.
+  They have never been exercised by sustained load.
+
+### `provider_failures_total` cannot see a silent degradation
+
+Found while writing the failover probe. The counter is incremented in
+`pipeline.py` only inside its `except` blocks, and LiteLLM's Router resolves the
+fallback internally — so when a fallback **succeeds**, no exception reaches the
+pipeline and the counter does not move.
+
+| scenario | DEGRADED frame | `provider_failures_total` |
+|---|---|---|
+| primary down, fallback answers | yes | **+0** |
+| whole chain down | no — `ERROR` instead | **+1** |
+
+The metric means *"generations that failed entirely"*. Its **name** says provider
+failures. A primary that is silently degrading every request — the condition an
+operator most needs to be paged on — moves it by exactly zero, and the only
+visible symptom is a badge in the student's browser.
+
+The fix is a separate `degraded_answers_total` incremented where the DEGRADED
+frame is emitted. Not done, because it is a behaviour change and the work that
+found it was documentation-only.
 
 **And "untested" was doing more work than it looked like.** Two defects sat in
 that untested path until 2026-08-10, both found by driving a real LiteLLM Router
