@@ -41,20 +41,17 @@ help:
 	@echo "openapi    - regenerate docs/openapi.json from the routes"
 	@echo "openapi-check - fail if the committed spec is stale (part of check)"
 
-# django + XBlock + web_fragments are here for the PLATFORM-side unit tests, and
-# they are not the Open edX runtime — they are the two libraries the plugin's
-# models and block are built on, installable offline in seconds. Without them the
-# mastery idempotency guarantee and the exam-prep handler are untestable outside a
-# container, which in practice means untested. `pytest-django` is deliberately NOT
-# installed: it calls `setup_test_environment()` at session start and collides
-# with the fixture in tests/unit/conftest.py, which needs to own that lifecycle.
+# The dependency list lives in requirements-dev.txt, which CI installs from too.
+# It used to be spelled out here AND in the workflow, and the two drifted: CI was
+# missing django, XBlock and web_fragments, which the platform tests import at
+# module scope — so those tests raised collection errors, and because both test
+# directories ran in one pytest invocation, the service suite never ran either.
+# Two lists that must agree, kept in two files, will disagree again.
 install:
 	python -m venv .venv
 	$(PY) -m pip install -q --upgrade pip
 	$(PY) -m pip install -q -e packages/coursemate-contracts
-	$(PY) -m pip install -q pytest pytest-asyncio pyjwt import-linter ruff \
-	                        fastapi pydantic-settings httpx litellm \
-	                        "django>=4.2,<6" XBlock web_fragments
+	$(PY) -m pip install -q -r requirements-dev.txt
 
 # Fast by construction: no Tutor, no containers, no network. Test credentials come
 # from tests/conftest.py so a clean checkout works with no shell setup.

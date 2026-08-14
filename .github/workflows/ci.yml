@@ -2,7 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    # Feature branches too, deliberately. This used to be [main, master] only,
+    # and the consequence was not theoretical: the workflow was broken for weeks
+    # (it never installed the platform tests' dependencies) and nothing said so,
+    # because the work was on a branch with no PR open. A build that only runs
+    # after the work is finished cannot tell you the work broke it.
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
 
@@ -30,27 +35,61 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      # Node is not a hard dependency of the project, but it IS a hard
+      # dependency of the browser tests, and `make test-js` prints "SKIPPED" and
+      # exits 0 without it. A runner that silently skips a suite is a runner
+      # that reports a green build for untested code.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # From requirements-dev.txt, which `make install` also uses. Spelling the
+      # list out here as well is what let CI drift into installing eight of the
+      # eleven packages the suite needs.
       - name: Install
         run: |
           python -m pip install -q --upgrade pip
           pip install -q -e packages/coursemate-contracts
-          pip install -q pytest pytest-asyncio pyjwt import-linter ruff \
-                         fastapi pydantic-settings httpx litellm
+          pip install -q -r requirements-dev.txt
 
-      # Run directly rather than through `make check`: the Makefile builds a venv,
-      # which a CI runner already provides. Same two commands, same order.
+      # `make check` is lint-arch + openapi-check + test + test-js. CI used to
+      # run the first and third only, so the OpenAPI drift check and the seven
+      # browser tests were local-only — and the drift check exists precisely
+      # because "remember to regenerate it" is a step someone forgets.
       - name: Architecture contracts
         env:
           PYTHONPATH: packages/coursemate-service:packages/coursemate-platform
         run: lint-imports --config .importlinter
 
-      - name: Tests
+      - name: OpenAPI spec is current
         env:
           PYTHONPATH: packages/coursemate-service:packages/coursemate-platform
-        run: |
-          pytest packages/coursemate-service/tests \
-                 packages/coursemate-platform/tests/unit \
-                 -q --asyncio-mode=auto
+        run: python tools/ops/dump_openapi.py --check
+
+      # Three steps, not one invocation over three directories. A collection
+      # error in any one of them used to interrupt the whole run, so a missing
+      # platform dependency hid the result of all 895 service tests. Split, each
+      # suite reports for itself and a failure names the half that broke.
+      - name: Tests — service
+        env:
+          PYTHONPATH: packages/coursemate-service:packages/coursemate-platform
+        run: pytest packages/coursemate-service/tests -q --asyncio-mode=auto
+
+      - name: Tests — platform
+        if: always()
+        env:
+          PYTHONPATH: packages/coursemate-service:packages/coursemate-platform
+        run: pytest packages/coursemate-platform/tests/unit -q --asyncio-mode=auto
+
+      - name: Tests — eval harness
+        if: always()
+        env:
+          PYTHONPATH: packages/coursemate-service:packages/coursemate-platform
+        run: pytest eval/tests -q --asyncio-mode=auto
+
+      - name: Tests — browser (XBlock UI)
+        if: always()
+        run: make test-js
 
   contracts-can-fail:
     name: guard rails actually bite
@@ -73,13 +112,29 @@ jobs:
       # importing an AI library — and fails the build if the contract does NOT
       # catch it. Without this, a misconfigured .importlinter would report six
       # passing contracts while enforcing nothing.
+      #
+      # **The baseline check below is not ceremony.** `lint-imports` exits
+      # non-zero if ANY contract is broken, so while some other contract is red
+      # this job passes whatever contract 2 does — it cannot tell "contract 2
+      # caught it" from "contract 1 was already failing". That happened on
+      # 2026-08-14: contract 1 broke, and this job would have reported "contract
+      # 2 correctly rejected the violation" with contract 2 unexercised. The
+      # guard rail on the guard rail needed one of its own.
       - name: Contract 2 must reject an AI import in the platform package
         env:
           PYTHONPATH: packages/coursemate-service:packages/coursemate-platform
         run: |
+          if ! lint-imports --config .importlinter; then
+            echo "::error::contracts are already broken, so this job cannot \
+            prove anything about contract 2 — fix the red contract first"
+            exit 1
+          fi
+          echo "baseline clean; injecting the violation"
+
           echo "import litellm  # deliberate violation" \
             > packages/coursemate-platform/coursemate_platform/_ci_violation.py
           if lint-imports --config .importlinter; then
+            rm packages/coursemate-platform/coursemate_platform/_ci_violation.py
             echo "::error::contract 2 did not catch a deliberate AI import"
             exit 1
           fi

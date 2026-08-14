@@ -1,0 +1,49 @@
+# Everything the offline suite needs. **One list, two consumers** — `make install`
+# and `.github/workflows/ci.yml` both install from here.
+#
+# It exists because they drifted, and the drift was invisible. CI installed eight
+# packages and the Makefile installed eleven; the three it was missing —
+# django, XBlock, web_fragments — are exactly what the platform tests import at
+# module scope. So `packages/coursemate-platform/tests/unit` raised four
+# collection errors in CI, and because both test directories ran in ONE pytest
+# invocation, a collection error interrupted the whole run and the 895 service
+# tests never executed either. The job failed before a single test ran.
+#
+# It was never noticed because CI fires on main/master and pull requests, and the
+# work was on a branch with no PR open. Nothing had exercised the workflow.
+#
+# Two lists that must agree, kept in two files, will disagree again. This is the
+# fix for that, not a tidy-up.
+
+# --- the service and contracts ------------------------------------------------
+pytest
+pytest-asyncio
+pytest-cov
+pyjwt
+import-linter
+ruff
+fastapi
+pydantic-settings
+httpx
+litellm
+
+# --- past-paper extraction ----------------------------------------------------
+# `test_pdf_extraction.py` opens with `pytest.importorskip("pypdf")`, so without
+# this its 19 tests do not fail — they vanish, and the run stays green. That is
+# the same shape as `make test-js` printing SKIPPED on a machine with no node:
+# a suite that quietly does not run is worse than one that fails.
+pypdf
+
+# --- the platform half --------------------------------------------------------
+# NOT the Open edX runtime — these are the two libraries the plugin's models and
+# block are built on, installable offline in seconds. Without them the mastery
+# idempotency guarantee and the exam-prep handler are untestable outside a
+# container, which in practice means untested.
+#
+# `pytest-django` is deliberately absent: it calls `setup_test_environment()` at
+# session start and collides with the fixture in
+# packages/coursemate-platform/tests/unit/conftest.py, which has to own that
+# lifecycle to keep the in-memory database isolated per test.
+django>=4.2,<6
+XBlock
+web_fragments
