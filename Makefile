@@ -129,6 +129,14 @@ coverage:
 agent-eval:
 	$(PY) eval/run_agent_eval.py
 
+# Same question, same retrieved context, one row per configured deployment.
+# Every call PINS its deployment by name, so this measures models rather than
+# routing. Needs the index and a provider, so it belongs in the service
+# container: `docker exec tutor_local-coursemate-1 python /eval/run_model_comparison.py`.
+# Reports land in eval/reports/ as JSON + Markdown.
+model-compare:
+	$(PY) eval/run_model_comparison.py --limit $(or $(LIMIT),5) --sleep $(or $(SLEEP),0)
+
 openapi:
 	$(PY) tools/ops/dump_openapi.py
 

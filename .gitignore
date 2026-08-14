@@ -6,3 +6,9 @@ __pycache__/
 *.egg-info/
 .coverage
 htmlcov/
+
+# Generated evaluation output. The NUMBERS belong in BENCHMARKS.md, where they
+# are quoted inline with their caveats; the raw runs are reproducible with
+# `make model-compare` and one of them will always be a failed run kept by
+# accident.
+eval/reports/
