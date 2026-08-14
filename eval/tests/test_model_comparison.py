@@ -29,7 +29,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from run_model_comparison import (  # noqa: E402
+from run_model_comparison import (
     UNKNOWN,
     ComparisonReport,
     QuestionComparison,

@@ -173,7 +173,7 @@ class ExamPrepAgent:
                 log.warning("agent planning call timed out")
                 yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.UNAVAILABLE)
                 return
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("agent planning call failed")
                 yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.UNAVAILABLE)
                 return
@@ -299,7 +299,7 @@ class ExamPrepAgent:
             log.warning("agent synthesis timed out")
             yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.UNAVAILABLE)
             return
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("agent synthesis failed")
             yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.UNAVAILABLE)
             return

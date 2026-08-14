@@ -40,7 +40,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "packages" / "coursemate-contracts"))
 
-from coursemate_contracts.examprep import (  # noqa: E402
+from coursemate_contracts.examprep import (
     ExamPrepPack,
     ExtractionMethod,
     QuestionRecord,

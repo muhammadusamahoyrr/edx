@@ -150,7 +150,7 @@ class NullReranker:
     """Pass-through. The control arm: lets the benchmark measure reranking's
     contribution by configuration rather than by editing code."""
 
-    def rerank(self, query: str, chunks: list[StoredChunk], top_k: int) -> list[StoredChunk]:  # noqa: ARG002
+    def rerank(self, query: str, chunks: list[StoredChunk], top_k: int) -> list[StoredChunk]:
         return chunks[:top_k]
 
 

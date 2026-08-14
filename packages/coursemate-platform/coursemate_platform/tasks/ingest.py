@@ -72,7 +72,7 @@ def ingest_published_block(self, usage_key: str, version: str, trace_id: str):
             written += result.blocks_written
             for failed in result.failed:
                 FailedIngestion.record(str(key.course_key), failed, version, "service rejected")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             for leaf in window:
                 FailedIngestion.record(
                     str(key.course_key), leaf.usage_key, leaf.version, str(exc)

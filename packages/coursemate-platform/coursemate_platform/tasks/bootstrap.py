@@ -129,7 +129,7 @@ def bootstrap_course(self, course_id: str):
         )
         return {"indexed": state.blocks_indexed, "total": state.block_count}
 
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         state.last_error = str(exc)
         state.save(update_fields=["last_error"])
         # Release the lock but start a cooldown, so a persistently failing course

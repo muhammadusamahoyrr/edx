@@ -243,7 +243,7 @@ class ToolRegistry:
         # --- 3. execute -----------------------------------------------------
         try:
             return tool.handler(parsed, ctx)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # The handler's own exception text is deliberately not forwarded to
             # the model: it can carry SQL, paths and offering ids from other
             # tenants. The operator gets the traceback, the model gets a fact.

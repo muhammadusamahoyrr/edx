@@ -192,7 +192,7 @@ def _transcript_resolver():
             log.info("coursemate: transcript resolver from %s", name)
             break
 
-    _transcript_resolver._fn = resolved  # noqa: SLF001
+    _transcript_resolver._fn = resolved
     return resolved
 
 
@@ -383,7 +383,9 @@ def user_group_tokens(course_key: CourseKey, user) -> tuple[str, ...]:
         partitions = get_all_partitions_for_course(course, active_only=True)
         groups = get_user_partition_groups(course_key, partitions, user, "id")
         return tuple(f"{pid}:{group.id}" for pid, group in groups.items())
-    except Exception:  # noqa: BLE001 - never fail a mint over an access lookup
+    # Never fail a mint over an access lookup: no resolvable groups means the
+    # caller sees unrestricted content only, which is the fail-closed reading.
+    except Exception:
         log.exception("coursemate: partition lookup failed for %s", course_key)
         return ()
 

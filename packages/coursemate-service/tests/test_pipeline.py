@@ -55,7 +55,7 @@ async def test_no_provider_configured_reports_unavailable(monkeypatch):
     # more actionable than "unavailable"). To reach the no-provider path at all,
     # retrieval has to succeed first.
     class _Grounded:
-        async def fetch(self, question, claims):  # noqa: ARG002
+        async def fetch(self, question, claims):
             return ContextResult(
                 chunks=[ContextChunk(text="t", citation=Citation(usage_key="u"), score=0.9)],
                 top_score=0.9,
@@ -91,7 +91,7 @@ async def test_grounding_required_with_low_score_abstains(monkeypatch):
     from coursemate_contracts.chat import Citation
 
     class WeakContext:
-        async def fetch(self, question, claims):  # noqa: ARG002
+        async def fetch(self, question, claims):
             return ContextResult(
                 chunks=[ContextChunk(text="t", citation=Citation(usage_key="u"), score=0.01)],
                 top_score=0.01,
@@ -112,7 +112,7 @@ async def test_context_failure_does_not_raise(monkeypatch):
     from coursemate_service.ai import pipeline as pl
 
     class Broken:
-        async def fetch(self, question, claims):  # noqa: ARG002
+        async def fetch(self, question, claims):
             raise RuntimeError("retriever exploded")
 
     monkeypatch.setattr(pl.settings, "require_grounding", False)
@@ -187,7 +187,7 @@ async def test_truncated_answer_is_reported_as_truncated(monkeypatch):
     from coursemate_service.ai.context import ContextChunk, ContextResult
 
     class _Grounded:
-        async def fetch(self, question, claims):  # noqa: ARG002
+        async def fetch(self, question, claims):
             return ContextResult(
                 chunks=[ContextChunk(text="t", citation=Citation(usage_key="u"), score=0.9)],
                 top_score=0.9,
@@ -206,7 +206,7 @@ async def test_truncated_answer_is_reported_as_truncated(monkeypatch):
         yield _Chunk("wer", "length")          # provider says: hit the cap
 
     class _Router:
-        async def acompletion(self, **kw):  # noqa: ARG002
+        async def acompletion(self, **kw):
             return _stream()
 
     client.reset_router()
@@ -228,7 +228,7 @@ async def test_complete_answer_is_not_flagged_truncated(monkeypatch):
     from coursemate_service.ai.context import ContextChunk, ContextResult
 
     class _Grounded:
-        async def fetch(self, question, claims):  # noqa: ARG002
+        async def fetch(self, question, claims):
             return ContextResult(
                 chunks=[ContextChunk(text="t", citation=Citation(usage_key="u"), score=0.9)],
                 top_score=0.9,
@@ -246,7 +246,7 @@ async def test_complete_answer_is_not_flagged_truncated(monkeypatch):
         yield _Chunk("a full answer", "stop")
 
     class _Router:
-        async def acompletion(self, **kw):  # noqa: ARG002
+        async def acompletion(self, **kw):
             return _stream()
 
     client.reset_router()
@@ -270,7 +270,7 @@ def _fake_router(text: str, finish: str = "stop"):
         yield _Chunk()
 
     class _Router:
-        async def acompletion(self, **kw):  # noqa: ARG002
+        async def acompletion(self, **kw):
             return _stream()
 
     return _Router()
@@ -281,7 +281,7 @@ def _grounded(text: str):
     from coursemate_service.ai.context import ContextChunk, ContextResult
 
     class _P:
-        async def fetch(self, question, claims):  # noqa: ARG002
+        async def fetch(self, question, claims):
             return ContextResult(
                 chunks=[ContextChunk(
                     text=text, citation=Citation(usage_key="u1", display_name="Locks"), score=0.9,

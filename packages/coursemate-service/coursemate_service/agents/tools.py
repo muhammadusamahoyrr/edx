@@ -179,7 +179,7 @@ def _search_past_questions(args: SearchPastQuestionsArgs, ctx: ToolContext) -> T
 # --- 3. plan context: outcomes + mastery + what is searchable ----------------
 
 
-def _get_plan_context(args: GetPlanContextArgs, ctx: ToolContext) -> ToolResult:  # noqa: ARG001
+def _get_plan_context(args: GetPlanContextArgs, ctx: ToolContext) -> ToolResult:
     """One call for everything a revision plan always needs.
 
     Replaces `get_clos` and `get_mastery`. See `GetPlanContextArgs` for the

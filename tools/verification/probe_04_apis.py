@@ -29,8 +29,8 @@ import django
 
 django.setup()
 
-import requests  # noqa: E402
-from django.contrib.auth import get_user_model  # noqa: E402
+import requests
+from django.contrib.auth import get_user_model
 
 LMS = "http://localhost:8000"
 COURSE = "course-v1:OpenedX+DemoX+DemoCourse"

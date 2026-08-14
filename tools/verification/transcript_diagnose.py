@@ -34,7 +34,7 @@ def main() -> None:
 
     from coursemate_platform.adapters import content_adapter
 
-    get_transcript = content_adapter._transcript_resolver()  # noqa: SLF001
+    get_transcript = content_adapter._transcript_resolver()
     print(f"resolver: {getattr(get_transcript, '__module__', None)}")
 
     course_key = CourseKey.from_string(COURSE)

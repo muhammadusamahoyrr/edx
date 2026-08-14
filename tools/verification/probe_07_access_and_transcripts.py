@@ -34,7 +34,7 @@ django.setup()
 
 sys.path.insert(0, "/openedx/probes")
 
-from probe_report import Confidence, Finding, environment_block  # noqa: E402
+from probe_report import Confidence, Finding, environment_block
 
 #: Overridable, because the interesting course is often not the demo one — a
 #: course with cohorts or a verified track is what actually exercises section C.
@@ -72,7 +72,7 @@ def main() -> None:
     f.source("https://github.com/openedx/edx-platform/blob/master/xmodule/partitions/partitions_service.py")
 
     # --- A. which transcript resolver is on this release ---------------------
-    resolver = content_adapter._transcript_resolver()  # noqa: SLF001
+    resolver = content_adapter._transcript_resolver()
     f.evidence("transcript resolver found", bool(resolver))
     if resolver is not None:
         f.evidence("resolver module", getattr(resolver, "__module__", "?"))
@@ -102,7 +102,7 @@ def main() -> None:
             if sub or transcripts or edx_video_id:
                 with_pointer += 1
 
-            text = content_adapter._video_transcript(block)  # noqa: SLF001
+            text = content_adapter._video_transcript(block)
             if text.strip():
                 with_text += 1
                 if with_text == 1:  # record one real sample, not all of them
@@ -142,7 +142,7 @@ def main() -> None:
             for block in store.get_items(course_key, qualifiers={"category": category}):
                 if getattr(block, "visible_to_staff_only", False):
                     staff_only.append(str(block.scope_ids.usage_id))
-                tokens = content_adapter._group_tokens(block)  # noqa: SLF001
+                tokens = content_adapter._group_tokens(block)
                 if tokens:
                     restricted.append((str(block.scope_ids.usage_id), ",".join(tokens)))
 

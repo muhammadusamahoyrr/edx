@@ -53,7 +53,7 @@ class _Router:
         self.payloads = list(payloads)
         self.calls = 0
 
-    async def acompletion(self, **kw):  # noqa: ARG002
+    async def acompletion(self, **kw):
         self.calls += 1
         content = self.payloads.pop(0) if self.payloads else None
         if isinstance(content, Exception):
@@ -171,7 +171,7 @@ async def test_student_selects_clo_and_difficulty_and_receives_a_labelled_questi
     assert built.derived_from == ["Q1", "block-v1:deadlock"]
 
 
-def _source_of(stack):  # noqa: ARG001
+def _source_of(stack):
     from coursemate_service.boundary.impl import boundary
 
     return boundary.search_past_questions(OFFERING, _claims(), clo_id="CLO-1")[0]

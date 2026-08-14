@@ -400,7 +400,9 @@ async def main_async(argv: list[str] | None = None) -> int:
     from coursemate_service.ai.verify import unsupported_sentences
     from coursemate_service.config import settings
 
-    from harness.runner import make_claims  # noqa: F401 — same claims the eval uses
+    # The same claims the eval harness builds, so this measures the models
+    # rather than a second definition of the caller.
+    from harness.runner import make_claims
 
     model_list = build_model_list()
     if not model_list:

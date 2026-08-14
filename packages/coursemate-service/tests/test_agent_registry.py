@@ -161,7 +161,7 @@ def test_handler_exception_does_not_leak_its_text_to_the_model():
     offering ids. The operator gets the traceback; the model gets a fact."""
     secret = "/data/other-tenant/index.db is locked"
 
-    def boom(args, ctx):  # noqa: ARG001
+    def boom(args, ctx):
         raise RuntimeError(secret)
 
     local = ToolRegistry()

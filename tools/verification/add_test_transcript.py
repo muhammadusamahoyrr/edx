@@ -108,7 +108,7 @@ def main() -> None:
     # The point of the exercise: does OUR extractor now return text? Calling the
     # shipped function rather than get_transcript directly, because the thing
     # under test is the adapter, not the platform.
-    text = content_adapter._video_transcript(target)  # noqa: SLF001
+    text = content_adapter._video_transcript(target)
     print(f"\n_video_transcript -> {len(text)} chars")
     print(f"sample: {text[:220]}")
 

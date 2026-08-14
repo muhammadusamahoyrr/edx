@@ -10,11 +10,11 @@ import django
 django.setup()
 
 sys.path.insert(0, "/tmp")
-from probe_report import Confidence, Finding  # noqa: E402
+from probe_report import Confidence, Finding
 
-from opaque_keys.edx.keys import CourseKey  # noqa: E402
-from xmodule.modulestore import ModuleStoreEnum  # noqa: E402
-from xmodule.modulestore.django import modulestore  # noqa: E402
+from opaque_keys.edx.keys import CourseKey
+from xmodule.modulestore import ModuleStoreEnum
+from xmodule.modulestore.django import modulestore
 
 COURSE = "course-v1:OpenedX+DemoX+DemoCourse"
 

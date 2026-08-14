@@ -57,7 +57,7 @@ def student_identifier(user) -> str:
     return ""
 
 
-def on_unenrollment(signal, sender, enrollment, **kwargs):  # noqa: ARG001
+def on_unenrollment(signal, sender, enrollment, **kwargs):
     """COURSE_UNENROLLMENT_COMPLETED.
 
     Thin, like every receiver: post an invalidation notice and return. Two things

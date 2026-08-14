@@ -57,7 +57,7 @@ class _StubRouter:
         self.planning_calls = 0
         self.synthesis_calls = 0
 
-    async def acompletion(self, *, model, messages, stream=False, **kw):  # noqa: ARG002
+    async def acompletion(self, *, model, messages, stream=False, **kw):
         if stream:
             self.synthesis_calls += 1
             self.last_synthesis_messages = messages
@@ -83,7 +83,7 @@ def agent_env(monkeypatch):
 
     results: dict[str, list[ToolResult]] = {}
 
-    def fake_invoke(name, args, ctx):  # noqa: ARG001
+    def fake_invoke(name, args, ctx):
         queue = results.get(name)
         if not queue:
             return ToolResult(tool=name, status=ToolStatus.OK, data={})

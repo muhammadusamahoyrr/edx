@@ -79,7 +79,7 @@ class MCPServer:
 
     # --- methods ---------------------------------------------------------
 
-    def initialize(self, params: dict) -> dict:  # noqa: ARG002
+    def initialize(self, params: dict) -> dict:
         return {
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {"tools": {}},
@@ -95,7 +95,7 @@ class MCPServer:
             ),
         }
 
-    def tools_list(self, params: dict) -> dict:  # noqa: ARG002
+    def tools_list(self, params: dict) -> dict:
         return {
             "tools": [
                 {
@@ -161,7 +161,7 @@ class MCPServer:
         try:
             return {"jsonrpc": "2.0", "id": request_id,
                     "result": handler(request.get("params") or {})}
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # The exception text is not forwarded: it can carry paths and SQL. The
             # operator gets the traceback on stderr, the client gets a fact.
             log.exception("mcp method %s raised %s", method, type(exc).__name__)

@@ -210,6 +210,6 @@ def _active_version(offering_id: str) -> str | None:
         return (http.get(f"/coursemate/api/ingest/stats/{offering_id}") or {}).get(
             "active_version"
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("sweep: could not read active version for %s", offering_id)
         return None

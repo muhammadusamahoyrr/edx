@@ -46,7 +46,7 @@ class CourseMateSmokeXBlock(XBlock):
     #: works — which is the same scope the real tutor keeps chat history in.
     clicks = Integer(default=0, scope=Scope.user_state)
 
-    def student_view(self, context=None):  # noqa: ARG002
+    def student_view(self, context=None):
         html = f"""
         <div class="coursemate-smoke" style="border:1px solid #4a7;padding:12px;border-radius:6px">
           <p><strong>CourseMate smoke test.</strong> If you can see this, the block
@@ -61,7 +61,7 @@ class CourseMateSmokeXBlock(XBlock):
         fragment.initialize_js("CourseMateSmoke")
         return fragment
 
-    def studio_view(self, context=None):  # noqa: ARG002
+    def studio_view(self, context=None):
         """Proves the block is editable in Studio, which is a separate code path
         from student_view and fails independently of it."""
         html = """
@@ -73,7 +73,7 @@ class CourseMateSmokeXBlock(XBlock):
         return Fragment(html)
 
     @XBlock.json_handler
-    def ping(self, data, suffix=""):  # noqa: ARG002
+    def ping(self, data, suffix=""):
         """Round-trip a JSON payload and persist per-student state.
 
         Proves three things at once: handler URL dispatch resolves, JSON encoding

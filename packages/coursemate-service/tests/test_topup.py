@@ -119,8 +119,8 @@ def test_prune_removes_rows_whatever_their_state(store):
     store.write_chunks(_rows("c1", "v1", "block-v1:b"))
     store.activate_usage_keys("c1", "v1", ["block-v1:b"])
 
-    with store._lock:  # noqa: SLF001
-        n = store._conn.execute(  # noqa: SLF001
+    with store._lock:
+        n = store._conn.execute(
             "SELECT COUNT(*) FROM chunks WHERE offering_id='c1' AND usage_key='block-v1:b'"
         ).fetchone()[0]
     assert n == 2, "one copy, not two"

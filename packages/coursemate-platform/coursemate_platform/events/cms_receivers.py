@@ -31,7 +31,7 @@ import uuid
 log = logging.getLogger(__name__)
 
 
-def on_xblock_published(signal, sender, xblock_info, **kwargs):  # noqa: ARG001
+def on_xblock_published(signal, sender, xblock_info, **kwargs):
     """XBLOCK_PUBLISHED. Enqueue and return.
 
     The payload names the published **container**, not the changed leaves —
@@ -59,7 +59,7 @@ def on_xblock_published(signal, sender, xblock_info, **kwargs):  # noqa: ARG001
     log.info("coursemate: enqueued ingest + sweep for %s", usage_key)
 
 
-def on_xblock_deleted(signal, sender, xblock_info, **kwargs):  # noqa: ARG001
+def on_xblock_deleted(signal, sender, xblock_info, **kwargs):
     """XBLOCK_DELETED. Drop every chunk under that subtree."""
     from ..tasks.ingest import delete_block
 
@@ -68,7 +68,7 @@ def on_xblock_deleted(signal, sender, xblock_info, **kwargs):  # noqa: ARG001
     )
 
 
-def on_xblock_duplicated(signal, sender, xblock_info, **kwargs):  # noqa: ARG001
+def on_xblock_duplicated(signal, sender, xblock_info, **kwargs):
     """XBLOCK_DUPLICATED. The copy is a new usage_key and needs its own chunks."""
     from ..tasks.ingest import ingest_published_block
 

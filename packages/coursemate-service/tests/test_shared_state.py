@@ -38,7 +38,7 @@ class FakeRedis:
             raise ConnectionError("down")
         return self.kv.get(k)
 
-    def setex(self, k, ttl, v):  # noqa: ARG002
+    def setex(self, k, ttl, v):
         if self.fail:
             raise ConnectionError("down")
         self.kv[k] = v
@@ -49,7 +49,7 @@ class FakeRedis:
             n += 1 if self.kv.pop(k, None) is not None else 0
         return n
 
-    def scan_iter(self, match=None, count=None):  # noqa: ARG002
+    def scan_iter(self, match=None, count=None):
         import fnmatch
         return [k for k in list(self.kv) if fnmatch.fnmatch(k, match or "*")]
 
@@ -139,10 +139,10 @@ def test_local_limiter_does_not_grow_without_bound(monkeypatch):
     rl = _RateLimiter()
     for i in range(1200):
         rl.check(f"student-{i}")
-    for k in rl._hits:                                   # noqa: SLF001
-        rl._hits[k] = []                                 # noqa: SLF001 - age them out
+    for k in rl._hits:
+        rl._hits[k] = []   # age them out
     rl.check("trigger-prune")
-    assert len(rl._hits) < 1200                          # noqa: SLF001
+    assert len(rl._hits) < 1200
 
 
 # --- authz cache -----------------------------------------------------------
@@ -151,7 +151,7 @@ def test_entitlement_is_shared_between_replicas(fake, monkeypatch):
     a, b = EnrollmentVerifier(), EnrollmentVerifier()
     calls = []
 
-    def ask(self, user_id, offering_id):  # noqa: ARG001
+    def ask(self, user_id, offering_id):
         calls.append(user_id)
         return Entitlement(enrolled=True, is_staff=False, checked_at=time.time())
 
@@ -168,19 +168,19 @@ def test_invalidation_reaches_every_replica(fake, monkeypatch):
     a, b = EnrollmentVerifier(), EnrollmentVerifier()
     monkeypatch.setattr(
         EnrollmentVerifier, "_ask_platform",
-        lambda self, u, o: Entitlement(True, False, time.time()),  # noqa: ARG005
+        lambda self, u, o: Entitlement(True, False, time.time()),
     )
     a.verify("u1", "c1")
-    assert b._cache_get("u1", "c1") is not None          # noqa: SLF001
+    assert b._cache_get("u1", "c1") is not None
 
     a.invalidate(user_id="u1", offering_id="c1")
-    assert b._cache_get("u1", "c1") is None              # noqa: SLF001
+    assert b._cache_get("u1", "c1") is None
 
 
 def test_cache_read_failure_is_a_miss_not_a_grant(fake, monkeypatch):
     """A corrupt or unreachable cache must never be read as an entitlement."""
     v = EnrollmentVerifier()
     fake.kv["cm:authz:u1:c1"] = "{not json"
-    assert v._cache_get("u1", "c1") is None              # noqa: SLF001
+    assert v._cache_get("u1", "c1") is None
     fake.fail = True
-    assert v._cache_get("u1", "c1") is None              # noqa: SLF001
+    assert v._cache_get("u1", "c1") is None

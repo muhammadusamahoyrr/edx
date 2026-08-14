@@ -131,12 +131,12 @@ def test_access_tokens_go_with_the_chunk(store):
     _ingest(store, "c1", "v1", [
         ("block-v1:a", {"text": "cohort only", "group_tokens": ("18587404:1819362822",)}),
     ])
-    with store._lock:  # noqa: SLF001
-        assert store._conn.execute("SELECT COUNT(*) FROM chunk_groups").fetchone()[0] == 1  # noqa: SLF001
+    with store._lock:
+        assert store._conn.execute("SELECT COUNT(*) FROM chunk_groups").fetchone()[0] == 1
 
     store.delete_by_prefix("c1", "block-v1:a")
-    with store._lock:  # noqa: SLF001
-        assert store._conn.execute("SELECT COUNT(*) FROM chunk_groups").fetchone()[0] == 0  # noqa: SLF001
+    with store._lock:
+        assert store._conn.execute("SELECT COUNT(*) FROM chunk_groups").fetchone()[0] == 0
 
 
 def test_inactive_rows_go_too(store):

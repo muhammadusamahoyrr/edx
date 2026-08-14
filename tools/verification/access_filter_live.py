@@ -22,7 +22,7 @@ from coursemate_service.knowledge import get_store
 def main() -> int:
     store = get_store()
 
-    rows = list(store._conn.execute(  # noqa: SLF001
+    rows = list(store._conn.execute(
         """SELECT c.id, c.offering_id, c.usage_key, c.display_name, c.text,
                   g.group_token
            FROM chunks c JOIN chunk_groups g ON g.chunk_id = c.id
