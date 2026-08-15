@@ -643,3 +643,162 @@ def test_chat_never_sets_the_practice_fields():
     source = inspect.getsource(pipeline)
     assert "question_id=" not in source
     assert "difficulty_band=" not in source
+
+
+# --- provenance: "Derived from" must mean "this contributed" ----------------
+#
+# `quiz_generator` emitted a CITATION for every retrieved chunk and carried all
+# of them in `derived_from`, so the card's "Derived from" line meant *we
+# searched this* rather than *this contributed*. `pipeline.py:288` had already
+# fixed the same thing for chat answers, with the same reasoning.
+#
+# **Measured before adopting the rule** (eval/measure_question_grounding.py, real
+# generations against OEX101). Questions do share fewer content words with their
+# chunks than prose does — median 6 against 20 — but the floor was 3, well clear
+# of `supporting_chunks`' threshold of 1, so nothing loses a citation. On that
+# data the narrowing selects nothing out; it is a guard for when retrieval
+# returns more than the question uses, which `rerank_top_k=3` currently prevents.
+# These tests build that case explicitly rather than waiting for it.
+
+
+def _multi_chunk(*specs: tuple[str, str]) -> ContextResult:
+    """A context of several chunks: (usage_key, text) each."""
+    return ContextResult(
+        chunks=[
+            ContextChunk(text=text,
+                         citation=Citation(usage_key=key, display_name=key),
+                         score=0.9)
+            for key, text in specs
+        ],
+        top_score=0.9,
+    )
+
+
+async def test_a_retrieved_chunk_the_question_never_used_is_not_cited(monkeypatch):
+    """The defect, stated directly. An unrelated chunk shares no content word
+    with the question, so it must not appear under "Derived from"."""
+    context = _multi_chunk(
+        ("block-v1:deadlock", "A deadlock arises when processes wait in a circular chain."),
+        ("block-v1:unrelated", "Photosynthesis converts light into chemical energy."),
+    )
+    gen = _make(monkeypatch, source=_source(), context=context, router=_Router(OK))
+
+    frames = await _run(gen)
+    cited = [f.citation.usage_key for f in frames if f.type == FrameType.CITATION]
+
+    assert "block-v1:unrelated" not in cited, (
+        "a chunk sharing nothing with the question is shown as a source"
+    )
+    assert "block-v1:deadlock" in cited, "the chunk it did draw on was dropped"
+
+
+def test_supporting_selects_only_the_chunks_the_question_used():
+    """`_supporting` in isolation — the selection `derived_from` is built from.
+
+    Tested directly rather than by spying on `_build`. The spy version passed
+    alone and failed in the suite: patching a method on the class is sensitive
+    to what every other test in the file has already done to it, and a test that
+    depends on its neighbours is worse than no test.
+    """
+    from coursemate_service.ai.quiz_generator import QuizGenerator
+
+    context = _multi_chunk(
+        ("block-v1:deadlock", "A deadlock arises when processes wait in a circular chain."),
+        ("block-v1:unrelated", "Photosynthesis converts light into chemical energy."),
+    )
+    keep = QuizGenerator._supporting(
+        "Explain how a deadlock can arise between two processes.", context
+    )
+    keys = [c.citation.usage_key for c in keep]
+
+    assert keys == ["block-v1:deadlock"]
+
+
+def test_derived_from_is_built_from_the_same_selection_that_is_cited():
+    """The stored record and the displayed line cannot disagree about
+    provenance — a rater checking `derived_from` must see what the student saw.
+
+    A source scan, because both halves are one expression in the code: the list
+    passed to `_build` is derived from `supporting`, and `supporting` is what the
+    CITATION loop iterates. Asserting that once is stronger than asserting two
+    runtime values happen to match."""
+    import inspect
+
+    from coursemate_service.ai import quiz_generator as qg
+
+    src = inspect.getsource(qg)
+    assert "supporting = self._supporting(text, context)" in src
+    assert "[c.citation.usage_key for c in supporting]" in src, (
+        "derived_from no longer uses the supporting selection"
+    )
+    assert "for chunk in supporting:" in src, (
+        "the citation loop no longer iterates the supporting selection"
+    )
+
+
+async def test_every_supporting_chunk_is_still_cited(monkeypatch):
+    """Narrowing must not become dropping. Two chunks that both contribute are
+    both shown."""
+    context = _multi_chunk(
+        ("block-v1:a", "A deadlock arises when processes wait in a circular chain."),
+        ("block-v1:b", "Circular wait is one of the four deadlock conditions."),
+    )
+    gen = _make(monkeypatch, source=_source(), context=context, router=_Router(OK))
+
+    frames = await _run(gen)
+    cited = [f.citation.usage_key for f in frames if f.type == FrameType.CITATION]
+
+    assert "block-v1:a" in cited
+    assert "block-v1:b" in cited
+
+
+async def test_mandatory_citation_survives_when_nothing_overlaps(monkeypatch):
+    """§8.5's promise, and the case most likely to be broken by narrowing.
+
+    When the question shares no content word with ANY chunk, `supporting_chunks`
+    returns every index rather than none — because a question that can cite
+    nothing was supposed to abstain upstream, and showing zero sources would
+    hide provenance exactly when a student most needs it."""
+    context = _multi_chunk(
+        ("block-v1:x", "Photosynthesis converts light into chemical energy."),
+        ("block-v1:y", "Mitochondria produce ATP for the cell."),
+    )
+    gen = _make(monkeypatch, source=_source(), context=context, router=_Router(OK))
+
+    frames = await _run(gen)
+    cited = [f.citation.usage_key for f in frames if f.type == FrameType.CITATION]
+
+    assert "block-v1:x" in cited and "block-v1:y" in cited, (
+        "narrowing dropped to zero lesson citations instead of falling back to all"
+    )
+
+
+async def test_the_source_paper_is_always_cited(monkeypatch):
+    """It is not a retrieved chunk and is never subject to the overlap rule: the
+    question was modelled on that paper whatever words it ended up using."""
+    context = _multi_chunk(
+        ("block-v1:unrelated", "Photosynthesis converts light into chemical energy."),
+    )
+    gen = _make(monkeypatch, source=_source(source_doc_id="paper-2024.pdf"),
+                context=context, router=_Router(OK))
+
+    frames = await _run(gen)
+    cited = [f.citation.usage_key for f in frames if f.type == FrameType.CITATION]
+
+    # The paper is identified by `source_doc_id`, not `question_id` — the id the
+    # citation carries is the DOCUMENT, which is what a student can go and read.
+    assert cited[0] == "paper-2024.pdf", "the source paper is no longer cited first"
+
+
+def test_the_generator_reuses_the_chat_grounding_rule():
+    """One implementation, not two that agree today. A second copy would drift,
+    and this repo has already paid for that once with the confidence gate."""
+    import inspect
+
+    from coursemate_service.ai import quiz_generator as qg
+
+    source = inspect.getsource(qg)
+    assert "supporting_chunks" in source, "the generator no longer uses the shared rule"
+    assert "for chunk in context.chunks:\n            yield StreamFrame" not in source, (
+        "the generator emits every retrieved chunk again"
+    )

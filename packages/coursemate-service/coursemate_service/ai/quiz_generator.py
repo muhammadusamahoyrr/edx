@@ -275,6 +275,39 @@ class QuizGenerator:
                 return record.question_id
         return None
 
+    @staticmethod
+    def _supporting(question_text: str, context):
+        """The retrieved chunks this question actually drew on.
+
+        **The same function chat uses**, not a second rule that agrees today.
+        `supporting_chunks` keeps a chunk when it shares at least one content
+        word with the text, and returns EVERY chunk when nothing overlaps —
+        which is what preserves §8.5's mandatory citation. A question that could
+        cite nothing is supposed to have abstained upstream; silently dropping
+        to zero citations here would break that promise in the one case where a
+        student most needs to see what the question was built from.
+
+        **Measured on real generations before adopting it** (2026-08-15,
+        `eval/measure_question_grounding.py`, OEX101). The concern was that
+        `supporting_chunks` was calibrated on prose ANSWERS and a question is
+        shorter, so it might lose citations. Questions do overlap less — median
+        6 shared content words against 20 for prose — but the floor is 3, well
+        clear of the rule's threshold of 1:
+
+            generated questions   18 chunks   0 sharing nothing   100% kept
+            prose answers          6 chunks   0 sharing nothing   100% kept
+
+        So on today's data this selects nothing out, and that is the honest
+        result: with `rerank_top_k=3` every retrieved chunk is already relevant
+        enough to overlap. It is a guard that will matter when more chunks are
+        retrieved than the answer uses, not a fix to visible behaviour.
+        """
+        from .verify import supporting_chunks
+
+        chunks = list(context.chunks)
+        keep = supporting_chunks(question_text, [c.text for c in chunks])
+        return [chunks[i] for i in keep]
+
     def _build(self, question_text: str, source: QuestionRecord, usage_keys: list[str]):
         """Assemble the contract object. **Every claim here is set in code.**
 
@@ -346,7 +379,14 @@ class QuizGenerator:
             # level is always stated even when the caller did not pick one.
             band=difficulty_band or band_of(source.difficulty),
         )
-        usage_keys = [c.citation.usage_key for c in context.chunks]
+        # Narrowed to the chunks the QUESTION actually drew on, once the text
+        # exists — see `_supporting` below. Every retrieved chunk used to be
+        # carried here and emitted as a citation, which made "Derived from"
+        # mean "we searched this" rather than "this contributed". `pipeline.py`
+        # already fixed the same thing for chat answers.
+        #
+        # Deferred rather than computed here, because the selection depends on
+        # the generated text and nothing has been generated yet.
         # Never `cheap` for generation — see build_generation_fallback_chain.
         fallbacks = build_generation_fallback_chain(build_model_list())
 
@@ -392,7 +432,10 @@ class QuizGenerator:
 
             if text is not None:
                 try:
-                    question = self._build(text, source, usage_keys)
+                    supporting = self._supporting(text, context)
+                    question = self._build(
+                        text, source, [c.citation.usage_key for c in supporting]
+                    )
                     break
                 except ValidationError as exc:
                     # The contract refused it. Same class of failure as
@@ -419,7 +462,9 @@ class QuizGenerator:
             citation=Citation(usage_key=source.source_doc_id,
                               display_name=source.source_doc_id),
         )
-        for chunk in context.chunks:
+        # The SAME chunks `derived_from` names, so the provenance line and the
+        # stored record cannot disagree about what this question came from.
+        for chunk in supporting:
             yield StreamFrame(type=FrameType.CITATION, citation=chunk.citation)
 
         if deployment is not None and deployment != PRIMARY_DEPLOYMENT:
