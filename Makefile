@@ -66,17 +66,35 @@ test:
 lint-arch:
 	$(LINT) --config .importlinter
 
-# The XBlock UI is the one surface Python cannot reach. `node` is not a hard
-# dependency — a machine without it skips these and says so, rather than failing
-# a build over a test runner.
+# The XBlock UI is the one surface Python cannot reach — 181 tests across nine
+# files, covering the only code a student actually looks at.
 #
-# `if/else`, not `A && B || echo`. The `||` form was here first and it made a
-# FAILING test print "SKIPPED: node not found" and exit 0 — a lie and a green
-# build, so these tests gated nothing. Found while adding the study-plan suite,
-# by running a deliberately failing file through the old shape.
+# **A missing `node` FAILS this target (2026-08-14).** It used to print
+# "SKIPPED: node not found" and exit 0, on the reasoning that node is not a hard
+# dependency and a build should not fail over a test runner. That reasoning is
+# reversed here, for one reason: it made a green build indistinguishable from
+# one where nine suites never ran.
+#
+# There is deliberately no opt-out flag. An escape hatch would be used once in a
+# hurry and then live in someone's shell history, which is the same outcome
+# reached more slowly. Node is one `apt install nodejs` away, and CI installs it
+# through `setup-node`, so requiring it costs very little.
+#
+# This is the second time this target has been fixed for the same reason. The
+# `A && B || echo` form was here first and it made a FAILING test print
+# "SKIPPED: node not found" and exit 0 — a lie and a green build, so these tests
+# gated nothing. That was found by running a deliberately failing file through
+# the old shape; this was found by asking why CI could not report a skip.
 test-js:
-	@if node --version >/dev/null 2>&1; then \
-		node packages/coursemate-platform/tests/js/test_practice_ui.mjs && \
+	@if ! node --version >/dev/null 2>&1; then \
+		echo "ERROR: node not found, so the XBlock UI cannot be tested." >&2; \
+		echo "       That is 181 tests across nine files - the only code a" >&2; \
+		echo "       student sees. Passing this target without them would" >&2; \
+		echo "       report a green build for untested UI." >&2; \
+		echo "       Install Node 20+ and re-run." >&2; \
+		exit 1; \
+	fi
+	@node packages/coursemate-platform/tests/js/test_practice_ui.mjs && \
 		node packages/coursemate-platform/tests/js/test_study_plan_ui.mjs && \
 		node packages/coursemate-platform/tests/js/test_error_notices.mjs && \
 		node packages/coursemate-platform/tests/js/test_history_marks.mjs && \
@@ -84,10 +102,7 @@ test-js:
 		node packages/coursemate-platform/tests/js/test_ui_shell.mjs && \
 		node packages/coursemate-platform/tests/js/test_studio_panel.mjs && \
 		node packages/coursemate-platform/tests/js/test_thinking_indicator.mjs && \
-		node packages/coursemate-platform/tests/js/test_answer_formatting.mjs; \
-	else \
-		echo "SKIPPED: node not found — the XBlock UI is untested on this machine"; \
-	fi
+		node packages/coursemate-platform/tests/js/test_answer_formatting.mjs
 
 # The committed spec describes the API to anyone integrating with it, and
 # "generated" was not enough to keep it true — generating it was a step someone
