@@ -38,7 +38,29 @@ def _load_tool():
     return module
 
 
-pytest.importorskip("pypdf", reason="pypdf is an extraction-only dependency")
+#: **A missing `pypdf` FAILS collection; it does not skip (2026-08-15).**
+#:
+#: This was `pytest.importorskip("pypdf", reason="pypdf is an extraction-only
+#: dependency")`. That is true — it is extraction-only — but the consequence was
+#: that 19 tests covering the past-paper extractor did not fail without it, they
+#: VANISHED, and the run stayed green. A suite that quietly does not run is the
+#: failure this repository keeps finding, and `pypdf` is a pure-Python wheel
+#: declared in requirements-dev.txt, so there is no environment where skipping is
+#: the kind thing to do rather than the misleading one.
+#:
+#: Same change as `make test-js` on 2026-08-14, for the same reason and against
+#: the same objection: the dependency really is optional to the SHIPPED service,
+#: and it is not optional to knowing whether the extractor works.
+try:
+    import pypdf  # noqa: F401
+except ImportError as exc:  # pragma: no cover - the message is the point
+    raise RuntimeError(
+        "pypdf is not installed, so the 19 PDF-extraction tests cannot run. "
+        "They used to be skipped silently, which reported a green run for an "
+        "untested extractor. Install it with "
+        "`pip install -r requirements-dev.txt`."
+    ) from exc
+
 tool = _load_tool()
 
 

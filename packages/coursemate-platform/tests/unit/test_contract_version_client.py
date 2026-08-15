@@ -23,7 +23,29 @@ import pytest
 
 # The client module imports `django.conf.settings` lazily, inside each function,
 # so it is importable without a configured Django — but it needs `httpx`.
-httpx = pytest.importorskip("httpx")
+#
+# **A missing `httpx` FAILS collection; it does not skip (2026-08-15).**
+#
+# This was `httpx = pytest.importorskip("httpx")`. The 10 tests below cover the
+# contract version lock — the check that refuses a peer speaking a different
+# wire format — and without httpx they did not fail, they VANISHED, leaving a
+# green run for an unexercised control. `httpx` is declared in
+# requirements-dev.txt and is what the client actually calls, so there is no
+# environment where skipping is the kind answer rather than the misleading one.
+#
+# Third of three fixes for this shape: `make test-js` and the pypdf suite were
+# the others. The `django` skip in conftest.py is deliberately NOT one of them —
+# it guards a fixture rather than a whole file, and what that suite should do
+# without Django is a design question, not a defect.
+try:
+    import httpx
+except ImportError as exc:  # pragma: no cover - the message is the point
+    raise RuntimeError(
+        "httpx is not installed, so the 10 contract-version-lock tests cannot "
+        "run. They used to be skipped silently, which reported a green run for "
+        "an unexercised control. Install it with "
+        "`pip install -r requirements-dev.txt`."
+    ) from exc
 
 from coursemate_contracts import CONTRACT_VERSION, ContractMismatch
 from coursemate_platform.client import http as client
