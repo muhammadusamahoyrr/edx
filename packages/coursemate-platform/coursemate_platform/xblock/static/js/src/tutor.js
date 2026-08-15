@@ -159,6 +159,45 @@ function CourseMateTutor(runtime, element, initArgs) {
   var BULLET = /^\s*[-*]\s+(.*)$/;
   var ORDERED = /^\s*\d+\.\s+(.*)$/;
 
+  /* --- constructs the DETERMINISTIC planner emits (2026-08-15) -------------
+   *
+   * The four rules above were measured over model ANSWERS. These three come
+   * from a different producer with a different guarantee: `api/plan.py` writes
+   * the revision plan itself, so its markup is not sampled, it is enumerated
+   * from the source. That is why they can be added without re-running the
+   * chat measurement — there is no model to be unpredictable.
+   *
+   * Until now the plan reached the student as raw text: `## CLO-1 — …`,
+   * `_Your record: not practised yet._`. 14 of its 18 markup constructs were
+   * shown literally.
+   */
+  var HEADING = /^(#{1,3})\s+(.*)$/;
+
+  /* **Whole-line italics, deliberately not inline.**
+   *
+   * An inline `_…_` rule is unsafe here in both directions, which is why it was
+   * measured before choosing:
+   *
+   *   `COURSEMATE_MODEL_API_BASE`  a naive rule italicises `_MODEL_` and eats
+   *                               the underscores — the tutor mangles its own
+   *                               configuration advice
+   *   `_Source: oex101_final_2024.pdf, p.2_`
+   *                               a word-boundary rule refuses to match at all,
+   *                               because the FILENAME contains underscores, so
+   *                               the plan's own markup stays visible
+   *
+   * A line that both opens and closes with `_` has neither problem: the
+   * filename's underscores are interior and never considered. It also matches
+   * how the planner actually writes — every italic it emits is a whole line.
+   *
+   * (That the plan's markup collides with its own data is the strongest
+   * argument for carrying it as structure rather than as a string. Noted here
+   * because this is where the collision is visible.) */
+  var LINE_ITALIC = /^_(.+)_$/;
+
+  //: A `  _Source: …_` line belongs to the bullet above it, not to a new block.
+  var INDENTED = /^\s{2,}\S/;
+
   /* Render `text` into `container`, replacing whatever was there.
    *
    * Called on EVERY token rather than appending, so a partial `**bo` is never
@@ -189,6 +228,31 @@ function CourseMateTutor(runtime, element, initArgs) {
 
       if (!line.trim()) { closePara(); i++; continue; }
 
+      /* Headings. `h4`, not `h1`: this renders inside a chat bubble in an LMS
+       * unit that already owns the page outline, and emitting a top-level
+       * heading from a component would corrupt the document structure a screen
+       * reader navigates by. */
+      var heading = line.match(HEADING);
+      if (heading) {
+        closePara();
+        container.appendChild(el("h4", "cm-answer-h", heading[2].trim()));
+        i++;
+        continue;
+      }
+
+      /* A whole line wrapped in underscores — the planner's `_Your record: …_`.
+       * Its own block rather than an inline run, because that is how it is
+       * written and because the inline form is unsafe (see LINE_ITALIC). */
+      var lineItalic = line.trim().match(LINE_ITALIC);
+      if (lineItalic) {
+        closePara();
+        var note = el("p", "cm-answer-note");
+        note.appendChild(el("em", "", lineItalic[1].trim()));
+        container.appendChild(note);
+        i++;
+        continue;
+      }
+
       /* A run of adjacent bullets is ONE list. Checked before the paragraph
        * case so a list interrupting a paragraph starts a list rather than
        * becoming a line inside it. */
@@ -201,8 +265,24 @@ function CourseMateTutor(runtime, element, initArgs) {
         while (i < lines.length && rule.test(lines[i])) {
           var item = el("li");
           appendInline(item, lines[i].match(rule)[1]);
-          list.appendChild(item);
           i++;
+          /* Indented lines after a bullet are that bullet's own — the plan puts
+           * `_Source: …_` and the low-confidence warning there. Rendered inside
+           * the <li> so provenance stays attached to the question it belongs
+           * to; as a sibling block it would read as applying to the whole list. */
+          while (i < lines.length && INDENTED.test(lines[i]) && !rule.test(lines[i])) {
+            var subText = lines[i].trim();
+            var subItalic = subText.match(LINE_ITALIC);
+            var sub = el("div", "cm-answer-subline");
+            if (subItalic) {
+              sub.appendChild(el("em", "", subItalic[1].trim()));
+            } else {
+              appendInline(sub, subText);
+            }
+            item.appendChild(sub);
+            i++;
+          }
+          list.appendChild(item);
         }
         container.appendChild(list);
         continue;
@@ -816,7 +896,12 @@ function CourseMateTutor(runtime, element, initArgs) {
           switch (frame.type) {
             case "token":
               answer += frame.text || "";
-              answerNode.textContent = answer;
+              /* Formatted, not raw. `api/plan.py` writes headings, whole-line
+               * italics and bullets, and this assigned the lot to textContent —
+               * so the student read `## CLO-1 — …` and `_Your record: …_`
+               * literally. Same renderer as chat, so one answer cannot look
+               * like two different products. */
+              renderAnswer(answerNode, answer);
               planTarget.scrollTop = planTarget.scrollHeight;
               break;
             case "citation":

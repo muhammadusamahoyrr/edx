@@ -248,13 +248,18 @@ const tests = {
   // model is measured emitting one — which means deleting a test here on
   // purpose rather than finding the support already crept in.
 
-  async "a heading stays literal text"() {
-    const a = await render("## Cohorts\nSome prose.");
-    assert.equal(find(a, "h1"), null);
-    assert.equal(find(a, "h2"), null);
-    assert.equal(find(a, "h3"), null);
-    assert.match(a.text, /## Cohorts/, "heading markup was consumed but not rendered");
-  },
+  /* `## heading` WAS excluded here and is now supported — deleted on purpose
+   * on 2026-08-15, which is the workflow this file describes rather than a
+   * hole in it.
+   *
+   * The original exclusion was correct: headings were 0/8 across captured MODEL
+   * answers, so supporting them would have been a feature for output nobody
+   * produced. What changed is that a second producer appeared. `api/plan.py`
+   * writes the revision plan itself and emits `## CLO-1 — …` on every run, and
+   * its markup is enumerated from source rather than sampled — there is no
+   * model to be unpredictable about it.
+   *
+   * The remaining exclusions below are untouched and still measured at 0/8. */
 
   async "backticks stay literal text"() {
     const a = await render("Run `tutor local start` to begin.");
@@ -364,6 +369,133 @@ const tests = {
     const node = renderFromHistory("");
     assert.equal(node.children.length, 0);
     assert.equal(node.text, "");
+  },
+
+
+  /* --- the deterministic revision plan (2026-08-15) ---------------------
+   *
+   * `api/plan.py` writes the plan itself — headings, whole-line italics,
+   * bullets with an indented source line. It reached the student as raw text:
+   * `## CLO-1 — …` and `_Your record: not practised yet._`, 14 of its 18
+   * markup constructs shown literally.
+   *
+   * These constructs were added WITHOUT re-running the chat measurement, and
+   * that is defensible only because the producer is our own function: its
+   * markup is enumerated from source, not sampled from a model. The four
+   * model-facing constructs above stay locked to what was measured.
+   */
+
+  async "a plan heading becomes a heading, not literal hashes"() {
+    const a = await render("## CLO-1 — Identify the organisations\nSome prose.");
+    const h = find(a, "h4");
+    assert.ok(h, "## was not rendered as a heading");
+    assert.equal(h.text, "CLO-1 — Identify the organisations");
+    assert.doesNotMatch(a.text, /##/, "the hashes are still visible to the student");
+  },
+
+  async "the heading is h4, not h1"() {
+    // The component renders inside an LMS unit that owns the page outline.
+    // Emitting a top-level heading would corrupt the structure a screen reader
+    // navigates by.
+    const a = await render("## CLO-2 — Explain the release process");
+    for (const tag of ["h1", "h2", "h3"]) {
+      assert.equal(find(a, tag), null, `rendered ${tag}, which hijacks the page outline`);
+    }
+    assert.ok(find(a, "h4"));
+  },
+
+  async "a whole-line italic becomes emphasis"() {
+    const a = await render("_Your record: not practised yet._");
+    assert.ok(find(a, "em"), "the record line was not emphasised");
+    assert.equal(find(a, "em").text, "Your record: not practised yet.");
+    assert.doesNotMatch(a.text, /_/, "the underscores are still visible");
+  },
+
+  async "a source line stays attached to its own question"() {
+    // Provenance that floats free of the question it describes is worse than
+    // none (§7.6). The indented line must render INSIDE the <li>.
+    const a = await render(
+      "- Name two major members (3 marks, 2024, final)\n" +
+      "  _Source: oex101_final_2024.pdf, p.2_\n" +
+      "- State what the community is (2 marks)\n" +
+      "  _Source: oex101_final_2024.pdf, p.1_"
+    );
+    const items = findAll(find(a, ".cm-answer-list"), "li");
+    assert.equal(items.length, 2);
+    for (const li of items) {
+      assert.equal(findAll(li, ".cm-answer-subline").length, 1,
+        "the source line is not inside its question's list item");
+    }
+  },
+
+  async "a filename's own underscores survive"() {
+    // The reason italics are whole-line and not inline. An inline rule either
+    // mangles `oex101_final_2024.pdf` or refuses to match the line at all.
+    const a = await render("  _Source: oex101_final_2024.pdf, p.2_");
+    assert.match(a.text, /oex101_final_2024\.pdf/,
+      "the filename was mangled by the italic rule");
+  },
+
+  async "snake_case in ordinary prose is never italicised"() {
+    // The failure an inline `_..._` rule would cause: the tutor mangling its
+    // own configuration advice. Measured against real identifiers from this
+    // repository.
+    for (const line of [
+      "Set COURSEMATE_MODEL_API_BASE to the forwarder.",
+      "Use rerank_top_k and student_daily_token_budget.",
+      "The derived_from field carries source ids.",
+    ]) {
+      const a = await render(line);
+      assert.equal(find(a, "em"), null, `italicised part of an identifier: ${line}`);
+      assert.equal(a.text, line, `text was altered: ${a.text}`);
+    }
+  },
+
+  async "the real captured plan renders with no markup left over"() {
+    // Taken from a live deterministic_plan() run against OEX101.
+    const plan = [
+      "Here is a revision plan for this course, weakest outcome first.",
+      "",
+      "## CLO-1 — Identify the organisations and roles",
+      "_Your record: not practised yet._",
+      "",
+      "- Name two major members of the Open edX community (3 marks, 2024, final)",
+      "  _Source: oex101_final_2024.pdf, p.2_",
+      "",
+      "## CLO-3 — Configure and troubleshoot a Tutor-based deployment.",
+      "_Your record: 2/3 correct._",
+      "",
+      "No past-paper question is tagged to this outcome yet.",
+    ].join("\n");
+
+    const a = await render(plan);
+    assert.equal(findAll(a, "h4").length, 2);
+    assert.equal(findAll(a, "li").length, 1);
+    assert.equal(findAll(a, ".cm-answer-subline").length, 1);
+    assert.doesNotMatch(a.text, /##/, "raw hashes reached the student");
+    assert.match(a.text, /oex101_final_2024\.pdf/, "the source filename was lost");
+  },
+
+  async "the plan renders through the SAME renderer as chat"() {
+    // One renderer, so a plan and an answer cannot look like two products.
+    const src = readFileSync(JS, "utf8");
+    const block = src.split("function requestPlan")[1].split("\n  function ")[0];
+    assert.match(block, /renderAnswer\(answerNode, answer\)/,
+      "the prose plan no longer goes through renderAnswer");
+    assert.doesNotMatch(block, /answerNode\.textContent = answer/,
+      "the plan assigns raw text again");
+  },
+
+  async "the new constructs are still built as nodes, never markup"() {
+    const src = readFileSync(JS, "utf8");
+    const block = src.split("function renderAnswer")[1].split("\n  function ")[0];
+    assert.doesNotMatch(block, /innerHTML|insertAdjacentHTML|outerHTML/);
+  },
+
+  async "a plan reloaded from history looks identical to the streamed one"() {
+    const plan = "## CLO-1 — Roles\n_Your record: 1/2 correct._\n\n- A question\n  _Source: p.pdf, p.1_";
+    assert.equal(shape(renderFromHistory(plan)), shape(await render(plan)),
+      "the plan renders differently after a page reload");
   },
 
   /* --- the property that matters most ---------------------------------- */

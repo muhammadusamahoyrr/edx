@@ -313,6 +313,33 @@ div.coursemate-tutor optgroup {
    bold on every list label made the answer read as a warning notice. */
 .coursemate-tutor .cm-answer strong { font-weight: 650; color: var(--cm-text); }
 
+/* --- the revision plan's own constructs -----------------------------------
+   `api/plan.py` writes headings, whole-line italics and per-question source
+   lines. They reached the student as raw `##` and `_…_` until 2026-08-15. */
+
+/* An <h4> so the component does not inject a top-level heading into a page
+   whose outline the LMS owns. Sized to lead a section of the bubble rather
+   than to compete with the unit title above it. */
+.coursemate-tutor .cm-answer > .cm-answer-h {
+  margin: 14px 0 6px; font-size: 14px; font-weight: 650;
+  line-height: 19px; color: var(--cm-text);
+}
+.coursemate-tutor .cm-answer > .cm-answer-h:first-child { margin-top: 0; }
+
+/* "Your record: 2/3 correct" — supporting, never competing with the question
+   it sits under. Muted rather than italic-only, because italics alone at this
+   size are hard to distinguish from body text. */
+.coursemate-tutor .cm-answer > .cm-answer-note {
+  margin: 0 0 8px; font-size: 13px; line-height: 18px; color: var(--cm-muted);
+}
+
+/* "Source: paper.pdf, p.2" under its own question. Indented so the link
+   between the two is positional as well as visual — provenance that floats
+   free of what it describes is worse than none (§7.6). */
+.coursemate-tutor .cm-answer .cm-answer-subline {
+  margin-top: 2px; font-size: 12px; line-height: 17px; color: var(--cm-muted);
+}
+
 /* --- the waiting state ---------------------------------------------------
    Shown from Ask until the first token. Measured time to first token here runs
    from 3.5 s on the hosted primary to 106 s on the local model, and until now
