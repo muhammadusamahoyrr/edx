@@ -802,3 +802,178 @@ def test_the_generator_reuses_the_chat_grounding_rule():
     assert "for chunk in context.chunks:\n            yield StreamFrame" not in source, (
         "the generator emits every retrieved chunk again"
     )
+
+
+# --- citation PRECISION: rank, then keep the top band -----------------------
+#
+# `supporting_chunks` asks "does this share ANY content word", which in a
+# single-domain corpus is nearly always yes — `community`, `edx`, `open` recur
+# throughout an Open edX course. Measured over 20 real generations, 60 citation
+# pairs hand-labelled against the chunk text: 21 genuinely supporting, 36
+# irrelevant, 3 unclear. A 65% false-citation rate under a line reading
+# "Derived from", on the one feature §9.0 lets reach a student ungated BECAUSE
+# it is cited.
+#
+# Ranking on the same overlap and keeping chunks within `_TOP_SHARE` of the best
+# scored 21 citations for the 21 genuine chunks: 0% false, 100% recall.
+#
+# The scores below are asserted exactly rather than approximately, because the
+# whole rule is a ratio and a fixture that drifts by one shared word changes
+# which side of the band it lands on.
+
+
+def _scored_chunks(question: str, *texts: str):
+    """A context plus the raw overlap score of each chunk against `question`."""
+    from coursemate_service.ai.verify import content_terms
+
+    ctx = _multi_chunk(*[(f"block-v1:c{i}", t) for i, t in enumerate(texts)])
+    qt = content_terms(question)
+    return ctx, [len(qt & content_terms(t)) for t in texts]
+
+
+def test_1_an_irrelevant_lower_scoring_chunk_is_excluded():
+    """The defect, at the unit that decides it. A chunk sharing only incidental
+    vocabulary scores below the band and is dropped."""
+    from coursemate_service.ai.quiz_generator import QuizGenerator
+
+    q = "Explain why two processes each holding one resource cannot proceed."
+    ctx, scores = _scored_chunks(
+        q,
+        "Two processes each holding one resource cannot proceed; neither can "
+        "acquire the resource the other holds.",
+        "The community publishes one blog post about processes each release.",
+    )
+    assert scores[0] > scores[1], f"fixture no longer discriminates: {scores}"
+
+    keep = QuizGenerator._supporting(q, ctx)
+    keys = [c.citation.usage_key for c in keep]
+    assert keys == ["block-v1:c0"], f"scores={scores} kept={keys}"
+
+
+def test_2_a_second_genuine_chunk_at_exactly_the_band_is_retained():
+    """The one case in twenty that best-only would lose: a real second source.
+
+    Constructed so the second chunk scores EXACTLY `_TOP_SHARE` of the best —
+    9 of 10 shared terms at 0.90 — because that is the boundary the rule turns
+    on, and an inequality is only pinned by testing its edge."""
+    from coursemate_service.ai.quiz_generator import _TOP_SHARE, QuizGenerator
+
+    q = "alpha bravo charlie delta echo foxtrot golf hotel india juliet"
+    ctx, scores = _scored_chunks(
+        q,
+        "alpha bravo charlie delta echo foxtrot golf hotel india juliet",
+        "alpha bravo charlie delta echo foxtrot golf hotel india",
+    )
+    assert scores == [10, 9], f"fixture drifted: {scores}"
+    assert scores[1] / scores[0] == _TOP_SHARE, "fixture is not exactly at the band"
+
+    keys = [c.citation.usage_key for c in QuizGenerator._supporting(q, ctx)]
+    assert keys == ["block-v1:c0", "block-v1:c1"], (
+        f"a genuine second source exactly at the band was dropped: {keys}"
+    )
+
+
+def test_3_a_chunk_below_the_band_is_excluded():
+    """One shared word lower — 8 of 10, i.e. 80% — and it falls outside.
+
+    Pairs with the test above: together they pin the boundary from both sides,
+    which a single test on one side of it cannot do."""
+    from coursemate_service.ai.quiz_generator import QuizGenerator
+
+    q = "alpha bravo charlie delta echo foxtrot golf hotel india juliet"
+    ctx, scores = _scored_chunks(
+        q,
+        "alpha bravo charlie delta echo foxtrot golf hotel india juliet",
+        "alpha bravo charlie delta echo foxtrot golf hotel",
+    )
+    assert scores == [10, 8], f"fixture drifted: {scores}"
+
+    keys = [c.citation.usage_key for c in QuizGenerator._supporting(q, ctx)]
+    assert keys == ["block-v1:c0"], f"a chunk at 80% of best was cited: {keys}"
+
+
+async def test_4_a_single_source_question_produces_one_citation(monkeypatch):
+    """19 of the 20 measured questions were single-source. End to end, that must
+    now yield ONE lesson citation rather than the retrieved three."""
+    context = _multi_chunk(
+        ("block-v1:on-topic",
+         "Given two processes holding one resource each, neither can proceed "
+         "because each waits on the resource the other holds."),
+        ("block-v1:off-1", "The community blog is published on the site."),
+        ("block-v1:off-2", "Working groups meet on a monthly calendar."),
+    )
+    gen = _make(monkeypatch, source=_source(), context=context, router=_Router(OK))
+
+    frames = await _run(gen)
+    lessons = [f.citation.usage_key for f in frames
+               if f.type == FrameType.CITATION
+               and f.citation.usage_key.startswith("block-v1:")]
+
+    assert lessons == ["block-v1:on-topic"], f"expected one lesson citation, got {lessons}"
+
+
+async def test_5_zero_overlap_still_cites_everything(monkeypatch):
+    """§8.5 unchanged. With no shared word anywhere, `supporting_chunks` falls
+    back to every chunk and the ranking must not narrow that to nothing.
+
+    This pins the BEHAVIOUR, not the branch that implements it. Deleting the
+    explicit `best == 0` guard leaves this passing, because the band multiplies
+    rather than divides and `0 >= 0.9 * 0` keeps everything anyway — confirmed
+    by mutation. The behaviour is what §8.5 requires; the guard exists so that
+    rewriting the band as a division stays safe."""
+    context = _multi_chunk(
+        ("block-v1:x", "Photosynthesis converts light into chemical energy."),
+        ("block-v1:y", "Mitochondria produce ATP for the cell."),
+    )
+    gen = _make(monkeypatch, source=_source(), context=context, router=_Router(OK))
+
+    frames = await _run(gen)
+    lessons = [f.citation.usage_key for f in frames
+               if f.type == FrameType.CITATION
+               and f.citation.usage_key.startswith("block-v1:")]
+
+    assert set(lessons) == {"block-v1:x", "block-v1:y"}, (
+        f"the mandatory-citation fallback was narrowed: {lessons}"
+    )
+
+
+def test_6_the_band_is_local_and_chat_grounding_is_untouched():
+    """The rule lives in the generator. `verify.py` is shared with chat, whose
+    citations were never measured here, so widening the change to it would be
+    claiming evidence that does not exist."""
+    import inspect
+
+    from coursemate_service.ai import quiz_generator as qg
+    from coursemate_service.ai import verify
+
+    assert "_TOP_SHARE" in inspect.getsource(qg)
+    assert "_TOP_SHARE" not in inspect.getsource(verify), (
+        "the band leaked into shared chat grounding"
+    )
+    # supporting_chunks is still the gate that runs first.
+    assert "supporting_chunks(question_text" in inspect.getsource(qg)
+
+
+def test_the_band_is_not_idf_weighted():
+    """Measured and rejected, so it is pinned rather than left to be rediscovered.
+
+    On the same 60 pairs idf weighting could NOT separate the cases: an
+    irrelevant chunk reached 91% of best while a genuine one sat at 81%. Raw
+    counting separated cleanly at (80%, 90%]. Someone reasoning from first
+    principles would reach for idf, so the negative result earns a test.
+
+    Comments and the docstring are stripped first. The method EXPLAINS that idf
+    was rejected, so scanning raw text matched the explanation rather than any
+    code — the same trap `test_studio_settings.py` strips a docstring to avoid,
+    and the third time it has been walked into in this file's history."""
+    import inspect
+    import re
+
+    from coursemate_service.ai.quiz_generator import QuizGenerator
+
+    body = inspect.getsource(QuizGenerator._supporting)
+    code = re.sub(r'"""[\s\S]*?"""', "", body, count=1)   # docstring
+    code = re.sub(r"^\s*#.*$", "", code, flags=re.MULTILINE)  # comments
+
+    assert "idf" not in code.lower(), "idf weighting crept in"
+    assert "len(content_terms(" in code, "the score is no longer a raw term count"

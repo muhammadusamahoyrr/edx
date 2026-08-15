@@ -84,6 +84,31 @@ DUPLICATE_THRESHOLD = 0.6
 #: that fails twice is not going to be argued into it.
 _MAX_ATTEMPTS = 2
 
+#: How close to the best-matching chunk another must score to be cited too.
+#:
+#: **Measured, and thin — read this before changing it.** Over 20 real
+#: generations against OEX101, 60 citation pairs hand-labelled against the chunk
+#: text: 21 genuinely supporting, 36 irrelevant, 3 unclear. Ranking by shared
+#: content words and keeping this band scores 0% false positives at 100% recall.
+#:
+#:     keep best only        20 cited   0% false   95% recall
+#:     >= 0.90 of best       21 cited   0% false  100% recall   <- this
+#:     >= 0.80 of best       23 cited   9% false  100% recall
+#:     >= 0.70 of best       27 cited  22% false  100% recall
+#:     any overlap (before)  60 cited  65% false  100% recall
+#:
+#: **The margin rests on one observation.** Exactly one question in twenty had a
+#: second genuinely supporting chunk, and it scored 90% of the best while the
+#: highest irrelevant chunk anywhere in the set scored 80%. The separating window
+#: is therefore (0.80, 0.90] and this value sits on its upper edge: had that one
+#: question scored 89%, this would have dropped it. It is the measured optimum on
+#: the evidence available and it is one data point wide.
+#:
+#: 1.0 collapses to "best only", which is the conservative fallback if this ever
+#: proves too generous. Lowering it re-admits noise fast — 0.70 is already 22%
+#: false. Do not move it without re-running the labelling.
+_TOP_SHARE = 0.90
+
 
 class QuizGenerator:
     """Stateless. Everything student-scoped arrives in `claims`."""
@@ -297,16 +322,58 @@ class QuizGenerator:
             generated questions   18 chunks   0 sharing nothing   100% kept
             prose answers          6 chunks   0 sharing nothing   100% kept
 
-        So on today's data this selects nothing out, and that is the honest
-        result: with `rerank_top_k=3` every retrieved chunk is already relevant
-        enough to overlap. It is a guard that will matter when more chunks are
-        retrieved than the answer uses, not a fix to visible behaviour.
+        On its own that selects nothing out — with `rerank_top_k=3` every
+        retrieved chunk shares SOME word — which is why a second, local step
+        follows it. See `_TOP_SHARE`.
         """
         from .verify import supporting_chunks
 
         chunks = list(context.chunks)
         keep = supporting_chunks(question_text, [c.text for c in chunks])
-        return [chunks[i] for i in keep]
+        supporting = [chunks[i] for i in keep]
+
+        # --- rank, then keep the top band --------------------------------
+        #
+        # `supporting_chunks` asks "does this share ANY content word", and in a
+        # single-domain corpus that is nearly always yes: `community`, `edx` and
+        # `open` appear in most chunks of an Open edX course. Hand-labelling 60
+        # real citation pairs found 36 irrelevant and 3 unclear — a **65% false
+        # citation rate** under a line that reads "Derived from".
+        #
+        # The signal to separate them was already present in the same term
+        # overlap, just thrown away by treating it as a boolean. Ranking on it
+        # and keeping the top band gave 21 citations for the 21 genuinely
+        # supporting chunks: 0% false positives at 100% recall.
+        #
+        # **Deliberately NOT idf-weighted.** Weighting was measured on the same
+        # 60 pairs and is WORSE here: it cannot separate the cases at all,
+        # because an irrelevant chunk reached 91% of best while a genuine one
+        # sat at 81%. Raw counting separates cleanly. That result was surprising
+        # enough to be worth stating, so nobody re-derives it from first
+        # principles and reaches the opposite conclusion.
+        #
+        # This is local to the generator on purpose: `supporting_chunks` is
+        # shared with chat, whose citations are measured differently and are not
+        # in evidence here.
+        scores = [len(content_terms(question_text) & content_terms(c.text))
+                  for c in supporting]
+        best = max(scores, default=0)
+        if best == 0:
+            # Nothing shared a single word, so `supporting_chunks` has already
+            # fallen back to every chunk. Ranking cannot order them and §8.5
+            # still requires a citation, so every chunk stays.
+            #
+            # **Explicit, though arithmetically redundant.** The comparison
+            # below multiplies rather than divides, so with every score at 0 it
+            # reduces to `0 >= 0` and keeps everything anyway — deleting this
+            # branch changes no result today, which a mutation test confirmed.
+            # It is kept because the equivalence is a coincidence of the form
+            # chosen: rewriting the band as `s / best >= _TOP_SHARE`, which is
+            # the more natural way to say it, would raise ZeroDivisionError
+            # here. The branch states the §8.5 intent so that refactor is safe.
+            return supporting
+
+        return [c for c, s in zip(supporting, scores) if s >= _TOP_SHARE * best]
 
     def _build(self, question_text: str, source: QuestionRecord, usage_keys: list[str]):
         """Assemble the contract object. **Every claim here is set in code.**
