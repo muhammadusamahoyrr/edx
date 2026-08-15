@@ -89,12 +89,29 @@ function buildPage() {
   const form = mk("cm-form", chat); mk("cm-input", form); mk("cm-send", form);
 
   const prep = mk("cm-panel", root); prep.dataset.panel = "prep";
-  mk("cm-prep-status", prep); mk("cm-prep-log", prep); mk("cm-prep-notice", prep);
-  const pf = mk("cm-prep-form", prep); mk("cm-prep-input", pf); mk("cm-prep-send", pf);
-  const bf = mk("cm-budget-form", prep);
-  mk("cm-budget-input", bf); mk("cm-budget-send", bf);
+  mk("cm-prep-status", prep); mk("cm-prep-notice", prep);
+  /* The three replacement slots, in template order. They were absent here, so
+   * this harness had been exercising `slotTarget`'s legacy fallback — the
+   * shared log — rather than what a real page renders. That is the shape the
+   * prose-plan duplicate lived in, and a harness that cannot reproduce a bug
+   * cannot pin its fix. */
   const prac = mk("cm-practice-form", prep);
   mk("cm-practice-clo", prac); mk("cm-practice-band", prac); mk("cm-practice-send", prac);
+  mk("cm-practice-slot", prep);
+  const bf = mk("cm-budget-form", prep);
+  mk("cm-budget-input", bf); mk("cm-budget-send", bf);
+  mk("cm-plan-slot", prep);
+  const pf = mk("cm-prep-form", prep); mk("cm-prep-input", pf); mk("cm-prep-send", pf);
+  mk("cm-prose-plan-slot", prep);
+  mk("cm-prep-log", prep);
+  return root;
+}
+
+/** A page rendered BEFORE the prose slot existed — `slotTarget`'s fallback. */
+function buildLegacyPage() {
+  const root = buildPage();
+  const slot = find(root, ".cm-prose-plan-slot");
+  slot.parentNode.removeChild(slot);
   return root;
 }
 
@@ -154,6 +171,70 @@ CourseMateTutor;`, { filename: JS });
 }
 
 const post = (calls) => calls.find((c) => String(c.url).includes("/study-plan"));
+
+/* --- the PROSE planner, which streams -------------------------------------
+ *
+ * `drive()` above answers `/plan` with a 500, because it exists to exercise the
+ * budgeted plan. The prose plan is a different route with a different shape, so
+ * it needs its own driver. */
+function sseBody(frames) {
+  const bytes = new TextEncoder().encode(
+    frames.map((f) => `data: ${JSON.stringify(f)}\n\n`).join("")
+  );
+  let sent = false;
+  return {
+    ok: true,
+    body: {
+      getReader: () => ({
+        read: async () => (sent ? { done: true } : ((sent = true), { done: false, value: bytes })),
+      }),
+    },
+  };
+}
+
+const settleAsync = async () => {
+  for (let i = 0; i < 6; i++) { await new Promise((r) => setTimeout(r, 0)); }
+};
+
+/** Boot a page whose `/plan` route streams `text`. Returns helpers to re-ask. */
+async function drivePlanner(root, text = "Revise CLO-1, then CLO-2.") {
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/mint")) {
+      return { ok: true, json: async () => ({ token: "t", stream_path: "/coursemate/api/chat" }) };
+    }
+    if (String(url).includes("/status")) {
+      return { ok: true, json: async () => ({ pack_loaded: true, questions: 5, clos: 3, clo_options: [] }) };
+    }
+    if (String(url).includes("/study-plan")) {
+      return { ok: true, json: async () => PLAN_TWO_CLOS };
+    }
+    if (String(url).includes("/plan")) {
+      return sseBody([{ type: "token", text }, { type: "done" }]);
+    }
+    return { ok: true, json: async () => ({}) };
+  };
+
+  const src = readFileSync(JS, "utf8");
+  const factory = vm.runInThisContext(`${src}\nCourseMateTutor;`, { filename: JS });
+  factory({ handlerUrl: (_e, name) => `/handler/${name}` },
+          { querySelector: (s) => find(root, s) || root }, {});
+  const prepPanel = find(root, '.cm-panel[data-panel="prep"]');
+  prepPanel.dataset.base = "/coursemate/api/examprep";
+  await settleAsync();
+
+  return async function askForAPlan() {
+    find(root, ".cm-prep-input").value = "what should I revise?";
+    await find(root, ".cm-prep-form")._listeners.submit({ preventDefault() {} });
+    await settleAsync();
+  };
+}
+
+/** Every rendered prose-plan turn, wherever it landed. */
+const proseTurns = (root) => {
+  const slot = find(root, ".cm-prose-plan-slot");
+  const log = find(root, ".cm-prep-log");
+  return findAll(slot || log, ".cm-turn");
+};
 
 /* ------------------------------------------------------------------ tests */
 const tests = {
@@ -440,6 +521,135 @@ CourseMateTutor;`, { filename: JS });
     const prose = calls.find((c) => /\/examprep\/plan$/.test(String(c.url)));
     assert.ok(prose, "the free-text plan route is no longer called");
     assert.deepEqual(Object.keys(JSON.parse(prose.opts.body)).sort(), ["mastery", "request"]);
+  },
+
+  /* --- the prose plan replaces rather than stacks ------------------------
+   *
+   * The regression. `requestPlan` appended straight into `cm-prep-log`, which
+   * is never cleared, so a second request left the first plan on screen beneath
+   * it — reading as one response rendered twice. Every other output in this
+   * panel already went through `slotTarget`, which clears first.
+   */
+
+  async "one plan request renders exactly one prose plan"() {
+    const root = buildPage();
+    const ask = await drivePlanner(root);
+    await ask();
+    assert.equal(proseTurns(root).length, 1);
+  },
+
+  async "two consecutive plan requests leave exactly ONE prose plan"() {
+    const root = buildPage();
+    const ask = await drivePlanner(root);
+    await ask();
+    await ask();
+
+    const turns = proseTurns(root);
+    assert.equal(turns.length, 1,
+      `${turns.length} prose plans on screen — the second request stacked ` +
+      `beneath the first instead of replacing it`);
+  },
+
+  async "the surviving plan is the NEWEST one, not the first"() {
+    // Replacing with the stale copy would be the same bug wearing a
+    // different symptom, and node-counting alone cannot tell them apart.
+    const root = buildPage();
+    let ask = await drivePlanner(root, "FIRST plan text.");
+    await ask();
+    ask = await drivePlanner(root, "SECOND plan text.");
+    await ask();
+
+    const text = proseTurns(root).map((t) => t.text).join(" ");
+    assert.match(text, /SECOND plan text/);
+    assert.doesNotMatch(text, /FIRST plan text/, "the stale plan is still on screen");
+  },
+
+  async "the prose plan does not leak into the shared prep log"() {
+    // `cm-prep-log` must stay empty AND stay present: it is `slotTarget`'s
+    // fallback, and clearing it globally is what its own comment warns against.
+    const root = buildPage();
+    const ask = await drivePlanner(root);
+    await ask();
+
+    const log = find(root, ".cm-prep-log");
+    assert.ok(log, "the shared log was removed, breaking the legacy fallback");
+    assert.equal(findAll(log, ".cm-turn").length, 0);
+  },
+
+  async "a page without the slot still renders, using the shared log"() {
+    // Backward compatibility, which is the whole reason slotTarget has a
+    // fallback. An older rendered page must not break — it keeps the old
+    // stacking behaviour, which is worse than replacing but far better than
+    // rendering nothing.
+    const root = buildLegacyPage();
+    const ask = await drivePlanner(root);
+    await ask();
+
+    assert.equal(find(root, ".cm-prose-plan-slot"), null, "the harness still has a slot");
+    assert.equal(findAll(find(root, ".cm-prep-log"), ".cm-turn").length, 1,
+      "with no slot the plan should fall back to the shared log");
+  },
+
+  /* --- the neighbouring outputs are untouched --------------------------- */
+
+  async "asking for a prose plan does not disturb the budgeted plan"() {
+    const root = buildPage();
+    const ask = await drivePlanner(root);
+
+    find(root, ".cm-budget-input").value = "20";
+    await find(root, ".cm-budget-form")._listeners.submit({ preventDefault() {} });
+    await settleAsync();
+    const cardsBefore = findAll(find(root, ".cm-plan-slot"), ".cm-plan-card").length;
+
+    await ask();
+
+    assert.equal(cardsBefore, 1, "the budgeted plan did not render");
+    assert.equal(findAll(find(root, ".cm-plan-slot"), ".cm-plan-card").length, 1,
+      "the prose plan disturbed the budgeted plan card next to it");
+  },
+
+  async "a second budgeted plan still replaces, as it always did"() {
+    const root = buildPage();
+    await drivePlanner(root);
+    for (const marks of ["20", "30"]) {
+      find(root, ".cm-budget-input").value = marks;
+      await find(root, ".cm-budget-form")._listeners.submit({ preventDefault() {} });
+      await settleAsync();
+    }
+    assert.equal(findAll(find(root, ".cm-plan-slot"), ".cm-plan-card").length, 1);
+  },
+
+  async "the practice slot is still the practice card's own home"() {
+    const root = buildPage();
+    await drivePlanner(root);
+    const practice = find(root, ".cm-practice-slot");
+    assert.ok(practice, "the practice slot is missing from the harness");
+    assert.equal(findAll(practice, ".cm-turn").length, 0,
+      "a prose plan landed in the practice slot");
+  },
+
+  async "each prep output writes to its own container"() {
+    // The rule this fix restores, stated once. Three outputs, three homes.
+    //
+    // Comments are stripped first. The fix's own comment QUOTES the line it
+    // replaced — `prepLog.appendChild(planNode)` — so scanning raw text failed
+    // on the explanation rather than on any code. Same trap, and same answer,
+    // as test_studio_settings.py stripping a docstring before scanning.
+    const code = readFileSync(JS, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+
+    assert.match(code, /slotTarget\(prosePlanSlot\)/,
+      "the prose plan no longer goes through slotTarget");
+    assert.doesNotMatch(code, /prepLog\.appendChild/,
+      "something appends to the shared log directly again");
+  },
+
+  async "the html template carries the prose-plan slot"() {
+    const html = readFileSync(
+      resolve(here, "../../coursemate_platform/xblock/static/html/student_view.html"), "utf8");
+    assert.match(html, /class="cm-prose-plan-slot"/,
+      "the slot is not in the template, so production falls back to stacking");
   },
 
   async "the budget form is a separate form from the practice form"() {

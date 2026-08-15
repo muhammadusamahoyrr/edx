@@ -618,6 +618,12 @@ function CourseMateTutor(runtime, element, initArgs) {
    * against a page rendered before these existed. */
   var practiceSlot = prepPanel.querySelector(".cm-practice-slot");
   var planSlot = prepPanel.querySelector(".cm-plan-slot");
+  /* The prose planner's slot. It was the one output in this panel writing
+   * straight into the shared log, so it was the one that piled up: two requests
+   * left two identical plans, which reads as a single response rendered twice.
+   * Null on a page rendered before this slot existed, and `slotTarget` falls
+   * back to the log for exactly that case. */
+  var prosePlanSlot = prepPanel.querySelector(".cm-prose-plan-slot");
 
   /* Only a real slot is cleared. The fallback is the shared log, and emptying
    * that would delete a plan because a question was generated next to it. */
@@ -772,8 +778,20 @@ function CourseMateTutor(runtime, element, initArgs) {
     prepInput.disabled = true;
     prepSend.disabled = true;
 
+    /* Into the prose slot, which `slotTarget` clears first — so a second plan
+     * replaces the first instead of stacking beneath it. This was
+     * `prepLog.appendChild(planNode)`, and `prepLog` is never cleared, so the
+     * previous plan stayed on screen under the new one.
+     *
+     * `slotTarget` returns the shared log when the slot is absent, which keeps
+     * a page rendered before this change working exactly as it did. */
     var planNode = turnNode("tutor", "");
-    prepLog.appendChild(planNode);
+    /* Held, because the streaming handler below has to scroll the container the
+     * plan is actually in. It used to scroll `prepLog` unconditionally, which
+     * after this change would scroll an empty element and leave a long plan
+     * stuck at the top of its own slot. */
+    var planTarget = slotTarget(prosePlanSlot);
+    planTarget.appendChild(planNode);
     var bubble = bubbleOf(planNode);
     var answerNode = answerOf(planNode);
     var answer = "";
@@ -799,7 +817,7 @@ function CourseMateTutor(runtime, element, initArgs) {
             case "token":
               answer += frame.text || "";
               answerNode.textContent = answer;
-              prepLog.scrollTop = prepLog.scrollHeight;
+              planTarget.scrollTop = planTarget.scrollHeight;
               break;
             case "citation":
               sourcesRow(bubble).appendChild(citationNode(frame.citation));

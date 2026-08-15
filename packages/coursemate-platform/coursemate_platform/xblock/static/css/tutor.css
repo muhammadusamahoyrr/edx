@@ -702,14 +702,22 @@ div.coursemate-tutor optgroup {
 
 .coursemate-tutor .cm-prep-input { flex: 1; min-width: 0; }
 
-.coursemate-tutor .cm-prep-log {
+/* The prose plan moved from `cm-prep-log` into its own slot so a new plan
+   replaces the last one. The selectors are shared rather than duplicated: the
+   plan must look identical after the move, and a second copy of these rules
+   would be the thing that drifts. `cm-prep-log` keeps its own entry because it
+   is still `slotTarget`'s fallback for an older rendered page. */
+.coursemate-tutor .cm-prep-log,
+.coursemate-tutor .cm-prose-plan-slot {
   display: flex; flex-direction: column; gap: 8px;
   max-height: 380px; overflow-y: auto;
 }
 
-.coursemate-tutor .cm-prep-log:empty { display: none; }
+.coursemate-tutor .cm-prep-log:empty,
+.coursemate-tutor .cm-prose-plan-slot:empty { display: none; }
 
-.coursemate-tutor .cm-prep-log .cm-turn { display: block; font-size: 13px; }
+.coursemate-tutor .cm-prep-log .cm-turn,
+.coursemate-tutor .cm-prose-plan-slot .cm-turn { display: block; font-size: 13px; }
 
 /* --- narrow units ------------------------------------------------------ */
 

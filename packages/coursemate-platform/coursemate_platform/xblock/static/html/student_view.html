@@ -110,6 +110,17 @@
                autocomplete="off" placeholder="What should I revise?" />
         <button class="cm-prep-send cm-btn cm-btn-ghost" type="submit">Plan</button>
       </form>
+
+      <!-- The prose plan's own slot, so a new plan REPLACES the last one — the
+           same rule the practice card and the budgeted plan above already
+           follow. Without it `requestPlan` appended straight into `cm-prep-log`,
+           which is never cleared, so asking twice left two identical plans
+           stacked and reading as one response rendered twice.
+
+           `cm-prep-log` stays. It is `slotTarget`'s fallback for a page rendered
+           before this slot existed, and emptying it globally would be the one
+           thing that comment warns against. -->
+      <div class="cm-prose-plan-slot" role="status" aria-live="polite"></div>
       <div class="cm-prep-log" role="log" aria-live="polite"></div>
     </section>
 
