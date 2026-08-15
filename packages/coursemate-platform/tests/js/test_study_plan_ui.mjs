@@ -38,7 +38,14 @@ function makeNode(tag, cls) {
     addEventListener(ev, fn) { node._listeners[ev] = fn; },
     querySelector(sel) { return find(node, sel); },
     querySelectorAll(sel) { return findAll(node, sel); },
-    setAttribute() {}, getAttribute() { return null; },
+    setAttribute(k, v) { node._attrs = node._attrs || {}; node._attrs[k] = v; },
+    /* data-* reads from dataset, like a browser. The stub returned null, so the
+     * tab wiring — `tab.getAttribute("data-panel")` — could never work and
+     * `loadPrepStatus` never ran in this harness. */
+    getAttribute(k) {
+      if (k && k.indexOf("data-") === 0) { return node.dataset[k.slice(5)] ?? null; }
+      return (node._attrs || {})[k] ?? null;
+    },
     classList: { toggle() {}, add() {}, remove() {} },
     matches(sel) {
       const attr = sel.match(/\[([\w-]+)="([^"]*)"\]/);
@@ -84,6 +91,13 @@ function buildPage() {
     (parent || root).appendChild(n);
     return n;
   };
+  /* The tab strip. Absent here until 2026-08-15, which meant `loadPrepStatus`
+   * never ran and the panel's own initialisation was never exercised — the same
+   * shape of harness gap as the missing slots below. */
+  const tabs = mk("cm-tabs", root);
+  const tabChat = mk("cm-tab", tabs); tabChat.dataset.panel = "chat";
+  const tabPrep = mk("cm-tab", tabs); tabPrep.dataset.panel = "prep";
+
   const chat = mk("cm-panel", root); chat.dataset.panel = "chat";
   mk("cm-log", chat); mk("cm-notice", chat);
   const form = mk("cm-form", chat); mk("cm-input", form); mk("cm-send", form);
@@ -234,6 +248,101 @@ const proseTurns = (root) => {
   const slot = find(root, ".cm-prose-plan-slot");
   const log = find(root, ".cm-prep-log");
   return findAll(slot || log, ".cm-turn");
+};
+
+
+/* --- the STRUCTURED revision plan (Phase 2, 2026-08-15) -------------------
+ *
+ * The deterministic plan used to arrive as markdown inside text tokens and be
+ * parsed back into structure by the browser. It now arrives as a `RevisionPlan`.
+ *
+ * The parsing was not merely redundant, it was unsound: `_Source:
+ * oex101_final_2024.pdf, p.2_` cannot be told from its own italic markers,
+ * because the filename contains underscores. Structure removes the collision
+ * instead of working around it, which is why the underscore case below is a
+ * regression test rather than a curiosity.
+ *
+ * `/plan` still streams when the agent is on — it genuinely narrates then.
+ */
+
+const PLAN_JSON = {
+  offering_id: "course-v1:OpenedX+OEX101+2023",
+  outcomes: [
+    {
+      clo_id: "CLO-1",
+      clo_text: "Identify the organisations and roles",
+      attempts: 0,
+      correct: 0,
+      questions: [
+        {
+          question_id: "q1", text: "Name two major members of the community",
+          marks: 3, year: 2024, exam_type: "final",
+          source_doc_id: "oex101_final_2024.pdf", page: 2,
+          low_confidence_flag: false,
+        },
+        {
+          question_id: "q2", text: "State what the community is",
+          marks: 2, year: 2024, exam_type: "final",
+          source_doc_id: "oex101_final_2024.pdf", page: 1,
+          low_confidence_flag: true,
+        },
+      ],
+    },
+    {
+      clo_id: "CLO-3", clo_text: "Configure a Tutor deployment",
+      attempts: 3, correct: 2, questions: [],
+    },
+  ],
+};
+
+/** Boot with the agent OFF, so the client takes the structured route. */
+async function drivePlannerStructured(root, plan = PLAN_JSON, status = 200) {
+  const calls = [];
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url: String(url), opts });
+    if (String(url).includes("/mint")) {
+      return { ok: true, json: async () => ({ token: "t", stream_path: "/coursemate/api/chat" }) };
+    }
+    if (String(url).includes("/status")) {
+      return { ok: true, json: async () => ({
+        pack_loaded: true, questions: 5, clos: 3, clo_options: [],
+        agent_available: false,
+      }) };
+    }
+    if (String(url).includes("/revision-plan")) {
+      return { ok: status === 200, status, json: async () => plan };
+    }
+    if (String(url).includes("/plan")) {
+      throw new Error("the streaming route must not be used when the agent is off");
+    }
+    return { ok: true, json: async () => ({}) };
+  };
+
+  const src = readFileSync(JS, "utf8");
+  const factory = vm.runInThisContext(`${src}\nCourseMateTutor;`, { filename: JS });
+  factory({ handlerUrl: (_e, name) => `/handler/${name}` },
+          { querySelector: (s) => find(root, s) || root }, {});
+  /* Select the prep tab, which is what runs `loadPrepStatus` — the function
+   * that learns whether the agent is on. Driving the real path rather than
+   * setting `dataset.agent` by hand: a test that stubs the wiring it is
+   * checking proves nothing about the wiring. */
+  const prepTab = findAll(root, ".cm-tab").find((t) => t.dataset.panel === "prep");
+  await prepTab._listeners.click();
+  await settleAsync();
+
+  const prepPanel = find(root, '.cm-panel[data-panel="prep"]');
+  prepPanel.dataset.base = "/coursemate/api/examprep";
+  await settleAsync();
+
+  find(root, ".cm-prep-input").value = "what should I revise?";
+  await find(root, ".cm-prep-form")._listeners.submit({ preventDefault() {} });
+  await settleAsync();
+  return calls;
+}
+
+const planNode = (root) => {
+  const slot = find(root, ".cm-prose-plan-slot") || find(root, ".cm-prep-log");
+  return find(slot, ".cm-answer");
 };
 
 /* ------------------------------------------------------------------ tests */
@@ -650,6 +759,197 @@ CourseMateTutor;`, { filename: JS });
       resolve(here, "../../coursemate_platform/xblock/static/html/student_view.html"), "utf8");
     assert.match(html, /class="cm-prose-plan-slot"/,
       "the slot is not in the template, so production falls back to stacking");
+  },
+
+
+  /* --- Phase 2: the plan arrives as data, not markdown ------------------ */
+
+  async "with the agent off the client asks for the plan as data"() {
+    const root = buildPage();
+    const calls = await drivePlannerStructured(root);
+    const urls = calls.map((c) => c.url);
+    assert.ok(urls.some((u) => u.includes("/revision-plan")),
+      "the structured route was not called");
+    assert.equal(urls.filter((u) => /\/plan$/.test(u)).length, 0,
+      "the prose stream was used even though the plan is deterministic");
+  },
+
+  async "the request carries no identity, only the free text and mastery"() {
+    const root = buildPage();
+    const calls = await drivePlannerStructured(root);
+    const req = calls.find((c) => c.url.includes("/revision-plan"));
+    assert.deepEqual(Object.keys(JSON.parse(req.opts.body)).sort(), ["mastery", "request"]);
+  },
+
+  async "each outcome renders as a heading with its own record line"() {
+    const root = buildPage();
+    await drivePlannerStructured(root);
+    const a = planNode(root);
+    const heads = findAll(a, "h4").map((h) => h.text);
+    assert.deepEqual(heads, [
+      "CLO-1 — Identify the organisations and roles",
+      "CLO-3 — Configure a Tutor deployment",
+    ]);
+    const notes = findAll(a, ".cm-answer-note").map((n) => n.text);
+    assert.deepEqual(notes, ["Your record: not practised yet", "Your record: 2/3 correct"]);
+  },
+
+  async "question text carries its marks, year and exam metadata"() {
+    const root = buildPage();
+    await drivePlannerStructured(root);
+    const items = findAll(planNode(root), "li");
+    assert.equal(items.length, 2);
+    assert.match(items[0].text, /Name two major members of the community \(3 marks, 2024, final\)/);
+  },
+
+  async "a filename containing underscores survives intact"() {
+    // The reason this plan is structured at all. As markdown,
+    // `_Source: oex101_final_2024.pdf, p.2_` cannot be told from its own
+    // italics — the filename's underscores collide with the markup. Carrying
+    // the value means there is nothing to parse and nothing to collide.
+    const root = buildPage();
+    await drivePlannerStructured(root);
+    const text = planNode(root).text;
+    assert.match(text, /oex101_final_2024\.pdf/,
+      "the source filename was mangled");
+    assert.equal((text.match(/oex101_final_2024\.pdf/g) || []).length, 2,
+      "both questions should name their source paper");
+  },
+
+  async "an unusual filename with many underscores is still verbatim"() {
+    const plan = JSON.parse(JSON.stringify(PLAN_JSON));
+    plan.outcomes[0].questions[0].source_doc_id = "a_b_c_2024_final_v2.pdf";
+    const root = buildPage();
+    await drivePlannerStructured(root, plan);
+    assert.match(planNode(root).text, /a_b_c_2024_final_v2\.pdf/,
+      "an inline-italic parser would have eaten the interior underscores");
+  },
+
+  async "the source line stays inside its own question"() {
+    const root = buildPage();
+    await drivePlannerStructured(root);
+    const items = findAll(planNode(root), "li");
+    for (const li of items) {
+      const subs = findAll(li, ".cm-answer-subline");
+      assert.ok(subs.length >= 1, "a question has no source line");
+      assert.match(subs[0].text, /^Source: /);
+    }
+  },
+
+  async "the page number is shown when present"() {
+    const root = buildPage();
+    await drivePlannerStructured(root);
+    assert.match(planNode(root).text, /Source: oex101_final_2024\.pdf, p\.2/);
+  },
+
+  async "a low-confidence extraction is flagged, not hidden"() {
+    const root = buildPage();
+    await drivePlannerStructured(root);
+    const items = findAll(planNode(root), "li");
+    assert.equal(findAll(items[0], ".cm-answer-subline").length, 1, "q1 is not flagged");
+    assert.equal(findAll(items[1], ".cm-answer-subline").length, 2, "q2's flag is missing");
+    assert.match(items[1].text, /Extraction confidence was low/);
+  },
+
+  async "an outcome with no questions says so, and is not an error"() {
+    const root = buildPage();
+    await drivePlannerStructured(root);
+    assert.match(planNode(root).text, /No past-paper question is tagged to this outcome yet/);
+    assert.equal(find(root, ".cm-prep-notice").hidden, true,
+      "an empty outcome was reported as a fault");
+  },
+
+  async "outcome order is the planner's advice and is rendered as given"() {
+    // Weakest first. A client that re-sorted would be overriding the
+    // recommendation, which is the whole content of the plan.
+    const root = buildPage();
+    await drivePlannerStructured(root);
+    const heads = findAll(planNode(root), "h4").map((h) => h.text);
+    assert.ok(heads[0].startsWith("CLO-1"), `order changed: ${heads}`);
+    assert.ok(heads[1].startsWith("CLO-3"), `order changed: ${heads}`);
+  },
+
+  async "the source papers appear as citation chips"() {
+    const root = buildPage();
+    await drivePlannerStructured(root);
+    // `.cm-citation`, which is what `citationNode` builds — the same chip the
+    // chat answer and the streamed plan already use, so provenance looks the
+    // same wherever it appears.
+    const slot = find(root, ".cm-prose-plan-slot") || find(root, ".cm-prep-log");
+    const chips = findAll(slot, ".cm-citation");
+    assert.equal(chips.length, 1, "one distinct paper should yield one chip");
+    assert.equal(chips[0].text, "oex101_final_2024.pdf");
+  },
+
+  async "no markdown is parsed on this path"() {
+    // Nothing should reach the student as raw markup, and equally nothing
+    // should have needed a parser to get here.
+    const root = buildPage();
+    await drivePlannerStructured(root);
+    const text = planNode(root).text;
+    assert.doesNotMatch(text, /##/, "raw heading markup reached the student");
+    assert.doesNotMatch(text, /_Your record/, "raw italic markup reached the student");
+    assert.doesNotMatch(text, /_Source:/, "raw italic markup reached the student");
+  },
+
+  async "a still-preparing course is reported as a state, not a fault"() {
+    const root = buildPage();
+    await drivePlannerStructured(root, PLAN_JSON, 409);
+    const notice = find(root, ".cm-prep-notice");
+    assert.equal(notice.hidden, false);
+    assert.match(notice.textContent, /haven't been loaded/i);
+  },
+
+  async "a withdrawn entitlement says access, not outage"() {
+    const root = buildPage();
+    await drivePlannerStructured(root, PLAN_JSON, 403);
+    assert.match(find(root, ".cm-prep-notice").textContent, /access/i);
+  },
+
+  async "a failed structured plan leaves no empty bubble behind"() {
+    const root = buildPage();
+    await drivePlannerStructured(root, PLAN_JSON, 409);
+    const slot = find(root, ".cm-prose-plan-slot") || find(root, ".cm-prep-log");
+    assert.equal(findAll(slot, ".cm-turn").length, 0,
+      "an empty plan bubble was orphaned after a refusal");
+  },
+
+  async "with the agent ON the prose stream is still used"() {
+    // The kill switch works both ways: when the agent narrates, prose does
+    // arrive a token at a time and the stream is the right shape.
+    const root = buildPage();
+    const calls = [];
+    globalThis.fetch = async (url) => {
+      calls.push(String(url));
+      if (String(url).includes("/mint")) {
+        return { ok: true, json: async () => ({ token: "t", stream_path: "/coursemate/api/chat" }) };
+      }
+      if (String(url).includes("/status")) {
+        return { ok: true, json: async () => ({
+          pack_loaded: true, questions: 5, clos: 3, clo_options: [],
+          agent_available: true,
+        }) };
+      }
+      if (String(url).includes("/revision-plan")) {
+        throw new Error("the structured route must not be used when the agent is on");
+      }
+      if (String(url).includes("/plan")) {
+        return sseBody([{ type: "token", text: "Revise CLO-1 first." }, { type: "done" }]);
+      }
+      return { ok: true, json: async () => ({}) };
+    };
+    const src = readFileSync(JS, "utf8");
+    const factory = vm.runInThisContext(`${src}\nCourseMateTutor;`, { filename: JS });
+    factory({ handlerUrl: (_e, name) => `/handler/${name}` },
+            { querySelector: (s) => find(root, s) || root }, {});
+    find(root, '.cm-panel[data-panel="prep"]').dataset.base = "/coursemate/api/examprep";
+    await settleAsync();
+    find(root, ".cm-prep-input").value = "plan me a session";
+    await find(root, ".cm-prep-form")._listeners.submit({ preventDefault() {} });
+    await settleAsync();
+
+    assert.ok(calls.some((u) => /\/plan$/.test(u)), "the prose stream was not used");
+    assert.match(planNode(root).text, /Revise CLO-1 first/);
   },
 
   async "the budget form is a separate form from the practice form"() {

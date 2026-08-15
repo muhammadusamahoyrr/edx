@@ -29,6 +29,7 @@ from coursemate_contracts.examprep import (
     ExamPrepRequest,
     ExamPrepStatus,
     PracticeRequest,
+    RevisionPlan,
     StudyPlan,
     StudyPlanRequest,
 )
@@ -146,6 +147,52 @@ async def plan(
             "Connection": "keep-alive",
         },
     )
+
+
+@router.post("/revision-plan")
+async def revision_plan(
+    request: ExamPrepRequest,
+    claims: StudentClaims = Depends(rate_limited),
+) -> RevisionPlan:
+    """The deterministic revision plan as a VALUE, not a narration.
+
+    The same plan `/plan` streams with the agent off, carried as structure
+    instead of as markdown inside text tokens. `/study-plan` next door already
+    argues the rule: *"a StudyPlan is a value, not a narration"* — this is that
+    rule applied to the plan that was still shipping `## CLO-1 — …` for the
+    browser to parse back.
+
+    **Why the stream stays.** With `agent_enabled=True`, `/plan` routes to the
+    agent, which genuinely narrates and does arrive a token at a time. This
+    route is always deterministic, so a client can choose by reading
+    `agent_available` from `/status` — which it already fetches.
+
+    **No concurrency slot**, for the same reason `/study-plan` takes none: slots
+    bound how much of the PROVIDER's concurrency one student holds, and there is
+    no provider here. The per-minute limit still applies through `rate_limited`.
+
+    Authorization is unchanged and layered exactly as on `/plan`: this verifies
+    the JWT, and enrollment is re-derived at the boundary on every read the
+    builder performs.
+    """
+    from .plan import PlanUnavailable, build_revision_plan
+
+    log.info(
+        "revision-plan: user=%s offering=%s", claims.sub, claims.offering_id,
+    )
+    try:
+        # A worker thread because the builder is synchronous SQLite behind a
+        # lock — the same reason `/study-plan` hands `plan_for_offering` to one.
+        return await asyncio.to_thread(build_revision_plan, request, claims)
+    except PlanUnavailable as exc:
+        # The typed reason survives as an HTTP status the browser already knows
+        # how to render, rather than becoming a generic 500 the student cannot
+        # act on. PREPARING is a state, not a fault (§5.1), so it is 409 rather
+        # than 4xx-as-error.
+        raise HTTPException(
+            status_code=403 if exc.code is ErrorCode.NOT_ENROLLED else 409,
+            detail=exc.code.value,
+        ) from exc
 
 
 @router.post("/study-plan")

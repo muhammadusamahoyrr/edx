@@ -160,6 +160,60 @@ class StudyPlan(BaseModel):
     items: list[StudyPlanItem] = Field(default_factory=list)
 
 
+class RevisionPlanOutcome(BaseModel):
+    """One learning outcome in the unbudgeted revision plan, with its questions.
+
+    Distinct from `StudyPlanItem` rather than an extension of it, and the reason
+    is the one `StudyPlanRequest` already gives for not widening a contract: a
+    field that cannot apply is a field that lies. `StudyPlanItem` is sized by
+    `marks_budget`, which this plan has no concept of — it lists every tagged
+    question for an outcome, weakest outcome first, and does no arithmetic.
+    Adding `clo_text` and full questions there would leave `marks_budget`
+    optional-and-ignored on half its uses.
+    """
+
+    clo_id: str
+    #: Carried, not looked up again by the browser. The plan is ordered by
+    #: weakness and the heading has to name the outcome; a client that had to
+    #: re-fetch CLOs to render a plan could render one that disagrees with it.
+    clo_text: str
+    #: This student's standing on this outcome, as counters rather than a score
+    #: — the same reasoning `CLOMastery` gives. Zero attempts means "not
+    #: practised yet", which is a different statement from "0 correct".
+    attempts: int = 0
+    correct: int = 0
+    #: Whole records, so the browser never re-queries to render what it was
+    #: already sent. Every provenance field §7.6 requires — `source_doc_id`,
+    #: `page`, `low_confidence_flag` — is already on `QuestionRecord`, which is
+    #: why nothing new was invented to carry them.
+    questions: list[QuestionRecord] = Field(default_factory=list)
+
+
+class RevisionPlan(BaseModel):
+    """The deterministic revision plan, as a value.
+
+    **Why this exists at all.** The same plan was already being produced, but
+    encoded as markdown inside opaque text tokens — `## CLO-1 — …` and
+    `_Your record: …_` — which the browser then had to parse back into
+    structure. Presentation markup travelling through a data channel is what
+    made `_Source: oex101_final_2024.pdf, p.2_` unparseable: the FILENAME
+    contains underscores, so the italics could not be told from the data.
+
+    Structure removes the collision rather than working around it. The rule this
+    follows is the one `/study-plan` already states next door: a plan is a value,
+    not a narration, and a value travels as JSON.
+
+    The prose stream on `/plan` stays, because when `agent_enabled` is true the
+    agent genuinely narrates — and prose does arrive a token at a time.
+    """
+
+    offering_id: str
+    #: Weakest outcome first, capped. Order is meaning here, not presentation:
+    #: it is the planner's recommendation about what to revise, and a client
+    #: that re-sorted would be overriding the advice.
+    outcomes: list[RevisionPlanOutcome] = Field(default_factory=list)
+
+
 class PracticeQuestion(BaseModel):
     """Personal output (§9.0) — reaches one student, once.
 

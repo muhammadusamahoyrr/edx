@@ -821,6 +821,63 @@
         "title": "QuestionRecord",
         "type": "object"
       },
+      "RevisionPlan": {
+        "description": "The deterministic revision plan, as a value.\n\n**Why this exists at all.** The same plan was already being produced, but\nencoded as markdown inside opaque text tokens \u2014 `## CLO-1 \u2014 \u2026` and\n`_Your record: \u2026_` \u2014 which the browser then had to parse back into\nstructure. Presentation markup travelling through a data channel is what\nmade `_Source: oex101_final_2024.pdf, p.2_` unparseable: the FILENAME\ncontains underscores, so the italics could not be told from the data.\n\nStructure removes the collision rather than working around it. The rule this\nfollows is the one `/study-plan` already states next door: a plan is a value,\nnot a narration, and a value travels as JSON.\n\nThe prose stream on `/plan` stays, because when `agent_enabled` is true the\nagent genuinely narrates \u2014 and prose does arrive a token at a time.",
+        "properties": {
+          "offering_id": {
+            "title": "Offering Id",
+            "type": "string"
+          },
+          "outcomes": {
+            "items": {
+              "$ref": "#/components/schemas/RevisionPlanOutcome"
+            },
+            "title": "Outcomes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "offering_id"
+        ],
+        "title": "RevisionPlan",
+        "type": "object"
+      },
+      "RevisionPlanOutcome": {
+        "description": "One learning outcome in the unbudgeted revision plan, with its questions.\n\nDistinct from `StudyPlanItem` rather than an extension of it, and the reason\nis the one `StudyPlanRequest` already gives for not widening a contract: a\nfield that cannot apply is a field that lies. `StudyPlanItem` is sized by\n`marks_budget`, which this plan has no concept of \u2014 it lists every tagged\nquestion for an outcome, weakest outcome first, and does no arithmetic.\nAdding `clo_text` and full questions there would leave `marks_budget`\noptional-and-ignored on half its uses.",
+        "properties": {
+          "attempts": {
+            "default": 0,
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "clo_id": {
+            "title": "Clo Id",
+            "type": "string"
+          },
+          "clo_text": {
+            "title": "Clo Text",
+            "type": "string"
+          },
+          "correct": {
+            "default": 0,
+            "title": "Correct",
+            "type": "integer"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionRecord"
+            },
+            "title": "Questions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "clo_id",
+          "clo_text"
+        ],
+        "title": "RevisionPlanOutcome",
+        "type": "object"
+      },
       "Role": {
         "enum": [
           "student",
@@ -1145,6 +1202,66 @@
           }
         },
         "summary": "Practice Stream",
+        "tags": [
+          "student"
+        ]
+      }
+    },
+    "/coursemate/api/examprep/revision-plan": {
+      "post": {
+        "description": "The deterministic revision plan as a VALUE, not a narration.\n\nThe same plan `/plan` streams with the agent off, carried as structure\ninstead of as markdown inside text tokens. `/study-plan` next door already\nargues the rule: *\"a StudyPlan is a value, not a narration\"* \u2014 this is that\nrule applied to the plan that was still shipping `## CLO-1 \u2014 \u2026` for the\nbrowser to parse back.\n\n**Why the stream stays.** With `agent_enabled=True`, `/plan` routes to the\nagent, which genuinely narrates and does arrive a token at a time. This\nroute is always deterministic, so a client can choose by reading\n`agent_available` from `/status` \u2014 which it already fetches.\n\n**No concurrency slot**, for the same reason `/study-plan` takes none: slots\nbound how much of the PROVIDER's concurrency one student holds, and there is\nno provider here. The per-minute limit still applies through `rate_limited`.\n\nAuthorization is unchanged and layered exactly as on `/plan`: this verifies\nthe JWT, and enrollment is re-derived at the boundary on every read the\nbuilder performs.",
+        "operationId": "revision_plan_coursemate_api_examprep_revision_plan_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamPrepRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevisionPlan"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revision Plan",
         "tags": [
           "student"
         ]

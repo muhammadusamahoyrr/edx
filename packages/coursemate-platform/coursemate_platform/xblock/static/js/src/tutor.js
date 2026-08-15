@@ -799,6 +799,10 @@ function CourseMateTutor(runtime, element, initArgs) {
         headers: { Authorization: "Bearer " + token.token }
       }).then(function (r) { return r.ok ? r.json() : null; }).then(function (status) {
         if (!status) { prepStatus.textContent = NOTICES.unavailable; return; }
+        /* The panel already fetches this; it just ignored the flag. With the
+         * agent off the plan is deterministic, so it can be asked for as DATA
+         * rather than as prose — see requestPlan. */
+        prepPanel.dataset.agent = status.agent_available ? "1" : "0";
         if (!status.pack_loaded) {
           prepStatus.textContent = PREP_NOTICES.preparing;
           return;
@@ -853,6 +857,97 @@ function CourseMateTutor(runtime, element, initArgs) {
     }).catch(function () { prepStatus.textContent = NOTICES.unavailable; });
   }
 
+  /* --- the deterministic plan, rendered from DATA -------------------------
+   *
+   * The same plan used to arrive as markdown inside text tokens and be parsed
+   * back into structure here. It now arrives as a `RevisionPlan`, so there is
+   * no markup to parse and no chance of the markup colliding with the data —
+   * which it did: `_Source: oex101_final_2024.pdf, p.2_` cannot be told from
+   * its own italics, because the filename contains underscores.
+   *
+   * Every element the prose version carried is carried here: the outcome
+   * heading, the record line, question text, the marks/year/exam metadata, the
+   * source filename and page, the low-confidence warning, the empty-outcome
+   * case, and the order — which is the planner's advice, so it is rendered as
+   * given and never re-sorted.
+   */
+  function planQuestionNode(q) {
+    var item = el("li");
+    var bits = [];
+    if (typeof q.marks === "number") { bits.push(q.marks + " marks"); }
+    if (q.year) { bits.push(String(q.year)); }
+    if (q.exam_type) { bits.push(q.exam_type); }
+    item.appendChild(document.createTextNode(
+      q.text + (bits.length ? " (" + bits.join(", ") + ")" : "")
+    ));
+
+    /* Provenance on every item (§7.6). A question a student cannot trace back
+     * to a real paper is indistinguishable from one we invented. Built as text,
+     * so a filename is shown exactly as stored — underscores and all. */
+    var src = el("div", "cm-answer-subline");
+    src.appendChild(el("em", "", "Source: " + q.source_doc_id
+      + (typeof q.page === "number" ? ", p." + q.page : "")));
+    item.appendChild(src);
+
+    if (q.low_confidence_flag) {
+      /* Shown, not hidden. A student who knows an item was hard to extract can
+       * discount it; one who does not will assume it is exact. */
+      var warn = el("div", "cm-answer-subline");
+      warn.appendChild(el("em", "", "Extraction confidence was low — check the original."));
+      item.appendChild(warn);
+    }
+    return item;
+  }
+
+  function renderRevisionPlan(container, plan) {
+    clearNode(container);
+    container.textContent = "";
+
+    var intro = el("p", "cm-answer-p",
+      "Here is a revision plan for this course, weakest outcome first. Every "
+      + "question below is a real past-paper question, quoted as printed. "
+      + "Nothing here is AI-generated.");
+    container.appendChild(intro);
+
+    var outcomes = (plan && plan.outcomes) || [];
+    outcomes.forEach(function (o) {
+      container.appendChild(el("h4", "cm-answer-h", o.clo_id + " — " + o.clo_text));
+
+      var note = el("p", "cm-answer-note");
+      note.appendChild(el("em", "", "Your record: " + (
+        o.attempts ? o.correct + "/" + o.attempts + " correct" : "not practised yet"
+      )));
+      container.appendChild(note);
+
+      var questions = o.questions || [];
+      if (!questions.length) {
+        /* Not an error, and must not render as one: the request was fine, the
+         * course simply has nothing tagged to this outcome yet. */
+        container.appendChild(el("p", "cm-answer-p",
+          "No past-paper question is tagged to this outcome yet."));
+        return;
+      }
+      var list = el("ul", "cm-answer-list");
+      questions.forEach(function (q) { list.appendChild(planQuestionNode(q)); });
+      container.appendChild(list);
+    });
+  }
+
+  /** The distinct papers a plan draws on, in first-seen order. */
+  function planSources(plan) {
+    var seen = {};
+    var out = [];
+    ((plan && plan.outcomes) || []).forEach(function (o) {
+      (o.questions || []).forEach(function (q) {
+        if (q.source_doc_id && !seen[q.source_doc_id]) {
+          seen[q.source_doc_id] = true;
+          out.push({ usage_key: q.source_doc_id, display_name: q.source_doc_id });
+        }
+      });
+    });
+    return out;
+  }
+
   function requestPlan(text) {
     prepNotice.hidden = true;
     prepInput.disabled = true;
@@ -879,6 +974,39 @@ function CourseMateTutor(runtime, element, initArgs) {
     mintToken().then(function (token) {
       if (token.error) { showPrepNotice(token.error); return; }
       var base = prepPanel.dataset.base || token.stream_path.replace(/\/chat$/, "/examprep");
+
+      /* With the agent OFF the plan is deterministic — arithmetic over data the
+       * service already has — so ask for it as a value. `/plan` still streams
+       * when the agent is on, because then it genuinely narrates and prose does
+       * arrive a token at a time. The flag comes from `/status`, which this
+       * panel already fetched. */
+      if (prepPanel.dataset.agent === "0") {
+        return fetch(base + "/revision-plan", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + token.token
+          },
+          body: JSON.stringify({ request: text, mastery: mastery })
+        }).then(function (response) {
+          if (!response.ok) {
+            /* 409 is PREPARING — a state, not a fault (§5.1) — and 403 is a
+             * withdrawn entitlement. Both have their own wording already. */
+            showPrepNotice(response.status === 409 ? "preparing"
+                         : response.status === 403 ? "not_enrolled"
+                         : "unavailable");
+            planTarget.removeChild(planNode);
+            return;
+          }
+          return response.json().then(function (plan) {
+            renderRevisionPlan(answerNode, plan);
+            planSources(plan).forEach(function (c) {
+              sourcesRow(bubble).appendChild(citationNode(c));
+            });
+            planTarget.scrollTop = planTarget.scrollHeight;
+          });
+        });
+      }
 
       return fetch(base + "/plan", {
         method: "POST",

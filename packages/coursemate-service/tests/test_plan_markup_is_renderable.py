@@ -90,9 +90,18 @@ def renderer_source() -> str:
 
 def test_the_scan_finds_the_plan_renderer_at_all():
     """A scan that matches nothing would make everything below vacuous — the
-    failure mode this repository keeps finding, so it is checked."""
+    failure mode this repository keeps finding, so it is checked.
+
+    `_render` became `_render_outcome` when the plan gained a structured
+    response: the JSON route carries the data, and the markdown renderer now
+    serves only the STREAM — which still exists because the agent narrates when
+    `agent_enabled` is true, and because the agent-off stream is the kill-switch
+    fallback. So this file still has a job; it just guards a narrower path.
+    """
     src = plan_source()
-    assert "def _render(" in src, "plan.py no longer has _render; this file is stale"
+    assert "def _render_outcome(" in src, (
+        "plan.py no longer has _render_outcome; this file is stale"
+    )
     assert "## " in src, "plan.py emits no headings; the fixture assumptions have moved"
 
 
