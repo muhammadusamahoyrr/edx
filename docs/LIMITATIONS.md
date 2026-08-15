@@ -734,6 +734,39 @@ Two consequences worth stating rather than discovering:
   anything, so transmitting it would create a store of student prose with no
   purpose, inside the retirement boundary, for no gain.
 
+- **An attempt at a GENERATED question is recorded against the past-paper
+  question it was modelled on** — and nothing distinguishes the two afterwards.
+  Documented 2026-08-15; behaviour unchanged.
+
+  The chain is short and none of it is accidental in isolation.
+  `quiz_generator.py` puts `question_id=source.question_id` on the DONE frame —
+  the real `QuestionRecord`, not the variant the student read — `tutor.js` passes
+  that to `record_attempt`, and `StudentMastery` increments the counter for that
+  `(clo_id, question_id, difficulty_band)`.
+
+  `ai_generated` exists on `PracticeQuestion` and is set for every generated
+  question, but it stops at the service: it is not on the DONE frame, not in the
+  `record_attempt` payload, not on `CLOMastery`, and not in the stored row. So
+  mastery is attributed to a `question_id` the student never saw.
+
+  **That is defensible, and it was never actually decided.** Defensible because
+  the counter tracks the OUTCOME rather than the item, and the variant is
+  modelled on that source and tagged to the same CLO — which is the granularity
+  the planner ranks on. Never decided because there is no comment saying so, no
+  test pinning it, and nothing in this document until now; `record_attempt`'s
+  docstring explains every other choice it makes and is silent on this one.
+
+  Two consequences of leaving it as it is:
+
+  * A student who practises the same source question through several generated
+    variants accumulates several attempts against that one `question_id`. They
+    are distinct attempts by distinct `attempt_id`, so the idempotency guarantee
+    is intact — but the record reads as repeated attempts at one past paper.
+  * Nothing can later separate "answered the real paper" from "answered a
+    variant", because the distinction was never stored. Recovering it means a
+    contract field and a migration, which is why it is written down here rather
+    than changed on the way past.
+
 **Until this landed the loop was open**, and that is the more serious fact: the
 practice card rendered a question and stopped. There was no answer field, no
 submit and no caller for `record_attempt`, so `StudentMastery` was a table
