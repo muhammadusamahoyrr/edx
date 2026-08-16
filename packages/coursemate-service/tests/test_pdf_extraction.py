@@ -114,6 +114,44 @@ def test_marks_are_read_from_the_paper_and_removed_from_the_body(pack):
     assert not any("marks" in q.text.lower() for q in pack.questions)
 
 
+# --- §7.6 difficulty derivation --------------------------------------------
+#
+# `difficulty` used to be left None for every extracted question, which left two
+# built features idle: the Easy/Medium/Hard selector could not pick a source, and
+# per-band mastery recorded everything unbanded.
+
+
+def test_every_extracted_question_gets_a_derived_difficulty(pack):
+    """Both signals — marks and a command verb — are present on this paper, so
+    no question should come out unknown."""
+    missing = [q.question_number for q in pack.questions if q.difficulty is None]
+    assert not missing, f"no difficulty derived for {missing}"
+
+
+def test_the_derived_difficulty_stays_labelled_as_derived(pack):
+    """§7.6: the paper did not print this number, we inferred it. Claiming
+    otherwise would present an inference as something the examiner stated."""
+    assert all(q.difficulty_is_derived is True for q in pack.questions)
+
+
+def test_difficulty_separates_recall_from_judgement(pack):
+    """The spread is the point. A 2-mark "State" and a 15-mark "Critically
+    evaluate" must not land in the same band, or the selector has nothing to
+    select on."""
+    from coursemate_contracts.examprep import band_of
+
+    by_num = _by_number(pack)
+    assert band_of(by_num["1"].difficulty) == "easy"       # 2 marks, "State"
+    assert band_of(by_num["3"].difficulty) == "hard"       # 15 marks, "Critically evaluate"
+    assert by_num["1"].difficulty < by_num["3"].difficulty
+
+
+def test_every_difficulty_is_inside_the_contract_range(pack):
+    """`QuestionRecord.difficulty` is `ge=0.0, le=1.0`; a derivation that
+    overshoots would be refused by the contract at load time, not here."""
+    assert all(0.0 <= q.difficulty <= 1.0 for q in pack.questions)
+
+
 def test_headers_footers_and_rubric_lines_are_not_questions(pack):
     """"Page 1 of 2", "END OF PAPER" and "Answer ALL questions" are furniture.
     Without the filter, a footer is appended to the last question on every
@@ -149,13 +187,16 @@ def test_extraction_method_is_recorded(pack):
     assert all(q.extraction_method is ExtractionMethod.DIGITAL for q in pack.questions)
 
 
-def test_clo_and_difficulty_are_left_unset(pack):
-    """The extractor does not guess either. `clo_id` is the offline tagger's job,
-    and §7.6 derives `difficulty` from marks + command verb + a model estimate —
-    putting an underived number in a field whose contract is "labelled derived"
-    would make the label false."""
+def test_the_clo_is_left_unset_for_the_offline_tagger(pack):
+    """Still not guessed here. `clo_id` is the tagger's job, and a wrong tag
+    files a question under an outcome it does not belong to.
+
+    `difficulty` used to be asserted None alongside it. That is no longer true:
+    §7.6's derivation from marks + command verb is now applied at extraction, and
+    `difficulty_is_derived` carries the label that keeps the claim honest. See
+    the derivation tests above.
+    """
     assert all(q.clo_id is None for q in pack.questions)
-    assert all(q.difficulty is None for q in pack.questions)
 
 
 def test_a_clean_extraction_scores_full_confidence(pack):
@@ -302,3 +343,72 @@ def test_the_tool_emits_json_the_loader_accepts(pack):
     these drift, the operator finds out through a 422 at load time."""
     payload = json.loads(json.dumps(pack.model_dump(mode="json")))
     assert ExamPrepPack(**payload).content_sha256 == pack.content_sha256
+
+
+# --- F1: the examiner's answer, where the paper prints one ------------------
+
+
+def test_this_paper_prints_no_answers(pack):
+    """The honest state of the live bank. OEX101 is a question paper — "Answer
+    ALL questions", two hours — with no model answers and no marking scheme, so
+    every reference answer here is None and the UI offers nothing to reveal."""
+    assert all(q.reference_answer is None for q in pack.questions)
+    assert all(q.has_reference_answer is False for q in pack.questions)
+
+
+def test_the_rubric_line_is_not_mistaken_for_an_answer():
+    """"Answer ALL questions" is printed on the front of most papers. Reading it
+    as a model answer would truncate the first question and present its tail to
+    students as the examiner's words."""
+    q, a = tool.split_reference_answer(["Answer ALL questions. Time allowed: 2 hours."])
+    assert a == []
+    assert q == ["Answer ALL questions. Time allowed: 2 hours."]
+
+
+def test_the_word_answer_inside_a_question_is_not_a_marker():
+    q, a = tool.split_reference_answer(["State the rule and answer briefly."])
+    assert a == []
+
+
+@pytest.mark.parametrize("marker", [
+    "Answer:", "Model answer:", "Marking scheme:", "Mark scheme:", "Solution:",
+])
+def test_a_printed_answer_is_split_out(marker):
+    lines = ["Name two major members.", f"{marker} edX and Axim.", "One mark each."]
+    q, a = tool.split_reference_answer(lines)
+    assert q == ["Name two major members."]
+    assert a == ["edX and Axim.", "One mark each."]
+
+
+def test_the_answer_is_removed_from_the_question_text():
+    """The split matters most for what it takes OUT: leaving the answer in the
+    question text would feed it to the generator as part of the prompt."""
+    lines = ["Name two major members. [3 marks]", "Answer: edX and Axim."]
+    q, a = tool.split_reference_answer(lines)
+    assert "edX and Axim" not in " ".join(q)
+
+
+def test_an_extracted_answer_carries_its_own_provenance():
+    rec = tool.to_record(
+        {"lines": ["Name two members.", "Answer: edX and Axim."],
+         "page": 4, "question_number": "7"},
+        offering_id=OFFERING, tenant=TENANT, source_doc_id="paper.pdf",
+        year=2024, exam_type="final",
+    )
+    assert rec.reference_answer == "edX and Axim."
+    assert rec.reference_answer_source_doc_id == "paper.pdf"
+    assert rec.reference_answer_page == 4
+    assert "edX and Axim" not in rec.text
+
+
+def test_no_answer_means_no_answer_provenance():
+    """A citation pointing at a document that does not contain the text would be
+    worse than no citation."""
+    rec = tool.to_record(
+        {"lines": ["Name two members. [3 marks]"], "page": 4, "question_number": "7"},
+        offering_id=OFFERING, tenant=TENANT, source_doc_id="paper.pdf",
+        year=2024, exam_type="final",
+    )
+    assert rec.reference_answer is None
+    assert rec.reference_answer_source_doc_id is None
+    assert rec.reference_answer_page is None

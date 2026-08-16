@@ -463,7 +463,7 @@ const tests = {
       "  _Source: oex101_final_2024.pdf, p.2_",
       "",
       "## CLO-3 — Configure and troubleshoot a Tutor-based deployment.",
-      "_Your record: 2/3 correct._",
+      "_Your record: 2/3 self-marked._",
       "",
       "No past-paper question is tagged to this outcome yet.",
     ].join("\n");
@@ -493,7 +493,7 @@ const tests = {
   },
 
   async "a plan reloaded from history looks identical to the streamed one"() {
-    const plan = "## CLO-1 — Roles\n_Your record: 1/2 correct._\n\n- A question\n  _Source: p.pdf, p.1_";
+    const plan = "## CLO-1 — Roles\n_Your record: 1/2 self-marked._\n\n- A question\n  _Source: p.pdf, p.1_";
     assert.equal(shape(renderFromHistory(plan)), shape(await render(plan)),
       "the plan renders differently after a page reload");
   },

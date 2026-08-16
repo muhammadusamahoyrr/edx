@@ -25,6 +25,8 @@ from coursemate_contracts.auth import StudentClaims
 from coursemate_contracts.chat import StreamFrame
 from coursemate_contracts.errors import ErrorCode
 from coursemate_contracts.examprep import (
+    AnswerEvaluation,
+    AnswerEvaluationRequest,
     CLOOption,
     ExamPrepRequest,
     ExamPrepStatus,
@@ -191,6 +193,58 @@ async def revision_plan(
         # than 4xx-as-error.
         raise HTTPException(
             status_code=403 if exc.code is ErrorCode.NOT_ENROLLED else 409,
+            detail=exc.code.value,
+        ) from exc
+
+
+@router.post("/evaluate")
+async def evaluate(
+    request: AnswerEvaluationRequest,
+    claims: StudentClaims = Depends(rate_limited),
+) -> AnswerEvaluation:
+    """Compare a student's answer to the examiner's published one. **Not a grade.**
+
+    **This is the first route that receives the student's own prose.** Every
+    other payload on this surface carries identifiers and free-text *requests*;
+    this carries what the student wrote. The UI said that text never left the
+    page, so any client calling this has to stop saying so.
+
+    It cannot move a student's record. `AnswerEvaluation.counts_toward_mastery`
+    is False, `record_attempt` refuses `source="evaluated"`, and neither is a
+    thing this route can override — the separation exists because the accuracy of
+    the comparison has never been measured (§11.2), and an unmeasured verdict
+    with the authority of a grade is the failure `MasterySource` was added to
+    prevent.
+
+    **Nothing is stored.** The answer is compared and discarded: keeping student
+    prose would create a second PII store inside the retirement boundary for no
+    gain (§3.1), and the comparison is not something the plan reads.
+
+    Off by default. `answer_evaluation_enabled` reports UNAVAILABLE as a distinct
+    state, so "switched off" never reads as "the model had nothing to say".
+    """
+    from ..ai.answer_eval import EvaluationUnavailable, evaluate_answer
+
+    # Claims only — no field of `request` is logged.
+    #
+    # The answer is the student's own words and a log line is a store nobody
+    # meant to create (§3.1). `question_id` is an identifier rather than prose,
+    # but `test_no_student_text_in_logs` refuses `request.*` in a log call and
+    # says to narrow the expression rather than widen its list. It is right to:
+    # the next field added to this request might not be an identifier, and an
+    # exemption written today would still be here to cover it.
+    log.info("evaluate: user=%s offering=%s", claims.sub, claims.offering_id)
+    try:
+        return await evaluate_answer(
+            claims, question_id=request.question_id, answer=request.answer
+        )
+    except EvaluationUnavailable as exc:
+        raise HTTPException(
+            status_code=(
+                403 if exc.code is ErrorCode.NOT_ENROLLED
+                else 503 if exc.code is ErrorCode.UNAVAILABLE
+                else 409
+            ),
             detail=exc.code.value,
         ) from exc
 

@@ -33,6 +33,21 @@
   </div>
 
   <div class="cm-panel" data-panel="chat">
+    <!-- Hidden until there is something to clear: a "New chat" control on an
+         empty chat offers an action that does nothing, and reads as broken.
+         `renderHistory()` owns the toggle, because it already runs at every
+         moment the history length can change. -->
+    <div class="cm-chat-tools">
+      <!-- Shown only once a second conversation exists: a picker with one entry
+           is a control that cannot do anything. -->
+      <label class="cm-sr-only" for="cm-conversations">Conversation</label>
+      <select class="cm-conversations cm-field" id="cm-conversations" hidden></select>
+      <button class="cm-new-chat cm-btn cm-btn-ghost" type="button" hidden>New chat</button>
+      <!-- Deleting is a separate, deliberately duller control from starting a
+           new chat. "New chat" keeps the old conversation; this is the one that
+           does not, so it must not be the thing a student presses by habit. -->
+      <button class="cm-delete-chat cm-btn cm-btn-ghost" type="button" hidden>Delete this conversation</button>
+    </div>
     <div class="cm-log" role="log" aria-live="polite"></div>
     <!-- role=status: the notice sits OUTSIDE .cm-log, so unlike the answer
          stream nothing was announcing it. An expired session or a spent
@@ -78,11 +93,20 @@
       </form>
     </section>
 
-    <!-- One question at a time, replaced rather than appended: a revision tool
-         is for the question in front of you, and a growing stack pushed the
-         self-check controls below the fold of a pane most people never
-         noticed scrolled. -->
+    <!-- A practice RUN, newest last, rather than one question at a time.
+         Replacing was the original call — the worry was that a growing stack
+         pushed the self-check controls below the fold. What it actually did was
+         destroy the previous question and the student's own self-assessment of
+         it the moment they asked for another, which read as "generation only
+         works once". Keeping the run costs some scrolling; replacing cost the
+         student their work. -->
     <div class="cm-practice-slot"></div>
+    <!-- The run persists across reloads (E2), so there has to be a way to end
+         it. Hidden until there is something to clear. Practice only: mastery is
+         a different lifetime and is never touched here. -->
+    <div class="cm-practice-tools">
+      <button class="cm-clear-practice cm-btn cm-btn-ghost" type="button" hidden>Clear practice run</button>
+    </div>
 
     <section class="cm-card">
       <div class="cm-card-head">

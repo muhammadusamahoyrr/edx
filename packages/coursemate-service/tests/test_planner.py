@@ -225,7 +225,7 @@ def test_the_rationale_reports_the_student_standing_and_the_allocation():
     plan, _ = build_plan(OFFERING, [clo("CLO-1")], bank, marks_budget=10,
                          mastery=mastery(**{"CLO-1": (8, 5)}))
 
-    assert "5/8 correct" in plan.items[0].rationale
+    assert "5/8 self-marked" in plan.items[0].rationale
     assert "10 of 10 marks" in plan.items[0].rationale
 
 
@@ -292,7 +292,83 @@ def test_a_short_bank_reports_what_it_could_not_spend():
     assert total(plan) == 10
     assert report.unspent_marks == 90
     assert "unspent" in report.reason
-    assert "bank had nothing smaller that fit" in plan.items[0].rationale
+    # The one question was taken, so the pool is empty — not "nothing smaller".
+    assert "no more past-paper questions are tagged" in plan.items[0].rationale
+
+
+# --- the shortfall clause names the actual cause ---------------------------
+#
+# One condition (`spent < share`) used to produce one message, and it described
+# only one of the two ways a share goes unspent. On the live course it was the
+# wrong one: both CLO-1 questions were already used, so there was nothing
+# smaller because there was nothing at all, and the student was sent looking for
+# questions that do not exist.
+
+
+def test_an_exhausted_pool_says_there_are_no_more_questions():
+    bank = {"CLO-1": [q("A", 3), q("B", 2)]}
+    plan, _ = build_plan(OFFERING, [clo("CLO-1")], bank, marks_budget=50)
+
+    rationale = plan.items[0].rationale
+    assert "no more past-paper questions are tagged" in rationale
+    assert "smaller" not in rationale, "sent the student after questions that do not exist"
+
+
+def test_a_pool_of_oversized_questions_says_they_do_not_fit():
+    # 5 marks of budget: the 3-mark question is taken, 2 marks go unspent, and a
+    # 10-mark question is still sitting in the pool unable to fit.
+    bank = {"CLO-1": [q("A", 3), q("B", 10)]}
+    plan, _ = build_plan(OFFERING, [clo("CLO-1")], bank, marks_budget=5)
+
+    rationale = plan.items[0].rationale
+    assert "larger than the marks left" in rationale
+    assert "no more past-paper questions" not in rationale
+
+
+def test_an_exact_fit_explains_nothing():
+    bank = {"CLO-1": [q("A", 10)]}
+    plan, _ = build_plan(OFFERING, [clo("CLO-1")], bank, marks_budget=10)
+
+    rationale = plan.items[0].rationale
+    assert rationale.endswith("10 of 10 marks allocated"), rationale
+
+
+def test_the_record_is_called_self_marked_not_correct():
+    """The counter is built from the student pressing "I got this".
+
+    No answer key exists anywhere in the system, so nothing has verified any of
+    it. "correct" asserts a verification that never happened and reads as a
+    grade; "self-marked" says what the number actually is.
+    """
+    bank = {"CLO-1": [q("A", 10)]}
+    plan, _ = build_plan(OFFERING, [clo("CLO-1")], bank, marks_budget=10,
+                         mastery=mastery(**{"CLO-1": (8, 5)}))
+
+    rationale = plan.items[0].rationale
+    assert "5/8 self-marked" in rationale
+    assert "correct" not in rationale, "a self-report is being presented as a graded result"
+
+
+def test_an_unpractised_outcome_is_unchanged():
+    """"not practised yet" was already honest and stays exactly as it was."""
+    bank = {"CLO-1": [q("A", 10)]}
+    plan, _ = build_plan(OFFERING, [clo("CLO-1")], bank, marks_budget=10)
+
+    assert plan.items[0].rationale.startswith("not practised yet;")
+
+
+def test_an_unbudgetable_leftover_is_not_offered_as_a_smaller_question():
+    """A question with no marks cannot be packed, so it is not "left over".
+
+    Calling the outcome "oversized" because an unmarked question remains would
+    point the student at something the planner can never use. `unbudgetable`
+    reports those separately.
+    """
+    bank = {"CLO-1": [q("A", 3), q("B", None)]}
+    plan, report = build_plan(OFFERING, [clo("CLO-1")], bank, marks_budget=50)
+
+    assert report.unbudgetable == 1
+    assert "no more past-paper questions are tagged" in plan.items[0].rationale
 
 
 def test_the_report_shape_is_stable():

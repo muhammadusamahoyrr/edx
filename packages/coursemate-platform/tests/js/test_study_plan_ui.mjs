@@ -140,7 +140,7 @@ const PLAN_TWO_CLOS = {
     {
       clo_id: "CLO-1", marks_budget: 5,
       question_ids: ["oex101_final_2024.pdf#4"],
-      rationale: "3/8 correct; 5 of 20 marks allocated (bank had nothing smaller that fit)",
+      rationale: "3/8 self-marked; 5 of 20 marks allocated (no more past-paper questions are tagged to this outcome)",
     },
   ],
 };
@@ -460,10 +460,38 @@ const tests = {
     const card = find(root, ".cm-plan-card");
     assert.match(find(card, ".cm-plan-mastery").textContent, /not practised yet/);
     assert.match(card.text, /15 of 15 marks allocated/);
-    assert.match(card.text, /bank had nothing smaller that fit/);
+    assert.match(card.text, /no more past-paper questions are tagged to this outcome/);
     // Said once, not twice.
     assert.equal((card.text.match(/not practised yet/g) || []).length, 2,
       "one badge per outcome, and no leftover copy in the rationale");
+  },
+
+  /* C1: the counter is a self-report, and the wording now says so. */
+  async "the mastery badge says self-marked, never correct"() {
+    const { root } = await drive({
+      mastery: { clos: [
+        { clo_id: "CLO-1", difficulty_band: null, attempts: 4, correct: 2 },
+      ] },
+    });
+    const badge = findAll(root, ".cm-plan-mastery")
+      .find((b) => /\d+\/\d+/.test(b.textContent));
+    assert.match(badge.textContent, /2\/4 self-marked/);
+    assert.doesNotMatch(badge.textContent, /correct/,
+      "a self-report is being shown as a graded result");
+  },
+
+  /* A plan rendered from a turn persisted BEFORE the wording changed still has
+   * its clause lifted, rather than printed twice beside the badge. */
+  async "a legacy rationale saying correct is still lifted into the badge"() {
+    const legacy = {
+      items: [{ clo_id: "CLO-1", marks_budget: 5, question_ids: ["p#1"],
+                rationale: "2/4 correct; 5 of 20 marks allocated" }],
+    };
+    const { root } = await drive({ plan: legacy });
+    const card = find(root, ".cm-plan-card");
+    assert.doesNotMatch(card.text, /2\/4 correct;/,
+      "the legacy clause was printed instead of being lifted");
+    assert.match(card.text, /5 of 20 marks allocated/);
   },
 
   async "reports the total planned marks against what was asked for"() {
@@ -791,7 +819,7 @@ CourseMateTutor;`, { filename: JS });
       "CLO-3 — Configure a Tutor deployment",
     ]);
     const notes = findAll(a, ".cm-answer-note").map((n) => n.text);
-    assert.deepEqual(notes, ["Your record: not practised yet", "Your record: 2/3 correct"]);
+    assert.deepEqual(notes, ["Your record: not practised yet", "Your record: 2/3 self-marked"]);
   },
 
   async "question text carries its marks, year and exam metadata"() {
@@ -968,6 +996,122 @@ CourseMateTutor;`, { filename: JS });
     assert.match(html, /class="[^"]*\bcm-budget-input\b[^"]*"/);
     assert.match(html, /min="1"/);
     assert.match(html, /max="500"/);
+  },
+
+  /* --- F1: the examiner's reference answer --------------------------- */
+
+  async "no reveal control when the paper printed no answer"() {
+    // The live bank is entirely in this state: OEX101 is a question paper with
+    // no marking scheme. A control that opens an empty panel teaches a student
+    // the feature is broken.
+    const root = buildPage();
+    await drivePlannerStructured(root);
+    assert.equal(findAll(planNode(root), ".cm-refanswer-toggle").length, 0);
+  },
+
+  async "a question with an answer offers to reveal it"() {
+    const plan = JSON.parse(JSON.stringify(PLAN_JSON));
+    plan.outcomes[0].questions[0].reference_answer = "edX and Axim Collaborative.";
+    plan.outcomes[0].questions[0].reference_answer_source_doc_id = "oex101_marking_scheme_2024.pdf";
+    plan.outcomes[0].questions[0].reference_answer_page = 11;
+    const root = buildPage();
+    await drivePlannerStructured(root, plan);
+    assert.equal(findAll(planNode(root), ".cm-refanswer-toggle").length, 1);
+  },
+
+  async "the answer is hidden until the student asks"() {
+    const plan = JSON.parse(JSON.stringify(PLAN_JSON));
+    plan.outcomes[0].questions[0].reference_answer = "edX and Axim Collaborative.";
+    const root = buildPage();
+    await drivePlannerStructured(root, plan);
+    const body = find(planNode(root), ".cm-refanswer-body");
+    assert.equal(body.hidden, true, "the answer was shown without being asked for");
+    assert.equal(find(planNode(root), ".cm-refanswer-toggle").getAttribute("aria-expanded"), "false");
+  },
+
+  async "revealing shows the examiner's words verbatim"() {
+    const plan = JSON.parse(JSON.stringify(PLAN_JSON));
+    plan.outcomes[0].questions[0].reference_answer = "edX and Axim Collaborative.";
+    const root = buildPage();
+    await drivePlannerStructured(root, plan);
+    const toggle = find(planNode(root), ".cm-refanswer-toggle");
+    toggle._listeners.click();
+    const body = find(planNode(root), ".cm-refanswer-body");
+    assert.equal(body.hidden, false);
+    assert.match(body.text, /edX and Axim Collaborative\./);
+    assert.match(toggle.textContent, /Hide/);
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+  },
+
+  async "the reference answer carries its OWN citation"() {
+    // A marking scheme is frequently a different document from the paper.
+    // Reusing the question's citation would point at a page without this text.
+    const plan = JSON.parse(JSON.stringify(PLAN_JSON));
+    const q = plan.outcomes[0].questions[0];
+    q.reference_answer = "edX and Axim Collaborative.";
+    q.reference_answer_source_doc_id = "oex101_marking_scheme_2024.pdf";
+    q.reference_answer_page = 11;
+    const root = buildPage();
+    await drivePlannerStructured(root, plan);
+    find(planNode(root), ".cm-refanswer-toggle")._listeners.click();
+    const body = find(planNode(root), ".cm-refanswer-body");
+    assert.match(body.text, /Reference answer from: oex101_marking_scheme_2024\.pdf, p\.11/);
+  },
+
+  async "the question keeps its own source citation unchanged"() {
+    const plan = JSON.parse(JSON.stringify(PLAN_JSON));
+    plan.outcomes[0].questions[0].reference_answer = "edX and Axim.";
+    plan.outcomes[0].questions[0].reference_answer_source_doc_id = "marking_scheme.pdf";
+    const root = buildPage();
+    await drivePlannerStructured(root, plan);
+    const items = findAll(planNode(root), "li");
+    assert.match(items[0].text, /Source: oex101_final_2024\.pdf, p\.2/,
+      "the question's own provenance was replaced by the answer's");
+  },
+
+  async "an underscored answer filename survives intact"() {
+    const plan = JSON.parse(JSON.stringify(PLAN_JSON));
+    plan.outcomes[0].questions[0].reference_answer = "edX and Axim.";
+    plan.outcomes[0].questions[0].reference_answer_source_doc_id = "a_b_c_2024_scheme_v2.pdf";
+    const root = buildPage();
+    await drivePlannerStructured(root, plan);
+    find(planNode(root), ".cm-refanswer-toggle")._listeners.click();
+    assert.match(find(planNode(root), ".cm-refanswer-body").text, /a_b_c_2024_scheme_v2\.pdf/);
+  },
+
+  async "an answer with no source shows no citation line"() {
+    // Better than citing a document we cannot name.
+    const plan = JSON.parse(JSON.stringify(PLAN_JSON));
+    plan.outcomes[0].questions[0].reference_answer = "edX and Axim.";
+    const root = buildPage();
+    await drivePlannerStructured(root, plan);
+    find(planNode(root), ".cm-refanswer-toggle")._listeners.click();
+    assert.doesNotMatch(find(planNode(root), ".cm-refanswer-body").text, /Reference answer from:/);
+  },
+
+  async "revealing one answer does not reveal another"() {
+    const plan = JSON.parse(JSON.stringify(PLAN_JSON));
+    plan.outcomes[0].questions[0].reference_answer = "First answer.";
+    plan.outcomes[0].questions[1].reference_answer = "Second answer.";
+    const root = buildPage();
+    await drivePlannerStructured(root, plan);
+    const toggles = findAll(planNode(root), ".cm-refanswer-toggle");
+    assert.equal(toggles.length, 2);
+    toggles[0]._listeners.click();
+    const bodies = findAll(planNode(root), ".cm-refanswer-body");
+    assert.equal(bodies[0].hidden, false);
+    assert.equal(bodies[1].hidden, true, "revealing one answer opened another");
+  },
+
+  async "the answer never appears in the plan text until revealed"() {
+    const plan = JSON.parse(JSON.stringify(PLAN_JSON));
+    plan.outcomes[0].questions[0].reference_answer = "SECRETMODELANSWER";
+    const root = buildPage();
+    await drivePlannerStructured(root, plan);
+    const body = find(planNode(root), ".cm-refanswer-body");
+    assert.equal(body.hidden, true);
+    // It is in the DOM but hidden — the control is a disclosure, not a fetch.
+    assert.match(body.text, /SECRETMODELANSWER/);
   },
 };
 

@@ -71,7 +71,9 @@ def _render_outcome(outcome: RevisionPlanOutcome) -> str:
     if outcome.attempts == 0:
         standing = "not practised yet"
     else:
-        standing = f"{outcome.correct}/{outcome.attempts} correct"
+        # See `planner._rationale`: the counter is the student's own self-report,
+        # so calling it "correct" claims a verification that never happened.
+        standing = f"{outcome.correct}/{outcome.attempts} self-marked"
 
     questions = outcome.questions
     lines = [f"\n## {outcome.clo_id} — {outcome.clo_text}",

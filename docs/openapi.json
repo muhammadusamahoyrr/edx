@@ -1,6 +1,93 @@
 {
   "components": {
     "schemas": {
+      "AnswerEvaluation": {
+        "description": "What the comparison found. **Never a grade, and never mastery input.**",
+        "properties": {
+          "counts_toward_mastery": {
+            "default": false,
+            "title": "Counts Toward Mastery",
+            "type": "boolean"
+          },
+          "covered": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Covered",
+            "type": "array"
+          },
+          "feedback": {
+            "default": "",
+            "title": "Feedback",
+            "type": "string"
+          },
+          "missing": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Missing",
+            "type": "array"
+          },
+          "question_id": {
+            "title": "Question Id",
+            "type": "string"
+          },
+          "reference_page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Page"
+          },
+          "reference_source_doc_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Source Doc Id"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/CoverageVerdict"
+          }
+        },
+        "required": [
+          "question_id",
+          "verdict"
+        ],
+        "title": "AnswerEvaluation",
+        "type": "object"
+      },
+      "AnswerEvaluationRequest": {
+        "description": "Browser -> service. **Carries the student's own prose.**\n\nUntil F2 this text never left the page, and that was stated in the UI. Any\nsurface accepting this must say so, because the change is one a student\nwould care about and cannot see.",
+        "properties": {
+          "answer": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Answer",
+            "type": "string"
+          },
+          "question_id": {
+            "title": "Question Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question_id",
+          "answer"
+        ],
+        "title": "AnswerEvaluationRequest",
+        "type": "object"
+      },
       "CLO": {
         "properties": {
           "clo_id": {
@@ -59,6 +146,16 @@
               }
             ],
             "title": "Difficulty Band"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MasterySource"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -138,6 +235,16 @@
           "student_note"
         ],
         "title": "ContentType",
+        "type": "string"
+      },
+      "CoverageVerdict": {
+        "description": "How much of the reference answer the student's words touched.\n\nDeliberately about COVERAGE, not correctness. An answer can cover every\npoint the examiner listed and still be wrong in a way no comparison of this\nkind detects, and it can be right in words the reference never used.",
+        "enum": [
+          "covered",
+          "partial",
+          "not_covered"
+        ],
+        "title": "CoverageVerdict",
         "type": "string"
       },
       "DeleteRequest": {
@@ -611,6 +718,15 @@
         "title": "MasterySnapshot",
         "type": "object"
       },
+      "MasterySource": {
+        "description": "**How an attempt came to be judged right or wrong.**\n\nToday there is exactly one answer: the student pressed \"I got this\". No\nanswer key exists anywhere in the system, so nothing has verified any of it.\nThe counter is a self-report, and `planner._rationale` now says so.\n\nThis exists *before* evaluation is built rather than alongside it. Once an\nevaluated attempt can be written, every row recorded up to that point becomes\nambiguous forever \u2014 there is no way to reconstruct after the fact whether a\n2026 attempt was marked by a student or by a model. Recording provenance is\ncheap now and impossible later.\n\n`EVALUATED` is declared and **not yet produced by anything**. It is the\nvocabulary an evaluator would use; shipping the word costs nothing and\nshipping the writer is a separate, gated decision (\u00a79.0 requires the\naccuracy of a grade be measured before a student sees it).",
+        "enum": [
+          "self_reported",
+          "evaluated"
+        ],
+        "title": "MasterySource",
+        "type": "string"
+      },
       "Mode": {
         "enum": [
           "direct",
@@ -775,6 +891,39 @@
               }
             ],
             "title": "Question Number"
+          },
+          "reference_answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Answer"
+          },
+          "reference_answer_page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Answer Page"
+          },
+          "reference_answer_source_doc_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Answer Source Doc Id"
           },
           "source_doc_id": {
             "title": "Source Doc Id",
@@ -1086,6 +1235,66 @@
           }
         },
         "summary": "Chat",
+        "tags": [
+          "student"
+        ]
+      }
+    },
+    "/coursemate/api/examprep/evaluate": {
+      "post": {
+        "description": "Compare a student's answer to the examiner's published one. **Not a grade.**\n\n**This is the first route that receives the student's own prose.** Every\nother payload on this surface carries identifiers and free-text *requests*;\nthis carries what the student wrote. The UI said that text never left the\npage, so any client calling this has to stop saying so.\n\nIt cannot move a student's record. `AnswerEvaluation.counts_toward_mastery`\nis False, `record_attempt` refuses `source=\"evaluated\"`, and neither is a\nthing this route can override \u2014 the separation exists because the accuracy of\nthe comparison has never been measured (\u00a711.2), and an unmeasured verdict\nwith the authority of a grade is the failure `MasterySource` was added to\nprevent.\n\n**Nothing is stored.** The answer is compared and discarded: keeping student\nprose would create a second PII store inside the retirement boundary for no\ngain (\u00a73.1), and the comparison is not something the plan reads.\n\nOff by default. `answer_evaluation_enabled` reports UNAVAILABLE as a distinct\nstate, so \"switched off\" never reads as \"the model had nothing to say\".",
+        "operationId": "evaluate_coursemate_api_examprep_evaluate_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerEvaluationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnswerEvaluation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evaluate",
         "tags": [
           "student"
         ]

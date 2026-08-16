@@ -20,6 +20,7 @@ from coursemate_contracts.examprep import (
     PracticeQuestion,
     QuestionRecord,
     band_of,
+    derive_difficulty,
 )
 from coursemate_service.ai.context import ContextChunk, ContextResult
 from coursemate_service.ai.quiz_generator import QuizGenerator
@@ -337,6 +338,71 @@ def test_banding_is_one_shared_definition(difficulty, expected):
     """Lives in contracts because mastery will key on the same bands next phase,
     on the platform side, which cannot import the service."""
     assert band_of(difficulty) == expected
+
+
+# --- §7.6 difficulty derivation --------------------------------------------
+#
+# Two signals, because each is wrong alone: marks alone rate a 15-mark
+# "describe" as hard as a 15-mark "critically evaluate"; a verb alone rates a
+# 2-mark "explain" the same as a 12-mark one.
+
+
+@pytest.mark.parametrize("text,marks,expected_band", [
+    ("State what the Open edX community is", 2, "easy"),
+    ("Name two major members of the community", 3, "easy"),
+    ("List the release stages", 1, "easy"),
+    ("Describe one risk an operator accepts", 5, "medium"),
+    ("Explain how the named release process helps", 10, "medium"),
+    ("Critically evaluate the claim that governance is open", 15, "hard"),
+    ("Evaluate the trade-offs of skipping a release", 12, "hard"),
+    ("Justify your choice of deployment topology", 20, "hard"),
+])
+def test_difficulty_is_derived_from_marks_and_command_verb(text, marks, expected_band):
+    assert band_of(derive_difficulty(text, marks)) == expected_band
+
+
+def test_the_command_verb_separates_equally_weighted_questions():
+    """The whole reason marks alone are not enough."""
+    recall = derive_difficulty("Describe the release process", 15)
+    judgement = derive_difficulty("Critically evaluate the release process", 15)
+    assert judgement > recall
+
+
+def test_the_marks_separate_questions_sharing_a_verb():
+    """And the reason the verb alone is not enough either."""
+    small = derive_difficulty("Explain one consequence", 2)
+    large = derive_difficulty("Explain one consequence", 15)
+    assert large > small
+
+
+def test_an_unreadable_question_stays_unknown():
+    """`None` in, `None` out — the same rule `band_of` and `CLOMastery.accuracy`
+    follow. Defaulting would file every unparseable question into a band it was
+    never assessed for."""
+    assert derive_difficulty("", None) is None
+    assert derive_difficulty("some fragment with no command verb", None) is None
+    assert band_of(derive_difficulty("", None)) is None
+
+
+def test_one_signal_is_enough():
+    """A question missing marks or missing a recognised verb still gets what the
+    surviving signal supports, rather than being discarded."""
+    assert derive_difficulty("Explain the trade-off", None) is not None
+    assert derive_difficulty("unreadable fragment", 12) is not None
+
+
+def test_a_longer_command_phrase_wins_over_the_word_inside_it():
+    """"Critically evaluate" must not be read as bare "evaluate"."""
+    assert derive_difficulty("Critically evaluate X", 10) > derive_difficulty("Evaluate X", 10)
+
+
+@pytest.mark.parametrize("marks", [1, 2, 5, 10, 15, 25, 100])
+def test_a_derived_difficulty_always_fits_the_contract_range(marks):
+    """`QuestionRecord.difficulty` is `ge=0.0, le=1.0`, so an overshoot would be
+    refused at load time rather than caught here."""
+    for verb in ("State", "Explain", "Critically evaluate", "zzz"):
+        d = derive_difficulty(f"{verb} something", marks)
+        assert d is None or 0.0 <= d <= 1.0
 
 
 @pytest.mark.asyncio
@@ -977,3 +1043,110 @@ def test_the_band_is_not_idf_weighted():
 
     assert "idf" not in code.lower(), "idf weighting crept in"
     assert "len(content_terms(" in code, "the score is no longer a raw term count"
+
+
+# --- F1: the reference answer is fenced off from generation ------------------
+#
+# The field exists on the SOURCE question. Three things must never see it: the
+# prompt, the retrieval query, and the overlap scorer that picks citations. Each
+# is proven separately rather than by inspection, because the isolation is
+# structural (field-by-field access) and a future refactor to `model_dump()`
+# would break all three at once and silently.
+
+REF = "MODEL ANSWER: circular wait plus mutual exclusion plus hold-and-wait."
+
+
+def _source_with_answer(**kw) -> QuestionRecord:
+    return _source(
+        reference_answer=REF,
+        reference_answer_source_doc_id="final-2024-marking-scheme.pdf",
+        reference_answer_page=11,
+        **kw,
+    )
+
+
+def test_the_reference_answer_never_enters_the_prompt(monkeypatch):
+    gen = _make(monkeypatch, source=_source_with_answer(), context=_grounded(),
+                router=_Router(OK))
+    messages = gen._messages(_source_with_answer(), _grounded(),
+                             outcome_id="CLO-1", outcome_text="Deadlock", band="medium")
+
+    blob = " ".join(m["content"] for m in messages)
+    assert REF not in blob, "the model was shown the examiner's answer"
+    assert "circular wait plus mutual exclusion" not in blob
+    assert "marking-scheme" not in blob
+    # ...and the things that SHOULD be there still are.
+    assert _source().text in blob
+
+
+@pytest.mark.asyncio
+async def test_the_reference_answer_reaches_no_model_call(monkeypatch):
+    """End to end: whatever the router is handed, across every attempt."""
+    seen: list[str] = []
+
+    class _Spy(_Router):
+        async def acompletion(self, **kw):
+            seen.append(str(kw.get("messages", "")))
+            return await super().acompletion(**kw)
+
+    gen = _make(monkeypatch, source=_source_with_answer(), context=_grounded(),
+                router=_Spy(OK))
+    await _run(gen)
+
+    assert seen, "no model call was made; the test proves nothing"
+    assert not any(REF in s for s in seen)
+
+
+def test_the_reference_answer_never_reaches_the_overlap_scorer(monkeypatch):
+    """`_supporting` scores the GENERATED question against lesson chunks. Feeding
+    it examiner prose would corrupt the measured 0.90 rule with text that is not
+    lesson material at all."""
+    gen = _make(monkeypatch, source=_source_with_answer(), context=_grounded(),
+                router=_Router(OK))
+    seen: list[str] = []
+
+    original = gen._supporting
+
+    def spy(question_text, context):
+        seen.append(question_text)
+        seen.extend(c.text for c in context.chunks)
+        return original(question_text, context)
+
+    monkeypatch.setattr(gen, "_supporting", spy)
+    gen._supporting("A brand new question about deadlock.", _grounded())
+
+    assert seen, "the spy never ran"
+    assert not any(REF in s for s in seen)
+
+
+@pytest.mark.asyncio
+async def test_the_citations_are_identical_with_and_without_an_answer(monkeypatch):
+    """The strongest form of the claim: the cited set is byte-identical whether
+    or not the source carries a reference answer."""
+    plain = _make(monkeypatch, source=_source(), context=_grounded(), router=_Router(OK))
+    without = [f.citation.usage_key for f in await _run(plain)
+               if f.type == FrameType.CITATION]
+
+    withans = _make(monkeypatch, source=_source_with_answer(), context=_grounded(),
+                    router=_Router(OK))
+    with_ = [f.citation.usage_key for f in await _run(withans)
+             if f.type == FrameType.CITATION]
+
+    assert without == with_ == ["final-2024.pdf", "block-v1:lesson"]
+
+
+@pytest.mark.asyncio
+async def test_the_generated_question_carries_no_reference_answer(monkeypatch):
+    """A generated question is new. Nothing has published a model answer for it,
+    so it must not inherit the source question's."""
+    gen = _make(monkeypatch, source=_source_with_answer(), context=_grounded(),
+                router=_Router(OK))
+    q = gen._build("A new question.", _source_with_answer(), ["block-v1:lesson"])
+
+    assert getattr(q, "reference_answer", None) in (None, "")
+
+
+def test_has_reference_answer_treats_blank_as_absent():
+    assert _source().has_reference_answer is False
+    assert _source(reference_answer="   ").has_reference_answer is False
+    assert _source_with_answer().has_reference_answer is True

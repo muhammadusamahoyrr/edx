@@ -181,16 +181,39 @@ def _pack(questions: list[QuestionRecord], budget: int) -> tuple[list[QuestionRe
     return chosen, spent
 
 
-def _rationale(clo: CLO, m: CLOMastery | None, share: int, spent: int) -> str:
+def _rationale(
+    clo: CLO, m: CLOMastery | None, share: int, spent: int, *, left_over: int
+) -> str:
+    """Why this outcome got the questions it got.
+
+    **The shortfall clause names the actual cause.** It used to say "bank had
+    nothing smaller that fit" whenever `spent < share`, which is only one of two
+    reasons and was the wrong one in the case this course actually hits: both
+    CLO-1 questions were already used, so nothing smaller existed because
+    nothing existed at all. A student told to look for smaller questions goes
+    looking for something that is not there.
+
+    `left_over` is how many budgetable questions the outcome still had after
+    packing. Zero means the pool is exhausted; more than zero means what is left
+    genuinely does not fit.
+    """
     if m is None or m.attempts == 0:
         standing = "not practised yet"
     else:
-        standing = f"{m.correct}/{m.attempts} correct"
+        # "self-marked", not "correct". The counter is built entirely from the
+        # student pressing "I got this" — there is no answer key anywhere in the
+        # system, so nothing has verified any of it. Saying "correct" states
+        # something the service cannot know, and reads as a grade.
+        standing = f"{m.correct}/{m.attempts} self-marked"
     text = f"{standing}; {spent} of {share} marks allocated"
     if spent < share:
         # Said, not hidden. A student who is told the bank ran short can go find
         # more practice; one who is not will assume the plan is complete.
-        text += " (bank had nothing smaller that fit)"
+        text += (
+            " (the remaining questions are larger than the marks left)"
+            if left_over
+            else " (no more past-paper questions are tagged to this outcome)"
+        )
     return text
 
 
@@ -259,11 +282,22 @@ def build_plan(
         if not chosen:
             continue
         used.update(q.question_id for q in chosen)
+        # Only questions carrying marks count as "left over": `_pack` skips the
+        # unmarked ones, so an outcome holding nothing but unbudgetable
+        # questions is exhausted as far as the budget is concerned, and saying
+        # otherwise would send the student after questions the planner can never
+        # use. `PlanReport.unbudgetable` already reports those separately.
+        taken = {q.question_id for q in chosen}
+        left_over = sum(
+            1 for q in pool if q.marks is not None and q.question_id not in taken
+        )
         items.append(StudyPlanItem(
             clo_id=clo.clo_id,
             marks_budget=spent,
             question_ids=[q.question_id for q in chosen],
-            rationale=_rationale(clo, mastery.get(clo.clo_id), share, spent),
+            rationale=_rationale(
+                clo, mastery.get(clo.clo_id), share, spent, left_over=left_over
+            ),
         ))
 
     report.clos_planned = len(items)

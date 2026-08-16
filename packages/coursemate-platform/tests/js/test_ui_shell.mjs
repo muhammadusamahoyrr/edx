@@ -125,6 +125,13 @@ function buildPage() {
   status.hidden = true;
 
   const chat = mk("cm-panel", root); chat.dataset.panel = "chat";
+  const tools = mk("cm-chat-tools", chat);
+  const picker = mk("cm-conversations", tools, "select");
+  picker.hidden = true;
+  const newChat = mk("cm-new-chat", tools, "button");
+  newChat.hidden = true;
+  const del = mk("cm-delete-chat", tools, "button");
+  del.hidden = true;
   mk("cm-log", chat); mk("cm-notice", chat);
   const form = mk("cm-form", chat); mk("cm-input", form); mk("cm-send", form);
 
@@ -135,6 +142,9 @@ function buildPage() {
   const prac = mk("cm-practice-form", pracCard);
   mk("cm-practice-clo", prac); mk("cm-practice-band", prac); mk("cm-practice-send", prac);
   mk("cm-practice-slot", prep);
+  const ptools = mk("cm-practice-tools", prep);
+  const clearPrac = mk("cm-clear-practice", ptools, "button");
+  clearPrac.hidden = true;
   const planCard = mk("cm-card", prep);
   const bf = mk("cm-budget-form", planCard);
   mk("cm-budget-input", bf); mk("cm-budget-send", bf);
@@ -184,9 +194,9 @@ async function generate(root, frames) {
 const PLAN = {
   items: [
     { clo_id: "CLO-2", marks_budget: 15, question_ids: ["p#2"],
-      rationale: "not practised yet; 15 of 67 marks allocated (bank had nothing smaller that fit)" },
+      rationale: "not practised yet; 15 of 67 marks allocated (no more past-paper questions are tagged to this outcome)" },
     { clo_id: "CLO-1", marks_budget: 5, question_ids: ["p#4"],
-      rationale: "2/4 correct; 5 of 85 marks allocated (bank had nothing smaller that fit)" },
+      rationale: "2/4 self-marked; 5 of 85 marks allocated (no more past-paper questions are tagged to this outcome)" },
   ],
 };
 
@@ -235,14 +245,17 @@ const tests = {
 
   /* --- one at a time --------------------------------------------------- */
 
-  async "a second question replaces the first"() {
+  /* Item D reverses the original call. Replacing destroyed the previous
+     question AND the student's self-assessment of it the moment they asked for
+     another, which is most of why generation read as a one-shot action. */
+  async "a second question is added, not swapped in"() {
     const root = boot(buildPage());
     await generate(root, [{ type: "token", text: "First?" }, { type: "done" }]);
     await generate(root, [{ type: "token", text: "Second?" }, { type: "done" }]);
     const cards = findAll(root, ".cm-practice-card");
-    assert.equal(cards.length, 1, "questions stacked instead of replacing");
-    assert.match(cards[0].text, /Second\?/);
-    assert.doesNotMatch(cards[0].text, /First\?/);
+    assert.equal(cards.length, 2, "the earlier question was destroyed");
+    assert.match(cards[0].text, /First\?/, "questions are not in the order they were asked");
+    assert.match(cards[1].text, /Second\?/);
   },
 
   async "a second plan replaces the first"() {
@@ -329,7 +342,7 @@ const tests = {
     await buildPlan(root);
     const badges = findAll(root, ".cm-plan-mastery");
     assert.match(badges[0].textContent, /not practised yet/);   // CLO-2
-    assert.match(badges[1].textContent, /2\/4 correct/);        // CLO-1
+    assert.match(badges[1].textContent, /2\/4 self-marked/);    // CLO-1
     assert.match(badges[1].className, /practised/);
   },
 
@@ -343,7 +356,7 @@ const tests = {
       ] },
     });
     await buildPlan(root);
-    assert.match(findAll(root, ".cm-plan-mastery")[1].textContent, /3\/5 correct/);
+    assert.match(findAll(root, ".cm-plan-mastery")[1].textContent, /3\/5 self-marked/);
   },
 
   async "an outcome absent from the snapshot reads as unpractised"() {
@@ -370,9 +383,9 @@ const tests = {
     });
     await buildPlan(root);
     const card = find(root, ".cm-plan-card");
-    assert.equal((card.text.match(/2\/4 correct/g) || []).length, 1);
+    assert.equal((card.text.match(/2\/4 self-marked/g) || []).length, 1);
     // ...and the rest of the sentence survived.
-    assert.match(card.text, /5 of 85 marks allocated \(bank had nothing smaller that fit\)/);
+    assert.match(card.text, /5 of 85 marks allocated \(no more past-paper questions are tagged to this outcome\)/);
   },
 
   /* Narrow on purpose. A rationale the service rewords must pass through
@@ -574,6 +587,391 @@ const tests = {
     const rule = css.match(/\.cm-selfcheck-got\s*\{[^}]*\}/)[0];
     assert.match(rule, /var\(--cm-teal\)/);
     assert.doesNotMatch(rule, /--cm-real/);
+  },
+
+  /* --- E1: starting a fresh conversation ------------------------------- *
+   *
+   * `clear_history` existed from the beginning and nothing ever called it, so
+   * a student's history could only grow. These pin the wiring. */
+
+  async "an empty chat offers nothing to clear"() {
+    const root = buildPage();
+    boot(root, { history: [] });
+    assert.equal(find(root, ".cm-new-chat").hidden, true,
+      "a New chat control on an empty chat offers an action that does nothing");
+  },
+
+  async "a chat with history offers to start a new one"() {
+    const root = buildPage();
+    boot(root, { history: [{ role: "student", content: "hi" },
+                           { role: "tutor", content: "hello" }] });
+    assert.equal(find(root, ".cm-new-chat").hidden, false);
+  },
+
+  /* E3 changed what this button does. It used to call `clear_history`, which
+     destroyed the turns; it now starts a NEW conversation and the previous one
+     stays resumable from the picker. `clear_history` still exists, scoped to the
+     active conversation. */
+  async "New chat starts a new conversation"() {
+    const root = buildPage();
+    const calls = [];
+    boot(root, { history: [{ role: "student", content: "hi" }] }, async (url) => {
+      calls.push(String(url));
+      return { ok: true, json: async () => ({ conversation_id: "c2", conversations: [] }) };
+    });
+    await find(root, ".cm-new-chat")._listeners.click({});
+    await tick();
+    assert.ok(calls.some((u) => u.includes("new_conversation")),
+      `new_conversation was never called; saw ${JSON.stringify(calls)}`);
+  },
+
+  async "New chat does not destroy the previous conversation"() {
+    const root = buildPage();
+    const calls = [];
+    boot(root, { history: [{ role: "student", content: "hi" }] }, async (url) => {
+      calls.push(String(url));
+      return { ok: true, json: async () => ({ conversation_id: "c2", conversations: [] }) };
+    });
+    await find(root, ".cm-new-chat")._listeners.click({});
+    await tick();
+    assert.equal(calls.filter((u) => u.includes("clear_history")).length, 0,
+      "starting a new chat deleted the old one");
+  },
+
+  async "a new conversation shows an empty log"() {
+    const root = buildPage();
+    boot(root, { history: [{ role: "student", content: "hi" },
+                           { role: "tutor", content: "hello" }] },
+         async () => ({ ok: true, json: async () => ({ conversation_id: "c2", conversations: [] }) }));
+    assert.ok(findAll(find(root, ".cm-log"), ".cm-turn").length > 0, "no turns to begin with");
+    await find(root, ".cm-new-chat")._listeners.click({});
+    await tick();
+    assert.equal(findAll(find(root, ".cm-log"), ".cm-turn").length, 0, "the log still shows turns");
+  },
+
+  async "a refused switch leaves the history alone"() {
+    // Switching optimistically would show an empty page while the platform still
+    // held the turns, and the next reload would bring them back.
+    const root = buildPage();
+    boot(root, { history: [{ role: "student", content: "hi" },
+                           { role: "tutor", content: "hello" }] },
+         async () => ({ ok: false, json: async () => ({}) }));
+    await find(root, ".cm-new-chat")._listeners.click({});
+    await tick();
+    assert.ok(findAll(find(root, ".cm-log"), ".cm-turn").length > 0,
+      "the log was cleared even though the platform refused");
+    assert.equal(find(root, ".cm-new-chat").disabled, false, "the control was left disabled");
+  },
+
+  async "starting a new chat does not touch mastery"() {
+    // Different lifetimes. A student who wants a clean page has not un-practised
+    // anything, and wiping their recorded attempts would be a loss they never
+    // asked for.
+    const root = buildPage();
+    const calls = [];
+    boot(root, { history: [{ role: "student", content: "hi" }] }, async (url) => {
+      calls.push(String(url));
+      return { ok: true, json: async () => ({ conversation_id: "c2", conversations: [] }) };
+    });
+    await find(root, ".cm-new-chat")._listeners.click({});
+    await tick();
+    assert.equal(calls.filter((u) => u.includes("record_attempt")).length, 0,
+      "starting a new chat called the mastery handler");
+  },
+
+  /* --- E2: the practice run survives a reload ------------------------- */
+
+  async "a saved practice run is restored on load"() {
+    const root = buildPage();
+    boot(root, { practice: [
+      { attempt_id: "a1", question_id: "Q1", clo_id: "CLO-1", text: "First question?",
+        citations: [{ usage_key: "k1", display_name: "Lesson one" }], answered: false },
+      { attempt_id: "a2", question_id: "Q2", clo_id: "CLO-1", text: "Second question?",
+        citations: [], answered: false },
+    ] });
+    const cards = findAll(root, ".cm-practice-card");
+    assert.equal(cards.length, 2, "the run was not restored");
+    assert.match(cards[0].text, /First question\?/);
+    assert.match(cards[1].text, /Second question\?/);
+  },
+
+  async "a restored card keeps its citations"() {
+    const root = buildPage();
+    boot(root, { practice: [
+      { attempt_id: "a1", question_id: "Q1", text: "Q?",
+        citations: [{ usage_key: "k1", display_name: "Lesson one" }], answered: false },
+    ] });
+    assert.match(find(root, ".cm-practice-card").text, /Lesson one/);
+  },
+
+  async "a restored card with no citations says so"() {
+    const root = buildPage();
+    boot(root, { practice: [{ attempt_id: "a1", question_id: "Q1", text: "Q?",
+                              citations: [], answered: false }] });
+    assert.match(find(root, ".cm-practice-card").text, /Source unavailable/);
+  },
+
+  async "an unanswered restored card can still be marked"() {
+    const root = buildPage();
+    boot(root, { practice: [{ attempt_id: "a1", question_id: "Q1", text: "Q?",
+                              citations: [], answered: false }] });
+    assert.equal(find(root, ".cm-selfcheck-got").disabled, false);
+  },
+
+  async "an already answered card comes back spent"() {
+    // Offering the buttons again would let the student press one, be told it
+    // saved, and see nothing move — record_attempt discards the replay.
+    const root = buildPage();
+    boot(root, { practice: [{ attempt_id: "a1", question_id: "Q1", text: "Q?",
+                              citations: [], answered: true }] });
+    assert.equal(find(root, ".cm-selfcheck-got").disabled, true);
+    assert.equal(find(root, ".cm-selfcheck-not").disabled, true);
+    assert.match(find(root, ".cm-selfcheck-status").textContent, /Already marked/i);
+  },
+
+  async "a restored card reuses its stored attempt_id"() {
+    // The whole reason the id is persisted: a fresh one would make the same
+    // card a second attempt and both would be counted.
+    const root = buildPage();
+    const calls = [];
+    boot(root, { practice: [{ attempt_id: "STORED-ID", question_id: "Q1", text: "Q?",
+                              citations: [], answered: false }] },
+         async (url, opts) => {
+           calls.push({ url: String(url), body: opts && opts.body ? JSON.parse(opts.body) : null });
+           return { ok: true, json: async () => ({ applied: true }) };
+         });
+    find(root, ".cm-selfcheck-got")._listeners.click();
+    await tick();
+    const rec = calls.find((c) => c.url.includes("record_attempt"));
+    assert.ok(rec, "record_attempt was never called");
+    assert.equal(rec.body.attempt_id, "STORED-ID");
+  },
+
+  async "a page with no saved practice restores nothing"() {
+    const root = buildPage();
+    boot(root, {});
+    assert.equal(findAll(root, ".cm-practice-card").length, 0);
+  },
+
+  /* --- E3: several conversations -------------------------------------- */
+
+  async "the picker is hidden with fewer than two conversations"() {
+    const root = buildPage();
+    boot(root, { conversations: [{ id: "", title: "Earlier", turns: 2 }] });
+    assert.equal(find(root, ".cm-conversations").hidden, true);
+  },
+
+  async "the picker lists every conversation once there are two"() {
+    const root = buildPage();
+    boot(root, { conversations: [{ id: "", title: "Earlier", turns: 2 },
+                                 { id: "c2", title: "Cohorts", turns: 4 }],
+                 active_conversation: "c2" });
+    const picker = find(root, ".cm-conversations");
+    assert.equal(picker.hidden, false);
+    assert.equal(picker.children.length, 2);
+    assert.match(picker.children[1].text, /Cohorts/);
+  },
+
+  async "switching asks the server for that conversation"() {
+    const root = buildPage();
+    const calls = [];
+    boot(root, { conversations: [{ id: "", title: "Earlier", turns: 2 },
+                                 { id: "c2", title: "Cohorts", turns: 1 }],
+                 active_conversation: "c2" },
+         async (url, opts) => {
+           calls.push({ url: String(url), body: opts && opts.body ? JSON.parse(opts.body) : null });
+           return { ok: true, json: async () => ({
+             conversation_id: "", conversations: [], history: [
+               { role: "student", content: "old question" },
+             ] }) };
+         });
+    const picker = find(root, ".cm-conversations");
+    picker.value = "";
+    await picker._listeners.change({});
+    /* The listener does not return its fetch promise, so one tick lands before
+     * the .then chain has run. */
+    for (let i = 0; i < 4; i++) { await tick(); }
+
+    const sw = calls.find((c) => c.url.includes("switch_conversation"));
+    assert.ok(sw, `switch_conversation was never called; saw ${JSON.stringify(calls.map(c => c.url))}`);
+    assert.equal(sw.body.conversation_id, "");
+    assert.match(find(root, ".cm-log").text, /old question/);
+  },
+
+  /* --- backward compatibility ----------------------------------------- */
+
+  async "a page rendered by the previous build still loads"() {
+    // No `conversations`, no `active_conversation`, no `practice` — exactly what
+    // the deployed template sends today.
+    const root = buildPage();
+    boot(root, { history: [{ role: "student", content: "hi" },
+                           { role: "tutor", content: "hello", citations: [] }] });
+    assert.equal(findAll(find(root, ".cm-log"), ".cm-turn").length, 2);
+    assert.equal(find(root, ".cm-conversations").hidden, true);
+    assert.equal(findAll(root, ".cm-practice-card").length, 0);
+  },
+
+  async "turns with no conversation_id render normally"() {
+    const root = buildPage();
+    boot(root, { history: [{ role: "student", content: "legacy question" },
+                           { role: "tutor", content: "legacy answer", citations: [] }] });
+    assert.match(find(root, ".cm-log").text, /legacy question/);
+    assert.match(find(root, ".cm-log").text, /legacy answer/);
+  },
+
+  /* --- the delete control (review fix) -------------------------------- */
+
+  async "delete is offered only when there is something to delete"() {
+    const empty = buildPage();
+    boot(empty, { history: [] });
+    assert.equal(find(empty, ".cm-delete-chat").hidden, true);
+
+    const full = buildPage();
+    boot(full, { history: [{ role: "student", content: "hi" }] });
+    assert.equal(find(full, ".cm-delete-chat").hidden, false);
+  },
+
+  async "delete calls clear_history"() {
+    const root = buildPage();
+    const calls = [];
+    boot(root, { history: [{ role: "student", content: "hi" }] }, async (url) => {
+      calls.push(String(url));
+      return { ok: true, json: async () => ({ cleared: true }) };
+    });
+    await find(root, ".cm-delete-chat")._listeners.click({});
+    await tick();
+    assert.ok(calls.some((u) => u.includes("clear_history")),
+      "clear_history was never called: " + JSON.stringify(calls));
+  },
+
+  async "delete empties the log and hides itself"() {
+    const root = buildPage();
+    boot(root, { history: [{ role: "student", content: "hi" },
+                           { role: "tutor", content: "hello" }] },
+         async () => ({ ok: true, json: async () => ({ cleared: true }) }));
+    await find(root, ".cm-delete-chat")._listeners.click({});
+    await tick();
+    assert.equal(findAll(find(root, ".cm-log"), ".cm-turn").length, 0);
+    assert.equal(find(root, ".cm-delete-chat").hidden, true);
+  },
+
+  async "delete never touches mastery"() {
+    const root = buildPage();
+    const calls = [];
+    boot(root, { history: [{ role: "student", content: "hi" }] }, async (url) => {
+      calls.push(String(url));
+      return { ok: true, json: async () => ({ cleared: true }) };
+    });
+    await find(root, ".cm-delete-chat")._listeners.click({});
+    await tick();
+    assert.equal(calls.filter((u) => u.includes("record_attempt")).length, 0,
+      "deleting a conversation called the mastery handler");
+  },
+
+  async "delete never starts a new conversation"() {
+    const root = buildPage();
+    const calls = [];
+    boot(root, { history: [{ role: "student", content: "hi" }] }, async (url) => {
+      calls.push(String(url));
+      return { ok: true, json: async () => ({ cleared: true }) };
+    });
+    await find(root, ".cm-delete-chat")._listeners.click({});
+    await tick();
+    assert.equal(calls.filter((u) => u.includes("new_conversation")).length, 0);
+  },
+
+  async "a refused delete leaves the turns on screen"() {
+    const root = buildPage();
+    boot(root, { history: [{ role: "student", content: "hi" },
+                           { role: "tutor", content: "hello" }] },
+         async () => ({ ok: false, json: async () => ({}) }));
+    await find(root, ".cm-delete-chat")._listeners.click({});
+    await tick();
+    assert.ok(findAll(find(root, ".cm-log"), ".cm-turn").length > 0);
+    assert.equal(find(root, ".cm-delete-chat").disabled, false);
+  },
+
+  /* --- clearing the practice run -------------------------------------- */
+
+  async "clear practice is offered only when a run exists"() {
+    const empty = buildPage();
+    boot(empty, {});
+    assert.equal(find(empty, ".cm-clear-practice").hidden, true);
+
+    const full = buildPage();
+    boot(full, { practice: [{ attempt_id: "a1", question_id: "Q1", text: "Q?",
+                              citations: [], answered: false }] });
+    assert.equal(find(full, ".cm-clear-practice").hidden, false);
+  },
+
+  async "clear practice calls clear_practice and empties the slot"() {
+    const root = buildPage();
+    const calls = [];
+    boot(root, { practice: [{ attempt_id: "a1", question_id: "Q1", text: "Q?",
+                              citations: [], answered: false }] },
+         async (url) => {
+           calls.push(String(url));
+           return { ok: true, json: async () => ({ cleared: true }) };
+         });
+    await find(root, ".cm-clear-practice")._listeners.click({});
+    await tick();
+    assert.ok(calls.some((u) => u.includes("clear_practice")),
+      "clear_practice was never called: " + JSON.stringify(calls));
+    assert.equal(findAll(root, ".cm-practice-card").length, 0);
+    assert.equal(find(root, ".cm-clear-practice").hidden, true);
+  },
+
+  async "clearing practice never touches mastery or chat"() {
+    const root = buildPage();
+    const calls = [];
+    boot(root, { history: [{ role: "student", content: "keep me" }],
+                 practice: [{ attempt_id: "a1", question_id: "Q1", text: "Q?",
+                              citations: [], answered: false }] },
+         async (url) => {
+           calls.push(String(url));
+           return { ok: true, json: async () => ({ cleared: true }) };
+         });
+    await find(root, ".cm-clear-practice")._listeners.click({});
+    await tick();
+    assert.equal(calls.filter((u) => u.includes("record_attempt")).length, 0);
+    assert.equal(calls.filter((u) => u.includes("clear_history")).length, 0);
+    assert.match(find(root, ".cm-log").text, /keep me/);
+  },
+
+  /* --- the guard that would have caught both dead handlers ------------ */
+
+  async "every handler URL the client declares is actually fetched"() {
+    /* `clear_history` shipped unreachable from the block's creation until E1,
+       then went dead again in E3 when New Chat moved off it. `clear_practice`
+       shipped dead in E2. Both were invisible because nothing compared the
+       declared handlers against the ones anything calls. */
+    const src = readFileSync(JS, "utf8");
+    const declared = [...src.matchAll(/var\s+(\w+Url)\s*=\s*runtime\.handlerUrl/g)]
+      .map((m) => m[1]);
+    assert.ok(declared.length >= 7,
+      "the scan found only " + declared + "; the pattern has rotted");
+
+    const dead = declared.filter((v) => !new RegExp("fetch\\(\\s*" + v + "\\b").test(src));
+    assert.deepEqual(dead, [],
+      "declared but never fetched: " + dead.join(", ")
+      + " - a handler nothing calls is a feature that does not exist");
+  },
+
+  async "every json_handler on the block is reachable from the client"() {
+    const block = readFileSync(
+      resolve(here, "../../coursemate_platform/xblock/tutor_block.py"), "utf8");
+    const handlers = [...block.matchAll(/def (\w+)\(self, data, suffix=""\)/g)]
+      .map((m) => m[1]);
+    assert.ok(handlers.length >= 8, "found only " + handlers + "; the scan has rotted");
+
+    /* Studio-only handlers are called from the authoring panel, not this script. */
+    const NOT_IN_STUDENT_VIEW = new Set(["submit_studio_edits", "index_course"]);
+    const src = readFileSync(JS, "utf8");
+    const missing = handlers
+      .filter((h) => !NOT_IN_STUDENT_VIEW.has(h))
+      .filter((h) => !src.includes('handlerUrl(element, "' + h + '")'));
+    assert.deepEqual(missing, [],
+      "these handlers exist and nothing in tutor.js calls them: " + missing.join(", "));
   },
 };
 

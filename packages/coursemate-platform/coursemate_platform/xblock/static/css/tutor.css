@@ -253,6 +253,16 @@ div.coursemate-tutor optgroup {
 
 /* --- Ask tab ---------------------------------------------------------- */
 
+/* Right-aligned and quiet: starting over is a recovery action, not the thing
+   the student came to do. Collapses to nothing while the button inside it is
+   hidden, so an empty chat keeps its original spacing. */
+.coursemate-tutor .cm-chat-tools {
+  display: flex; justify-content: flex-end;
+}
+
+.coursemate-tutor .cm-chat-tools:empty,
+.coursemate-tutor .cm-new-chat[hidden] { display: none; }
+
 .coursemate-tutor .cm-log {
   display: flex; flex-direction: column; gap: 12px;
   max-height: 420px; overflow-y: auto;
@@ -835,3 +845,23 @@ div.coursemate-tutor optgroup {
   color: #6b7c78;
   margin: 2px 0 0;
 }
+
+/* --- reference answer (F1) --------------------------------------------- */
+/* Quiet by default: revealing the examiner's answer is a deliberate act, and a
+   loud control beside every question invites the student to skip the work. */
+.coursemate-tutor .cm-refanswer { margin-top: 6px; }
+
+.coursemate-tutor .cm-refanswer-toggle {
+  font-size: .82rem; padding: 3px 9px;
+}
+
+.coursemate-tutor .cm-refanswer-body {
+  margin-top: 6px; padding: 8px 10px;
+  border-left: 3px solid var(--cm-teal);
+  background: rgba(0, 0, 0, .03);
+  border-radius: 0 4px 4px 0;
+}
+
+.coursemate-tutor .cm-refanswer-body[hidden] { display: none; }
+
+.coursemate-tutor .cm-refanswer-text { white-space: pre-wrap; }

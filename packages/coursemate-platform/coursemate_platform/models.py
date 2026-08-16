@@ -172,13 +172,29 @@ class StudentMastery(models.Model):
     #: averages that into a number that recommends neither.
     difficulty_band = models.CharField(max_length=16, blank=True, default="")
 
+    #: `self_reported` | `evaluated`, from `coursemate_contracts.MasterySource`.
+    #:
+    #: **Part of the unique constraint, for the reason `difficulty_band` is.** A
+    #: single column that merely labelled the row would flip value as attempts of
+    #: different provenance arrived, and the counter it labels would blend a
+    #: self-report with a grade — presenting the first with the authority of the
+    #: second. Separate rows keep them separable; `MasterySnapshot.by_clo()` sums
+    #: them, so everything that wants the total still gets it.
+    #:
+    #: Not nullable, and defaulted rather than blank: unlike a band, which is
+    #: genuinely unknown on an unscored question, provenance is always known at
+    #: the moment of writing. There is no honest "unknown source".
+    source = models.CharField(max_length=16, default="self_reported")
+
     attempts = models.PositiveIntegerField(default=0)
     correct = models.PositiveIntegerField(default=0)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         app_label = "coursemate_platform"
-        unique_together = ("student_id", "offering_id", "clo_id", "difficulty_band")
+        unique_together = (
+            "student_id", "offering_id", "clo_id", "difficulty_band", "source",
+        )
 
     @classmethod
     def snapshot(cls, student_id: str, offering_id: str) -> list[dict]:
@@ -192,10 +208,13 @@ class StudentMastery(models.Model):
             {"clo_id": r.clo_id,
              # "" is how the DB spells "unbanded"; the contract spells it None.
              "difficulty_band": r.difficulty_band or None,
+             # Carried so the browser can show a self-report as a self-report.
+             # Always populated — the row cannot exist without a provenance.
+             "source": r.source,
              "attempts": r.attempts, "correct": r.correct}
             for r in cls.objects.filter(
                 student_id=student_id, offering_id=offering_id
-            ).order_by("clo_id", "difficulty_band")
+            ).order_by("clo_id", "difficulty_band", "source")
         ]
 
     @classmethod
@@ -208,6 +227,7 @@ class StudentMastery(models.Model):
         clo_id: str,
         correct: bool,
         difficulty_band: str | None = None,
+        source: str = "self_reported",
     ) -> dict:
         """Count one attempt, exactly once.
 
@@ -232,22 +252,28 @@ class StudentMastery(models.Model):
                 # the caller is a retry and still needs an answer, and returning
                 # a different shape on the second call is how a retry path grows
                 # its own bugs.
+                # Filtered by source too, now that it is part of the unique key:
+                # without it this could read a DIFFERENT row than the one the
+                # original write touched and report someone else's totals back
+                # to a retry.
                 row = cls.objects.filter(
                     student_id=student_id, offering_id=offering_id, clo_id=clo_id,
-                    difficulty_band=difficulty_band or "",
+                    difficulty_band=difficulty_band or "", source=source,
                 ).first()
                 return {
                     "applied": False,
                     "attempts": row.attempts if row else 0,
                     "correct": row.correct if row else 0,
+                    "source": source,
                 }
 
             row, _ = cls.objects.get_or_create(
                 student_id=student_id, offering_id=offering_id, clo_id=clo_id,
-                difficulty_band=difficulty_band or "",
+                difficulty_band=difficulty_band or "", source=source,
             )
             row.attempts += 1
             if correct:
                 row.correct += 1
             row.save(update_fields=["attempts", "correct", "updated_at"])
-            return {"applied": True, "attempts": row.attempts, "correct": row.correct}
+            return {"applied": True, "attempts": row.attempts,
+                    "correct": row.correct, "source": source}

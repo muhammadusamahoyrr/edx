@@ -92,6 +92,9 @@ function buildPage() {
   const pf = mk("cm-prep-form", prep); mk("cm-prep-input", pf); mk("cm-prep-send", pf);
   const prac = mk("cm-practice-form", prep);
   mk("cm-practice-clo", prac); mk("cm-practice-band", prac); mk("cm-practice-send", prac);
+  /* The real template's practice slot. Without it the script falls back to the
+     shared prep log, and none of the run behaviour below would be exercised. */
+  mk("cm-practice-slot", prep);
   return root;
 }
 
@@ -122,6 +125,9 @@ async function generate(frames, { recordFails = false, recordError = null } = {}
       if (recordError) { return { ok: true, json: async () => ({ error: recordError }) }; }
       return { ok: true, json: async () => ({ recorded: true }) };
     }
+    if (u.includes("/persist_practice")) {
+      return { ok: true, json: async () => ({ saved: true }) };
+    }
     return sse(frames);
   };
 
@@ -147,6 +153,50 @@ const QUESTION = [
 ];
 
 const recordCalls = (calls) => calls.filter((c) => c.url.includes("/record_attempt"));
+
+/** Generate several questions on ONE page, the way a student actually would. */
+async function generateRun(framesList) {
+  const root = buildPage();
+  const calls = [];
+  let next = 0;
+  globalThis.fetch = async (url, opts = {}) => {
+    const u = String(url);
+    calls.push({ url: u, body: opts.body ? JSON.parse(opts.body) : null });
+    if (u.includes("/mint")) {
+      return { ok: true, json: async () => ({ token: "t", stream_path: "/coursemate/api/chat" }) };
+    }
+    if (u.includes("/record_attempt")) {
+      return { ok: true, json: async () => ({ recorded: true }) };
+    }
+    /* E2: the client now persists each card. Without this the persist call
+       falls through and eats the NEXT question's mocked frames. */
+    if (u.includes("/persist_practice")) {
+      return { ok: true, json: async () => ({ saved: true }) };
+    }
+    return sse(framesList[next++]);
+  };
+
+  const src = readFileSync(JS, "utf8");
+  const factory = vm.runInThisContext(`${src}\nCourseMateTutor;`, { filename: JS });
+  factory({ handlerUrl: (_e, name) => `/handler/${name}` },
+          { querySelector: (s) => find(root, s) || root }, {});
+
+  find(root, '.cm-panel[data-panel="prep"]').dataset.base = "/coursemate/api/examprep";
+  find(root, ".cm-practice-clo").value = "CLO-1";
+  find(root, ".cm-practice-band").value = "medium";
+
+  for (let i = 0; i < framesList.length; i++) {
+    await find(root, ".cm-practice-form")._listeners.submit({ preventDefault() {} });
+    await settle();
+  }
+  return { root, calls };
+}
+
+const qFrames = (n) => ([
+  { type: "token", text: `Question number ${n}?` },
+  { type: "citation", citation: { usage_key: "final-2024.pdf", display_name: "final-2024.pdf" } },
+  { type: "done", question_id: `Q-${n}`, difficulty_band: "hard" },
+]);
 
 /* ------------------------------------------------------------------ tests */
 const tests = {
@@ -359,6 +409,84 @@ const tests = {
     const fn = src.slice(src.indexOf("function selfAssessment"));
     assert.match(fn, /credentials: "same-origin"/);
     assert.match(fn, /platformHeaders\(\)/);
+  },
+
+  /* --- Item D: a practice RUN, not one card at a time ------------------ */
+
+  async "three questions leave three cards"() {
+    const { root } = await generateRun([qFrames(1), qFrames(2), qFrames(3)]);
+    const cards = findAll(root, ".cm-practice-card");
+    assert.equal(cards.length, 3, "earlier questions were destroyed");
+    assert.match(cards[0].text, /Question number 1\?/);
+    assert.match(cards[1].text, /Question number 2\?/);
+    assert.match(cards[2].text, /Question number 3\?/);
+  },
+
+  async "each card keeps its own citations"() {
+    const { root } = await generateRun([qFrames(1), qFrames(2)]);
+    findAll(root, ".cm-practice-card").forEach((card, i) => {
+      assert.ok(findAll(card, ".cm-chip-link").length >= 1,
+        `card ${i} lost its citations when the next question arrived`);
+    });
+  },
+
+  async "each card carries a unique attempt_id"() {
+    // The idempotency key is built from attempt_id. Two cards sharing one would
+    // make the second answer a replay of the first and discard it silently.
+    const { root, calls } = await generateRun([qFrames(1), qFrames(2), qFrames(3)]);
+    const cards = findAll(root, ".cm-practice-card");
+    cards.forEach((card) => find(card, ".cm-selfcheck-got")._listeners.click());
+    await settle();
+    const ids = recordCalls(calls).map((c) => c.body.attempt_id);
+    assert.equal(ids.length, 3, `expected 3 attempts, saw ${ids.length}`);
+    assert.equal(new Set(ids).size, 3, `attempt_ids collided: ${JSON.stringify(ids)}`);
+  },
+
+  async "each attempt names its own question"() {
+    const { root, calls } = await generateRun([qFrames(1), qFrames(2)]);
+    const cards = findAll(root, ".cm-practice-card");
+    cards.forEach((card) => find(card, ".cm-selfcheck-got")._listeners.click());
+    await settle();
+    assert.deepEqual(recordCalls(calls).map((c) => c.body.question_id), ["Q-1", "Q-2"]);
+  },
+
+  async "answering one card does not touch another"() {
+    const { root, calls } = await generateRun([qFrames(1), qFrames(2)]);
+    const cards = findAll(root, ".cm-practice-card");
+    find(cards[0], ".cm-selfcheck-got")._listeners.click();
+    await settle();
+
+    assert.equal(recordCalls(calls).length, 1, "answering one card wrote more than one attempt");
+    assert.equal(recordCalls(calls)[0].body.question_id, "Q-1");
+    // The untouched card is still answerable.
+    assert.equal(find(cards[1], ".cm-selfcheck-got").disabled, false,
+      "answering the first card disabled the second");
+  },
+
+  async "the two cards can be marked differently"() {
+    const { root, calls } = await generateRun([qFrames(1), qFrames(2)]);
+    const cards = findAll(root, ".cm-practice-card");
+    find(cards[0], ".cm-selfcheck-got")._listeners.click();
+    find(cards[1], ".cm-selfcheck-not")._listeners.click();
+    await settle();
+    const posts = recordCalls(calls);
+    assert.deepEqual(posts.map((c) => c.body.correct), [true, false]);
+  },
+
+  async "a double click on one card still records once"() {
+    // The per-card guard must survive the card no longer being the only one.
+    const { root, calls } = await generateRun([qFrames(1), qFrames(2)]);
+    const got = find(findAll(root, ".cm-practice-card")[1], ".cm-selfcheck-got");
+    got._listeners.click();
+    got._listeners.click();
+    await settle();
+    assert.equal(recordCalls(calls).length, 1);
+  },
+
+  async "the button invites another question once one exists"() {
+    const { root } = await generateRun([qFrames(1)]);
+    assert.match(find(root, ".cm-practice-send").textContent, /another/i,
+      "nothing on screen suggested asking again was possible");
   },
 };
 

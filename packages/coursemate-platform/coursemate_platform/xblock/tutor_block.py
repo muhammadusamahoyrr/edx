@@ -52,6 +52,25 @@ loader = ResourceLoader(__name__)
 #: would duplicate PII into a system that platform retirement does not reach.
 HISTORY_WINDOW_TURNS = 10
 
+#: The conversation every pre-E3 turn belongs to.
+#:
+#: `""` rather than a generated id, so no existing entry has to be rewritten to
+#: acquire one: an entry with no `conversation_id` and an entry with `""` are the
+#: same conversation, which is what makes the old data load untouched.
+LEGACY_CONVERSATION = ""
+
+#: How many practice cards survive a reload. A revision session is not an
+#: archive, and an unbounded list in `user_state` is a payload the student pays
+#: for on every page load — the same reasoning as `HISTORY_WINDOW_TURNS`.
+PRACTICE_WINDOW = 20
+
+#: Conversations kept per student per block. Beyond this the oldest is dropped
+#: with its turns, so the list cannot grow without limit.
+MAX_CONVERSATIONS = 20
+
+#: Longest auto-derived conversation title.
+TITLE_CHARS = 60
+
 #: Mastery entries carried per request. Matches `MasterySnapshot`'s `max_length`,
 #: which is the constraint that actually rejects an over-long payload — this is
 #: the trim that keeps a valid request from becoming an invalid one. A course with
@@ -94,7 +113,105 @@ class CourseMateTutorXBlock(XBlock):
     #: Private per-student conversation. Scope.user_state is per-student and
     #: per-block, and the platform owns it — so deleting a student's data through
     #: the platform deletes this without CourseMate doing anything.
+    #:
+    #: **Entries may carry `conversation_id`; entries written before E3 do not.**
+    #: An entry without one belongs to `LEGACY_CONVERSATION`, decided on read and
+    #: never written back. Migrating on read would mean `student_view` — a GET —
+    #: rewriting durable student state, and a page load that mutates data is how
+    #: a render bug becomes data loss.
     history = List(default=[], scope=Scope.user_state)
+
+    #: `{"id", "title", "created_at"}` per conversation. Metadata only: the turns
+    #: stay in `history`, so nothing about the existing shape moves.
+    #:
+    #: Empty for every student who has not started a second conversation, which
+    #: includes everyone today — `_conversations()` synthesises the default entry
+    #: rather than this field needing to be backfilled.
+    conversations = List(default=[], scope=Scope.user_state)
+
+    #: Which conversation new turns join. `""` means the legacy default.
+    active_conversation = String(default="", scope=Scope.user_state)
+
+    #: Generated practice questions, so a reload does not destroy the run.
+    #:
+    #: Separate from `history` rather than folded into it: practice lives in a
+    #: different tab, is not part of any conversation, and a student clearing a
+    #: chat has not withdrawn their practice. Folding them together would make
+    #: "New chat" silently delete work the student did somewhere else.
+    practice = List(default=[], scope=Scope.user_state)
+
+    # --- conversations (E3) -------------------------------------------------
+
+    @staticmethod
+    def _conversation_of(entry) -> str:
+        """Which conversation a stored turn belongs to.
+
+        Absent means legacy, and legacy means the default conversation. This is
+        the single place that decision is made, so a pre-E3 turn behaves
+        identically everywhere without any of them being rewritten.
+        """
+        if not isinstance(entry, dict):
+            return LEGACY_CONVERSATION
+        return str(entry.get("conversation_id") or LEGACY_CONVERSATION)
+
+    def _turns_in(self, conversation_id: str) -> list:
+        return [t for t in self.history if self._conversation_of(t) == conversation_id]
+
+    def _conversations(self) -> list[dict]:
+        """Every conversation this student has, newest last.
+
+        The default is synthesised rather than stored: a student who has never
+        pressed "New chat" has turns and no `conversations` row, and inventing
+        one on read keeps that student's data untouched while still giving the
+        UI something to list.
+        """
+        stored = [c for c in self.conversations if isinstance(c, dict) and c.get("id")]
+        known = {str(c["id"]) for c in stored}
+        out: list[dict] = []
+        if LEGACY_CONVERSATION not in known and self._turns_in(LEGACY_CONVERSATION):
+            out.append({"id": LEGACY_CONVERSATION, "title": "Earlier conversation",
+                        "created_at": ""})
+        out.extend({"id": str(c["id"]), "title": str(c.get("title") or "New chat"),
+                    "created_at": str(c.get("created_at") or "")} for c in stored)
+        return out
+
+    def _active_id(self) -> str:
+        """The conversation new turns join.
+
+        Falls back to the legacy default when the stored id names a conversation
+        that no longer exists — otherwise deleting one would leave every
+        subsequent turn writing into a conversation nothing can open.
+        """
+        active = str(self.active_conversation or LEGACY_CONVERSATION)
+        if active == LEGACY_CONVERSATION:
+            return LEGACY_CONVERSATION
+        if any(c["id"] == active for c in self._conversations()):
+            return active
+        return LEGACY_CONVERSATION
+
+    def _title_for(self, conversation_id: str) -> str:
+        """A conversation's name, derived from its first question if it has none.
+
+        Auto-derived rather than prompted for: a student asked to name a chat
+        before having one has nothing to name it after.
+        """
+        for c in self._conversations():
+            if c["id"] == conversation_id and c["title"] not in ("", "New chat"):
+                return c["title"]
+        for turn in self._turns_in(conversation_id):
+            if isinstance(turn, dict) and turn.get("role") == "student":
+                text = str(turn.get("content") or "").strip()
+                if text:
+                    return text[:TITLE_CHARS] + ("…" if len(text) > TITLE_CHARS else "")
+        return "New chat"
+
+    def _conversation_list(self) -> list[dict]:
+        """What the browser renders in the conversation picker."""
+        return [
+            {"id": c["id"], "title": self._title_for(c["id"]),
+             "turns": len(self._turns_in(c["id"]))}
+            for c in self._conversations()
+        ]
 
     def _user(self):
         service = self.runtime.service(self, "user")
@@ -128,7 +245,13 @@ class CourseMateTutorXBlock(XBlock):
         fragment.initialize_js(
             "CourseMateTutor",
             {
-                "history": self.history[-HISTORY_WINDOW_TURNS:],
+                # Only the ACTIVE conversation's turns. A student resuming one
+                # chat must not see another's answers interleaved into it.
+                "history": self._turns_in(self._active_id())[-HISTORY_WINDOW_TURNS:],
+                "conversations": self._conversation_list(),
+                "active_conversation": self._active_id(),
+                # The practice run, so a reload does not destroy it (E2).
+                "practice": list(self.practice)[-PRACTICE_WINDOW:],
                 "mode": self.mode,
                 "enabled": self.enabled,
                 "exam_prep_enabled": self.exam_prep_enabled,
@@ -384,12 +507,13 @@ class CourseMateTutorXBlock(XBlock):
         if not question or not answer:
             return {"saved": False}
 
-        self.history = [
-            *self.history,
-            {"role": "student", "content": question},
+        active = self._active_id()
+        new_turns = [
+            {"role": "student", "content": question, "conversation_id": active},
             {
                 "role": "tutor",
                 "content": answer,
+                "conversation_id": active,
                 # Citations are stored WITH the turn. Without this the live answer
                 # is cited and the reloaded one is not — which quietly breaks the
                 # product's central claim for any student who refreshes.
@@ -401,12 +525,138 @@ class CourseMateTutorXBlock(XBlock):
                 # before 2026-08-12; the renderer treats missing as none.
                 "unsupported": clean_unsupported((data or {}).get("unsupported")),
             },
-        ][-(HISTORY_WINDOW_TURNS * 2):]
-        return {"saved": True, "turns": len(self.history)}
+        ]
+
+        # **Trimmed per conversation, not across the list.** The window is "the
+        # last 10 turns of THIS chat"; trimming the flat list would let a busy
+        # conversation evict another one's turns, so resuming an older chat would
+        # find it silently shortened by activity that had nothing to do with it.
+        others = [t for t in self.history if self._conversation_of(t) != active]
+        mine = (self._turns_in(active) + new_turns)[-(HISTORY_WINDOW_TURNS * 2):]
+        self.history = [*others, *mine]
+        return {"saved": True, "turns": len(mine)}
 
     @XBlock.json_handler
     def clear_history(self, data, suffix=""):
-        self.history = []
+        """Clear the ACTIVE conversation only.
+
+        Two things it deliberately does not touch. Other conversations, because
+        "New chat" names the one in front of you and a control that silently
+        emptied the rest would be unrecoverable. And mastery, which lives in a
+        different table on a different lifetime — a student who wants a clean
+        page has not un-practised anything, and wiping their recorded attempts
+        would be a loss they never asked for.
+        """
+        active = self._active_id()
+        kept = [t for t in self.history if self._conversation_of(t) != active]
+        cleared = len(self.history) - len(kept)
+        self.history = kept
+        return {"cleared": True, "turns_removed": cleared,
+                "conversation_id": active}
+
+    @XBlock.json_handler
+    def new_conversation(self, data, suffix=""):
+        """Start a fresh conversation and make it active.
+
+        The previous one is kept, not cleared — that is the whole difference
+        between E3 and the E1 button, and the reason both exist.
+        """
+        import time
+        import uuid
+
+        new_id = uuid.uuid4().hex[:16]
+        entry = {"id": new_id, "title": "New chat",
+                 "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+
+        stored = [c for c in self.conversations if isinstance(c, dict) and c.get("id")]
+        # Include the synthesised legacy row so the student's existing turns
+        # survive as an openable conversation once a second one exists.
+        if self._turns_in(LEGACY_CONVERSATION) and not any(
+            str(c.get("id")) == LEGACY_CONVERSATION for c in stored
+        ):
+            stored.insert(0, {"id": LEGACY_CONVERSATION,
+                              "title": "Earlier conversation", "created_at": ""})
+
+        # **The legacy conversation is pinned and evicted last.** It is the
+        # oldest entry, so a plain tail-slice would drop it first — and it is the
+        # one conversation whose turns predate E3 entirely and cannot be
+        # recreated. A student prolific enough to open MAX_CONVERSATIONS chats
+        # would have silently lost everything they wrote before this feature
+        # existed. Every other conversation still ages out oldest-first.
+        legacy = [c for c in stored if str(c["id"]) == LEGACY_CONVERSATION]
+        rest = [c for c in stored if str(c["id"]) != LEGACY_CONVERSATION]
+        room = MAX_CONVERSATIONS - len(legacy) - 1     # -1 for the new entry
+        tail = rest[-room:] if room > 0 else []
+        kept = [*legacy, *tail, entry]
+        dropped = {str(c["id"]) for c in stored} - {str(c["id"]) for c in kept}
+        if dropped:
+            # Their turns go with them; leaving orphaned turns behind would grow
+            # `history` forever with entries nothing can open.
+            self.history = [t for t in self.history
+                            if self._conversation_of(t) not in dropped]
+
+        self.conversations = kept
+        self.active_conversation = new_id
+        return {"conversation_id": new_id,
+                "conversations": self._conversation_list()}
+
+    @XBlock.json_handler
+    def switch_conversation(self, data, suffix=""):
+        """Resume a conversation and return its turns."""
+        wanted = str((data or {}).get("conversation_id", "")).strip()
+        known = {c["id"] for c in self._conversations()}
+        if wanted not in known:
+            # Refused rather than silently creating one: a client asking for a
+            # conversation that does not exist has a bug, and inventing an empty
+            # chat would hide it behind what looks like a working switch.
+            return {"error": "no such conversation"}
+
+        self.active_conversation = wanted
+        return {
+            "conversation_id": wanted,
+            "history": self._turns_in(wanted)[-HISTORY_WINDOW_TURNS:],
+            "conversations": self._conversation_list(),
+        }
+
+    @XBlock.json_handler
+    def persist_practice(self, data, suffix=""):
+        """Store one generated practice card so a reload does not destroy it.
+
+        **`attempt_id` is carried, not regenerated.** One generated card is one
+        attempt; minting a fresh id on restore would let a student answer the
+        same card twice and have both counted, which is exactly what the
+        per-card id exists to prevent.
+        """
+        payload = data or {}
+        text = str(payload.get("text") or "").strip()
+        attempt_id = str(payload.get("attempt_id") or "").strip()
+        if not text or not attempt_id:
+            return {"saved": False}
+
+        card = {
+            "attempt_id": attempt_id,
+            "question_id": str(payload.get("question_id") or ""),
+            "clo_id": str(payload.get("clo_id") or ""),
+            "difficulty_band": str(payload.get("difficulty_band") or ""),
+            "text": text,
+            "citations": clean_citations(payload.get("citations")),
+            # Whether this card has already been marked. Restored disabled, so a
+            # reload cannot turn one attempt into two.
+            "answered": bool(payload.get("answered")),
+        }
+
+        # Replace in place when the same card is persisted again — the answer
+        # step re-sends it with `answered` set, and appending would show the
+        # student the same question twice.
+        rest = [c for c in self.practice
+                if isinstance(c, dict) and c.get("attempt_id") != attempt_id]
+        self.practice = [*rest, card][-PRACTICE_WINDOW:]
+        return {"saved": True, "cards": len(self.practice)}
+
+    @XBlock.json_handler
+    def clear_practice(self, data, suffix=""):
+        """Empty the practice run. Mastery is untouched — see `clear_history`."""
+        self.practice = []
         return {"cleared": True}
 
     @XBlock.json_handler
@@ -449,6 +699,18 @@ class CourseMateTutorXBlock(XBlock):
         if band not in ("", "easy", "medium", "hard"):
             return {"error": "difficulty_band must be easy, medium or hard"}
 
+        # **`evaluated` is refused, not merely unused.** Nothing in this
+        # deployment can evaluate an answer — there is no answer key — so a
+        # payload claiming an attempt was graded is either a mistake or a
+        # browser trying to dress a self-report up as one. Accepting the word
+        # because the column can hold it would put an unearned claim in durable
+        # student data, which is the exact confusion `source` exists to end.
+        # This refusal is what an evaluator would lift, deliberately, when one
+        # exists and its accuracy has been measured (§9.0).
+        source = str(payload.get("source") or "self_reported").strip().lower()
+        if source != "self_reported":
+            return {"error": "source must be self_reported; nothing here evaluates answers"}
+
         from coursemate_contracts.mastery import idempotency_key
 
         from ..models import StudentMastery
@@ -472,6 +734,7 @@ class CourseMateTutorXBlock(XBlock):
             clo_id=clo_id,
             difficulty_band=band,
             correct=bool(payload.get("correct")),
+            source=source,
         )
 
     @XBlock.json_handler

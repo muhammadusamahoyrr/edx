@@ -144,7 +144,8 @@ def test_the_student_id_comes_from_the_session_not_the_payload(django_db):
 
     assert StudentMastery.snapshot("99", OFFERING) == []
     assert StudentMastery.snapshot("42", OFFERING) == [
-        {"clo_id": "CLO-1", "difficulty_band": None, "attempts": 1, "correct": 1}
+        {"clo_id": "CLO-1", "difficulty_band": None, "source": "self_reported",
+         "attempts": 1, "correct": 1}
     ]
 
 
@@ -156,8 +157,10 @@ def test_a_double_clicked_submit_counts_once(django_db):
     first = _record(_Stub(), **args)
     second = _record(_Stub(), **args)
 
-    assert first == {"applied": True, "attempts": 1, "correct": 1}
-    assert second == {"applied": False, "attempts": 1, "correct": 1}
+    assert first == {"applied": True, "attempts": 1, "correct": 1,
+                     "source": "self_reported"}
+    assert second == {"applied": False, "attempts": 1, "correct": 1,
+                      "source": "self_reported"}
 
 
 def test_a_separator_in_an_identifier_is_refused(django_db):
@@ -171,3 +174,36 @@ def test_the_tab_is_off_by_default():
     """An instructor who wants the tutor in every unit does not necessarily want
     a revision planner in every unit."""
     assert CourseMateTutorXBlock.exam_prep_enabled.default is False
+
+
+# --- C2: the handler will not accept a claim it cannot back ----------------
+
+
+def test_an_attempt_records_as_self_reported_by_default(django_db):
+    out = _record(_Stub(), clo_id="CLO-1", question_id="Q1", attempt_id="a1", correct=True)
+    assert out.get("source") == "self_reported", out
+
+
+def test_a_payload_claiming_evaluation_is_refused(django_db):
+    """Nothing in this deployment can evaluate an answer — there is no answer
+    key. Accepting the word because the column can hold it would put an unearned
+    claim into durable student data, which is the confusion `source` exists to
+    end."""
+    out = _record(_Stub(), clo_id="CLO-1", question_id="Q1", attempt_id="a1",
+                  correct=True, source="evaluated")
+    assert "error" in out, out
+    assert "nothing here evaluates answers" in out["error"]
+
+
+def test_a_refused_source_writes_nothing(django_db):
+    from coursemate_platform.models import StudentMastery
+
+    _record(_Stub(), clo_id="CLO-1", question_id="Q1", attempt_id="a1",
+            correct=True, source="evaluated")
+    assert StudentMastery.snapshot("7", OFFERING) == []
+
+
+def test_an_explicit_self_reported_source_is_accepted(django_db):
+    out = _record(_Stub(), clo_id="CLO-1", question_id="Q1", attempt_id="a1",
+                  correct=True, source="self_reported")
+    assert out.get("applied") is True, out

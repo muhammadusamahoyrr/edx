@@ -56,6 +56,13 @@ CREATE TABLE IF NOT EXISTS exam_questions (
     confidence      REAL,
     extraction_method TEXT,
     low_confidence_flag INTEGER NOT NULL DEFAULT 0,
+    -- The examiner's own model answer, where the source document prints one.
+    -- Deliberately NOT in exam_questions_fts: the FTS index backs question
+    -- search, and an answer matching a query would surface a question for words
+    -- the student never sees in it.
+    reference_answer TEXT,
+    reference_answer_source_doc_id TEXT,
+    reference_answer_page INTEGER,
     UNIQUE (tenant, offering_id, question_id)
 );
 CREATE INDEX IF NOT EXISTS ix_eq_scope ON exam_questions(tenant, offering_id);
@@ -103,6 +110,7 @@ _COLUMNS = (
     "exam_type", "marks", "difficulty", "difficulty_is_derived", "topic",
     "clo_id", "clo_confidence", "confidence", "extraction_method",
     "low_confidence_flag",
+    "reference_answer", "reference_answer_source_doc_id", "reference_answer_page",
 )
 
 #: Columns added after the table first shipped. `CREATE TABLE IF NOT EXISTS` is
@@ -111,7 +119,12 @@ _COLUMNS = (
 #: the next load, not at startup. Additive only: this store is a derived cache
 #: rebuilt by re-loading the pack, so it needs a migration ladder far less than
 #: it needs never to lose a column.
-_ADDED_COLUMNS = (("clo_confidence", "REAL"),)
+_ADDED_COLUMNS = (
+    ("clo_confidence", "REAL"),
+    ("reference_answer", "TEXT"),
+    ("reference_answer_source_doc_id", "TEXT"),
+    ("reference_answer_page", "INTEGER"),
+)
 
 
 class ExamPrepStore:

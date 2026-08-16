@@ -44,6 +44,7 @@ from coursemate_contracts.examprep import (
     ExamPrepPack,
     ExtractionMethod,
     QuestionRecord,
+    derive_difficulty,
 )
 
 #: A line that starts a new question. Covers "1.", "Q3.", "12)" and the
@@ -121,11 +122,42 @@ def extract_questions(pages: list[str]) -> list[dict]:
     return found
 
 
+#: A line that hands over from the question to the examiner's own answer.
+#:
+#: Anchored at the start of a line and requiring the separator, so "Answer ALL
+#: questions" — the rubric line on the front of every paper — cannot match, and
+#: neither can the word "answer" occurring mid-sentence inside a question.
+#: Deliberately narrow: a false positive here silently truncates the QUESTION
+#: and presents the tail of it to students as the model answer.
+_ANSWER_START = re.compile(
+    r"^\s*(?:model\s+answer|marking\s+scheme|mark\s+scheme|answer|solution)\s*[:\-—]\s*",
+    re.IGNORECASE,
+)
+
+
+def split_reference_answer(lines: list[str]) -> tuple[list[str], list[str]]:
+    """Separate a question's own lines from the examiner's answer, if printed.
+
+    Returns `(question_lines, answer_lines)`; the second is empty when the paper
+    prints no answer, which is the common case and the only honest default. This
+    NEVER writes an answer we composed — it only relocates text the examiner
+    already published.
+    """
+    for i, line in enumerate(lines):
+        if _ANSWER_START.match(line or ""):
+            head = _ANSWER_START.sub("", line or "", count=1).strip()
+            tail = [head] if head else []
+            return lines[:i], tail + list(lines[i + 1:])
+    return lines, []
+
+
 def to_record(
     q: dict, *, offering_id: str, tenant: str, source_doc_id: str,
     year: int | None, exam_type: str | None,
 ) -> QuestionRecord:
-    text = " ".join(part for part in q["lines"] if part).strip()
+    question_lines, answer_lines = split_reference_answer(list(q["lines"]))
+    reference_answer = " ".join(p for p in answer_lines if p).strip() or None
+    text = " ".join(part for part in question_lines if part).strip()
 
     # Whether the sentence looked complete is judged BEFORE the marks annotation
     # is removed. Judging it after meant stripping "[10 marks]" also stripped the
@@ -167,14 +199,26 @@ def to_record(
         year=year,
         exam_type=exam_type,
         marks=marks,
-        # difficulty stays None. §7.6 derives it from marks + command verb + a
-        # model estimate; guessing here would put an underived number in a field
-        # whose whole contract is that it is labelled derived.
-        difficulty=None,
+        # §7.6's derivation: marks + command verb, computed by
+        # `derive_difficulty` in contracts so the bands and the thing that feeds
+        # them stay in one file. `None` when the question shows neither signal —
+        # an unknown difficulty is unknown, never "easy".
+        #
+        # `difficulty_is_derived` stays True (the model default): the paper did
+        # not print this number, we inferred it, and §7.6 requires it be labelled
+        # that way wherever it appears.
+        difficulty=derive_difficulty(text, marks),
         clo_id=None,               # filled by the offline tagger, never here
         confidence=confidence,
         extraction_method=ExtractionMethod.DIGITAL,
         low_confidence_flag=confidence < 0.8,
+        # Only ever the examiner's own words, and `None` when the paper printed
+        # none — which is most papers, and this one. Provenance points at the
+        # document the answer was actually read from; inline answers share the
+        # question's page, and a separate marking scheme would carry its own.
+        reference_answer=reference_answer,
+        reference_answer_source_doc_id=source_doc_id if reference_answer else None,
+        reference_answer_page=q["page"] if reference_answer else None,
     )
 
 

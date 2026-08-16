@@ -79,6 +79,43 @@ class QuestionRecord(BaseModel):
     #: was weak.
     low_confidence_flag: bool = False
 
+    # --- the reference answer, and why it is fenced off ----------------------
+    #
+    # **Quoted from the paper, never written by us.** This is the examiner's own
+    # model answer or marking scheme where the source document prints one. It is
+    # `None` — and stays `None` — whenever the paper does not, because an
+    # invented "reference" answer is worse than none: a student would read it
+    # with the authority of the examiner behind it.
+    #
+    # **It must never reach generation.** `_messages` builds its prompt from
+    # `source.text` and `source.marks` by name, and `_supporting` scores the
+    # GENERATED question against retrieved lesson chunks. Neither touches this
+    # field, and neither may start to: feeding a model answer into the prompt
+    # would let the generator write a question shaped around the answer it was
+    # shown, and feeding it into the overlap scorer would corrupt the measured
+    # 0.90 citation rule with text that is not lesson material at all.
+
+    #: The examiner's model answer, verbatim. Never paraphrased, never generated.
+    reference_answer: str | None = None
+    #: Where that answer came from, tracked SEPARATELY from `source_doc_id`
+    #: because a marking scheme is frequently a different document from the
+    #: paper. Collapsing them would cite the question paper for text that is not
+    #: in it — §11.2b wants a citation a rater can actually check.
+    reference_answer_source_doc_id: str | None = None
+    #: Page within that document, for the same reason `page` exists on the
+    #: question: provenance a reader can turn to.
+    reference_answer_page: int | None = None
+
+    @property
+    def has_reference_answer(self) -> bool:
+        """Whether there is an answer to reveal.
+
+        A field, not a UI guess: the client must not offer "Reveal reference
+        answer" on a question that has none, and an empty string is as absent as
+        a null.
+        """
+        return bool(self.reference_answer and self.reference_answer.strip())
+
 
 #: Difficulty bands, as upper bounds on the 0..1 `difficulty` scale.
 #:
@@ -106,6 +143,82 @@ def band_of(difficulty: float | None) -> str | None:
         if difficulty < upper:
             return name
     return _BANDS[-1][1]
+
+
+#: Command verb -> cognitive demand, on the same 0..1 scale as `difficulty`.
+#:
+#: Exam questions lead with their command word, and that word is the clearest
+#: signal of what is being asked for: "state" wants recall, "critically evaluate"
+#: wants judgement. Three levels rather than a fine gradation, because the
+#: consumer is a three-way band and precision beyond that would be invented.
+#:
+#: Longest match wins, so "critically evaluate" is not read as bare "evaluate".
+_VERB_DEMAND: tuple[tuple[str, float], ...] = (
+    ("critically evaluate", 0.9), ("critically discuss", 0.9),
+    ("evaluate", 0.85), ("analyse", 0.85), ("analyze", 0.85), ("justify", 0.85),
+    ("assess", 0.85), ("argue", 0.85), ("critique", 0.85), ("derive", 0.85),
+    ("prove", 0.85), ("design", 0.85), ("discuss", 0.8), ("compare", 0.7),
+    ("contrast", 0.7), ("distinguish", 0.7), ("explain", 0.5), ("describe", 0.5),
+    ("outline", 0.45), ("summarise", 0.45), ("summarize", 0.45),
+    ("illustrate", 0.45), ("calculate", 0.5), ("show", 0.5), ("apply", 0.5),
+    ("identify", 0.2), ("define", 0.15), ("state", 0.15), ("list", 0.15),
+    ("name", 0.15), ("give", 0.15), ("write down", 0.15), ("what is", 0.15),
+)
+
+
+def _verb_demand(text: str) -> float | None:
+    """Cognitive demand from the question's command verb, or None if unknown."""
+    head = " ".join(str(text or "").split())[:80].lower()
+    for verb, weight in _VERB_DEMAND:
+        if head.startswith(verb):
+            return weight
+    for verb, weight in _VERB_DEMAND:          # verb after "Q1." or "(a)"
+        if f" {verb} " in f" {head} ":
+            return weight
+    return None
+
+
+def _marks_demand(marks: int | None) -> float | None:
+    """Demand implied by what the paper is willing to pay for the answer."""
+    if marks is None:
+        return None
+    if marks <= 2:
+        return 0.15
+    if marks <= 5:
+        return 0.4
+    if marks <= 9:
+        return 0.6
+    if marks <= 15:
+        return 0.8
+    return 0.9
+
+
+def derive_difficulty(text: str, marks: int | None) -> float | None:
+    """§7.6's derivation: marks + command verb. **Never a stored claim.**
+
+    Returns a value on the same 0..1 scale `band_of` reads, or `None` when
+    neither signal is present. `None` is the honest answer there, and the same
+    one `band_of` and `CLOMastery.accuracy` give for an unknown: defaulting it
+    would file every unreadable question into a band it was never assessed for.
+
+    Whatever consumes this must keep `difficulty_is_derived` true. §7.6 requires
+    a derived difficulty be labelled as derived wherever it appears, because the
+    paper did not print it — we inferred it.
+
+    Two signals rather than one, because each is wrong alone. Marks alone calls a
+    15-mark "describe" as hard as a 15-mark "critically evaluate". A verb alone
+    calls a 2-mark "explain" the same as a 12-mark one. Averaged when both are
+    present; the surviving one is used when only one is.
+    """
+    verb = _verb_demand(text)
+    by_marks = _marks_demand(marks)
+    if verb is None and by_marks is None:
+        return None
+    if verb is None:
+        return round(by_marks, 3)
+    if by_marks is None:
+        return round(verb, 3)
+    return round((verb + by_marks) / 2, 3)
 
 
 def band_range(band: str) -> tuple[float, float]:
@@ -385,3 +498,77 @@ class ExamPrepStatus(BaseModel):
     #: calls this before enabling anything, and an extra round trip to fill a
     #: dropdown is a round trip the student waits through.
     clo_options: list[CLOOption] = Field(default_factory=list)
+
+
+# --- F2: comparing a student's answer to the examiner's ---------------------
+#
+# **This is not grading, and the vocabulary is chosen so it cannot be mistaken
+# for grading.** There is no verdict here that says "correct". The output says
+# which points from the EXAMINER'S OWN published answer the student's words
+# addressed, and which they did not — a comparison against a quoted document,
+# not a judgement this system is entitled to make.
+#
+# The distinction is load-bearing rather than pedantic. §11.2 settles that on the
+# personal path "measurement *is* the control — there is no human backstop", and
+# the accuracy of an answer-grader here has never been measured: there is no
+# grading dataset, no grading rubric, and the live bank carries zero reference
+# answers. A field called `correct` would therefore be an unmeasured claim
+# wearing the authority of a grade, which is exactly what `MasterySource` was
+# introduced to stop.
+
+
+class CoverageVerdict(StrEnum):
+    """How much of the reference answer the student's words touched.
+
+    Deliberately about COVERAGE, not correctness. An answer can cover every
+    point the examiner listed and still be wrong in a way no comparison of this
+    kind detects, and it can be right in words the reference never used.
+    """
+
+    #: Addressed the points the reference answer makes.
+    COVERED = "covered"
+    #: Addressed some of them.
+    PARTIAL = "partial"
+    #: Addressed few or none of them.
+    NOT_COVERED = "not_covered"
+
+
+class AnswerEvaluationRequest(BaseModel):
+    """Browser -> service. **Carries the student's own prose.**
+
+    Until F2 this text never left the page, and that was stated in the UI. Any
+    surface accepting this must say so, because the change is one a student
+    would care about and cannot see.
+    """
+
+    question_id: str
+    #: Bounded for the same reason `ChatRequest.history` is: an unbounded payload
+    #: is a denial-of-service the student pays for.
+    answer: str = Field(min_length=1, max_length=4000)
+
+
+class AnswerEvaluation(BaseModel):
+    """What the comparison found. **Never a grade, and never mastery input.**"""
+
+    question_id: str
+    verdict: CoverageVerdict
+    #: Points from the reference answer the student's words addressed.
+    covered: list[str] = Field(default_factory=list, max_length=20)
+    #: Points they did not. The useful half — this is what to revise.
+    missing: list[str] = Field(default_factory=list, max_length=20)
+    #: Prose for the student, in the service's own words.
+    feedback: str = ""
+
+    #: Where the reference answer came from, carried SEPARATELY from the
+    #: question's own citation for the reason F1 gives: a marking scheme is
+    #: frequently a different document, and citing the paper for text that is not
+    #: in it points a student at a page that will not help them.
+    reference_source_doc_id: str | None = None
+    reference_page: int | None = None
+
+    #: **Always False in this release**, and present so no caller has to infer
+    #: it. Nothing here has been measured against a grading dataset, so nothing
+    #: here may be recorded as an assessed result (§11.2). `record_attempt`
+    #: refuses `source="evaluated"` independently; this field is the same
+    #: statement travelling with the payload.
+    counts_toward_mastery: bool = False

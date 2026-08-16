@@ -17,12 +17,28 @@ function CourseMateTutor(runtime, element, initArgs) {
   var input = root.querySelector(".cm-input");
   var sendButton = root.querySelector(".cm-send");
 
+  var newChatButton = root.querySelector(".cm-new-chat");
+  var deleteChatButton = root.querySelector(".cm-delete-chat");
+  var conversationPicker = root.querySelector(".cm-conversations");
+  var clearPracticeButton = root.querySelector(".cm-clear-practice");
+
   var mintUrl = runtime.handlerUrl(element, "mint");
   var persistUrl = runtime.handlerUrl(element, "persist_turn");
   var recordUrl = runtime.handlerUrl(element, "record_attempt");
+  var clearUrl = runtime.handlerUrl(element, "clear_history");
+  var newConversationUrl = runtime.handlerUrl(element, "new_conversation");
+  var switchConversationUrl = runtime.handlerUrl(element, "switch_conversation");
+  var persistPracticeUrl = runtime.handlerUrl(element, "persist_practice");
+  var clearPracticeUrl = runtime.handlerUrl(element, "clear_practice");
 
   var history = (initArgs && initArgs.history) || [];
   var mode = (initArgs && initArgs.mode) || "direct";
+  /* E3. `|| []` and `|| ""` throughout: a page rendered by the previous build
+   * sends neither key, and must keep working rather than throwing on load. */
+  var conversations = (initArgs && initArgs.conversations) || [];
+  var activeConversation = (initArgs && initArgs.active_conversation) || "";
+  /* E2. The practice run as the server last saw it. */
+  var savedPractice = (initArgs && initArgs.practice) || [];
 
   // Three states that must never be rendered as one generic error, because the
   // difference between "looks broken" and "tells you what is happening" is the
@@ -73,6 +89,23 @@ function CourseMateTutor(runtime, element, initArgs) {
   var PREP_NOTICES = {
     abstained: "There isn't enough in this course's material to plan that reliably.",
     preparing: "Past papers for this course haven't been loaded yet."
+  };
+
+  /* Practice needs its own version again. `PREP_NOTICES.abstained` is about the
+   * PLANNER running short of material; the practice generator abstains for a
+   * different and much more specific reason — it models every question on a real
+   * past-paper one, so an outcome with none tagged to it can never produce
+   * anything. Silence there reads as a broken button.
+   *
+   * Hedged on purpose. The service sends `abstained` for two distinct causes —
+   * no source question, and two failed generation attempts — and the frame
+   * cannot tell them apart. Naming the mechanism is true in both cases; naming
+   * the cause outright would be wrong in the second. A distinct error code would
+   * let this be exact, and that is a contract change, not a wording one. */
+  var PRACTICE_NOTICES = {
+    abstained: "No practice question could be built for this outcome. Every practice "
+             + "question is modelled on a real past-paper question — most often this "
+             + "means none is tagged to this outcome yet."
   };
 
   function el(tag, cls, text) {
@@ -394,6 +427,150 @@ function CourseMateTutor(runtime, element, initArgs) {
       log.appendChild(node);
     });
     log.scrollTop = log.scrollHeight;
+    /* Owned here rather than at each call site: this function already runs at
+     * every moment `history.length` can change — on init, after a question is
+     * pushed, and after a clear. */
+    if (newChatButton) { newChatButton.hidden = history.length === 0; }
+    /* Same rule, same reason: nothing to delete on an empty conversation. */
+    if (deleteChatButton) { deleteChatButton.hidden = history.length === 0; }
+  }
+
+  /* E3. One entry per conversation, newest last, the active one selected.
+   * Hidden below two, because a picker with a single option is a control that
+   * cannot do anything. */
+  function renderConversations() {
+    if (!conversationPicker) { return; }
+    clearNode(conversationPicker);
+    conversations.forEach(function (c) {
+      var opt = el("option", "", c.title + (c.turns ? " (" + c.turns + ")" : ""));
+      opt.value = c.id;
+      if (c.id === activeConversation) { opt.selected = true; }
+      conversationPicker.appendChild(opt);
+    });
+    conversationPicker.value = activeConversation;
+    conversationPicker.hidden = conversations.length < 2;
+  }
+
+  /* Starts a fresh conversation, KEEPING the previous one.
+   *
+   * The handler existed from the beginning and nothing ever called it. E1 wired
+   * this button to `clear_history`, which destroyed the turns; with E3 the older
+   * conversation stays and becomes resumable from the picker, so nothing is
+   * lost. `clear_history` remains for deleting one deliberately, and is scoped
+   * to the active conversation.
+   *
+   * Chat only, in every version of this. Mastery is a different lifetime in a
+   * different table — a student starting a new chat has not un-practised
+   * anything, and wiping their recorded attempts would be a loss they never
+   * asked for. */
+  if (newChatButton) {
+    newChatButton.addEventListener("click", function () {
+      newChatButton.disabled = true;
+      fetch(newConversationUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: platformHeaders(),
+        body: JSON.stringify({})
+      }).then(function (r) {
+        return r.ok ? r.json() : {};
+      }).then(function (result) {
+        /* Only switch once the platform confirms. Clearing the page while the
+         * server still held the old conversation would show an empty chat that
+         * the next reload undid. */
+        if (result && result.conversation_id) {
+          activeConversation = result.conversation_id;
+          conversations = result.conversations || conversations;
+          history.length = 0;
+          clearNotice();
+          renderHistory();
+          renderConversations();
+        }
+        newChatButton.disabled = false;
+      }).catch(function () {
+        newChatButton.disabled = false;
+      });
+    });
+  }
+
+  /* Delete the conversation in front of you.
+   *
+   * This is what `clear_history` is for, and wiring it is not optional: the
+   * handler existed unreachable from the block's creation until E1, E3 moved the
+   * New Chat button off it, and it went dead again in the same file for the same
+   * reason. A handler nothing can call is a feature that does not exist.
+   *
+   * The ACTIVE conversation only, and never mastery — both asserted server-side
+   * and pinned by tests, because "delete" is the one word here a student cannot
+   * undo. */
+  if (deleteChatButton) {
+    deleteChatButton.addEventListener("click", function () {
+      deleteChatButton.disabled = true;
+      fetch(clearUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: platformHeaders(),
+        body: JSON.stringify({})
+      }).then(function (r) {
+        return r.ok ? r.json() : { cleared: false };
+      }).then(function (result) {
+        /* Only drop the local copy once the platform confirms its own is gone.
+         * Clearing optimistically would show an empty page while the server
+         * still held the turns, and the next reload would bring them back. */
+        if (result && result.cleared) {
+          history.length = 0;
+          clearNotice();
+          renderHistory();
+        }
+        deleteChatButton.disabled = false;
+      }).catch(function () {
+        deleteChatButton.disabled = false;
+      });
+    });
+  }
+
+  /* Resume a conversation. The server returns its turns, so the client never
+   * has to hold every conversation in memory to switch between them. */
+  if (conversationPicker) {
+    conversationPicker.addEventListener("change", function () {
+      var wanted = conversationPicker.value;
+      /* Compared against null/undefined, NOT falsiness. The legacy conversation
+       * — every turn written before E3 — has the id `""`, so `!wanted` would
+       * treat selecting it as "nothing selected" and a student could never get
+       * back to the history they already had. */
+      if (wanted === null || wanted === undefined || wanted === activeConversation) {
+        return;
+      }
+      conversationPicker.disabled = true;
+      fetch(switchConversationUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: platformHeaders(),
+        body: JSON.stringify({ conversation_id: wanted })
+      }).then(function (r) {
+        return r.ok ? r.json() : {};
+      }).then(function (result) {
+        /* Presence, not truthiness — the legacy conversation's id is `""`, so a
+         * truthy check would silently refuse to switch to the one conversation
+         * every existing student already has. */
+        if (result && typeof result.conversation_id === "string") {
+          activeConversation = result.conversation_id;
+          conversations = result.conversations || conversations;
+          history.length = 0;
+          (result.history || []).forEach(function (t) { history.push(t); });
+          clearNotice();
+          renderHistory();
+          renderConversations();
+        } else {
+          /* Put the control back where it was rather than leaving it showing a
+           * conversation that is not open. */
+          renderConversations();
+        }
+        conversationPicker.disabled = false;
+      }).catch(function () {
+        renderConversations();
+        conversationPicker.disabled = false;
+      });
+    });
   }
 
   /* The model needs role and content; it has no use for citations, and Turn in
@@ -679,6 +856,7 @@ function CourseMateTutor(runtime, element, initArgs) {
   });
 
   renderHistory();
+  renderConversations();
 
   /* ------------------------------------------------------------------ *
    * Exam prep (Feature B). Present only when the instructor enabled the
@@ -711,6 +889,27 @@ function CourseMateTutor(runtime, element, initArgs) {
     if (!slot) { return prepLog; }
     clearNode(slot);
     return slot;
+  }
+
+  /* The practice slot is a RUN, not a single value, so it appends where
+   * `slotTarget` replaces. The empty state is the one thing that must go, and
+   * only once: it is a placeholder for "no question yet", not a card.
+   *
+   * Deliberately NOT applied to the plan slots. A plan is a value — asking for
+   * a second one means the first is superseded — and two plans on screen was a
+   * real defect this file already fixed once. */
+  function practiceTarget() {
+    if (!practiceSlot) { return prepLog; }
+    if (practiceSlot.querySelector(".cm-empty")) { clearNode(practiceSlot); }
+    return practiceSlot;
+  }
+
+  /* Offered only while there is a run to end. Called wherever the number of
+   * cards can change — after a generation, after a restore, after a clear. */
+  function syncPracticeTools() {
+    if (!clearPracticeButton) { return; }
+    var has = !!(practiceSlot && practiceSlot.querySelector(".cm-practice-card"));
+    clearPracticeButton.hidden = !has;
   }
 
   function emptyState(slot, icon, title, text, extra) {
@@ -776,8 +975,10 @@ function CourseMateTutor(runtime, element, initArgs) {
     });
   });
 
-  function showPrepNotice(code) {
-    prepNotice.textContent = PREP_NOTICES[code] || NOTICES[code] || "Something went wrong.";
+  function showPrepNotice(code, context) {
+    var specific = context === "practice" ? PRACTICE_NOTICES[code] : null;
+    prepNotice.textContent =
+      specific || PREP_NOTICES[code] || NOTICES[code] || "Something went wrong.";
     prepNotice.className = "cm-prep-notice " + code;
     prepNotice.hidden = false;
   }
@@ -896,6 +1097,50 @@ function CourseMateTutor(runtime, element, initArgs) {
       warn.appendChild(el("em", "", "Extraction confidence was low — check the original."));
       item.appendChild(warn);
     }
+
+    /* The examiner's own answer, where the paper printed one.
+     *
+     * **Behind a deliberate action, and absent entirely when there is nothing
+     * to reveal.** A control that opens to an empty panel teaches a student the
+     * feature is broken; showing the answer unasked destroys the exercise the
+     * question exists for.
+     *
+     * Cited SEPARATELY from the question. A marking scheme is frequently a
+     * different document from the paper, and reusing the question's citation
+     * would point a student at a page that does not contain this text. */
+    if (q.reference_answer) {
+      var ra = el("div", "cm-refanswer");
+      var toggle = el("button", "cm-refanswer-toggle cm-btn cm-btn-ghost",
+                      "Reveal reference answer");
+      toggle.setAttribute("type", "button");
+      toggle.setAttribute("aria-expanded", "false");
+
+      var body = el("div", "cm-refanswer-body");
+      body.hidden = true;
+      /* textContent throughout — this is examiner prose lifted out of a PDF and
+       * is semi-trusted under §10.6, exactly like the question text above. */
+      body.appendChild(el("div", "cm-refanswer-text", q.reference_answer));
+
+      var from = q.reference_answer_source_doc_id;
+      if (from) {
+        var cite = el("div", "cm-answer-subline");
+        cite.appendChild(el("em", "", "Reference answer from: " + from
+          + (typeof q.reference_answer_page === "number"
+             ? ", p." + q.reference_answer_page : "")));
+        body.appendChild(cite);
+      }
+
+      toggle.addEventListener("click", function () {
+        body.hidden = !body.hidden;
+        toggle.setAttribute("aria-expanded", body.hidden ? "false" : "true");
+        toggle.textContent = body.hidden
+          ? "Reveal reference answer" : "Hide reference answer";
+      });
+
+      ra.appendChild(toggle);
+      ra.appendChild(body);
+      item.appendChild(ra);
+    }
     return item;
   }
 
@@ -914,8 +1159,11 @@ function CourseMateTutor(runtime, element, initArgs) {
       container.appendChild(el("h4", "cm-answer-h", o.clo_id + " — " + o.clo_text));
 
       var note = el("p", "cm-answer-note");
+      /* "self-marked", not "correct". These counters come from the student
+       * pressing "I got this"; nothing verified them, because no answer key
+       * exists anywhere in the system. See the self-assessment block below. */
       note.appendChild(el("em", "", "Your record: " + (
-        o.attempts ? o.correct + "/" + o.attempts + " correct" : "not practised yet"
+        o.attempts ? o.correct + "/" + o.attempts + " self-marked" : "not practised yet"
       )));
       container.appendChild(note);
 
@@ -1077,11 +1325,14 @@ function CourseMateTutor(runtime, element, initArgs) {
    * PDF text — semi-trusted under §10.6, so a question whose paper contained
    * markup must render as characters, not as elements. */
   /* The planner opens its rationale with the same mastery clause the badge now
-   * shows ("2/4 correct; 5 of 85 marks allocated (…)"). Printing both would say
-   * it twice, so the clause is lifted out for the badge and the remainder stays
-   * as the sentence. Anchored and narrow on purpose: a rationale that does not
-   * begin with this exact shape is left completely untouched. */
-  var MASTERY_CLAUSE = /^(?:not practised yet|\d+\/\d+ correct)\s*;\s*/;
+   * shows ("2/4 self-marked; 5 of 85 marks allocated (…)"). Printing both would
+   * say it twice, so the clause is lifted out for the badge and the remainder
+   * stays as the sentence. Anchored and narrow on purpose: a rationale that does
+   * not begin with this exact shape is left completely untouched.
+   *
+   * `correct` is still accepted so a plan rendered from a turn persisted before
+   * the wording changed still has its clause lifted rather than printed twice. */
+  var MASTERY_CLAUSE = /^(?:not practised yet|\d+\/\d+ (?:self-marked|correct))\s*;\s*/;
 
   function rationaleRemainder(text) {
     var rest = String(text).replace(MASTERY_CLAUSE, "");
@@ -1105,7 +1356,9 @@ function CourseMateTutor(runtime, element, initArgs) {
     if (!attempts) {
       return el("span", "cm-plan-mastery unpractised", "not practised yet");
     }
-    return el("span", "cm-plan-mastery practised", correct + "/" + attempts + " correct");
+    /* Self-marked, not correct: these came from the student's own "I got this",
+     * and no answer key exists to check them against. */
+    return el("span", "cm-plan-mastery practised", correct + "/" + attempts + " self-marked");
   }
 
   function planItemNode(item, index) {
@@ -1327,8 +1580,20 @@ function CourseMateTutor(runtime, element, initArgs) {
    * The written answer never leaves the page. There is nothing to compare it
    * against, so sending it would create a store of student prose with no
    * purpose, inside the retirement boundary, for no gain. */
-  function selfAssessment(card, cloId, questionId, band) {
-    var attempt = attemptId();
+  function selfAssessment(card, opts) {
+    var cloId = opts.cloId;
+    var questionId = opts.questionId;
+    var band = opts.band || "";
+    /* A restored card keeps the id it was generated with. Minting a fresh one
+     * would make the same card a second attempt, and both would be counted —
+     * which is precisely what one-id-per-card exists to prevent. */
+    var attempt = opts.attemptId || attemptId();
+    /* Everything needed to re-persist this card WITHOUT losing what is already
+     * stored. Re-sending an empty citation list on the answer step would wipe
+     * the provenance the card was generated with, because the server replaces
+     * a card rather than merging it. */
+    var cardText = opts.text || "";
+    var cardCitations = opts.citations || [];
     var wrap = el("div", "cm-selfcheck");
 
     var prompt = el("div", "cm-selfcheck-prompt",
@@ -1390,6 +1655,19 @@ function CourseMateTutor(runtime, element, initArgs) {
         status.textContent = correct
           ? "Recorded. Your plan will lean away from this outcome."
           : "Recorded. Your plan will give this outcome more time.";
+        /* E2: remember that this card is spent, so a reload restores it
+         * disabled. Without this a refresh would offer the buttons again and
+         * the second press would be discarded as a replay — the student would
+         * be told it saved, twice, and the counter would move once. */
+        persistPractice({
+          attempt_id: attempt,
+          question_id: questionId,
+          clo_id: cloId,
+          difficulty_band: band,
+          text: cardText,
+          citations: cardCitations,
+          answered: true
+        });
       }).catch(function () {
         /* Cleared alongside the buttons: nothing was written, so the next press
          * is a first attempt, not a duplicate. */
@@ -1409,6 +1687,106 @@ function CourseMateTutor(runtime, element, initArgs) {
     wrap.appendChild(buttons);
     wrap.appendChild(status);
     card.appendChild(wrap);
+
+    /* A card restored as already answered comes back spent. Offering the
+     * buttons again would let the student press one, be told it saved, and see
+     * nothing move — `record_attempt` discards the second write as a replay of
+     * the same `attempt_id`. Saying so plainly beats a control that lies. */
+    if (opts.answered) {
+      recorded = true;
+      got.disabled = true;
+      notYet.disabled = true;
+      status.textContent = "Already marked.";
+    }
+
+    /* The id the caller must persist, so a restored card is the SAME attempt. */
+    return attempt;
+  }
+
+  /* E2. Fire-and-forget, like `persist_turn`: a failed write costs the student
+   * this card on their next reload, and blocking the UI on it would cost them
+   * the card now. */
+  function persistPractice(card) {
+    return fetch(persistPracticeUrl, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: platformHeaders(),
+      body: JSON.stringify(card)
+    }).catch(function () { /* see above */ });
+  }
+
+  /* Ends the run. Practice ONLY — mastery lives in a different table on a
+   * different lifetime, and a student tidying their screen has not un-practised
+   * anything. `clear_practice` shipped in E2 with nothing calling it; this is
+   * the control that makes it real. */
+  if (clearPracticeButton) {
+    clearPracticeButton.addEventListener("click", function () {
+      clearPracticeButton.disabled = true;
+      fetch(clearPracticeUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: platformHeaders(),
+        body: JSON.stringify({})
+      }).then(function (r) {
+        return r.ok ? r.json() : { cleared: false };
+      }).then(function (result) {
+        /* Same rule as the chat: only drop what is on screen once the platform
+         * confirms its own copy is gone. */
+        if (result && result.cleared && practiceSlot) {
+          clearNode(practiceSlot);
+          if (practiceSend) { practiceSend.textContent = "Generate a question →"; }
+        }
+        clearPracticeButton.disabled = false;
+        syncPracticeTools();
+      }).catch(function () {
+        clearPracticeButton.disabled = false;
+      });
+    });
+  }
+
+  /* Rebuild the cards the server was holding, oldest first, so a reload lands
+   * the student back where they were. Built with the same helpers as a live
+   * card so the two cannot drift into looking different. */
+  function restorePractice() {
+    if (!savedPractice.length || !practiceSlot) { return; }
+    savedPractice.forEach(function (saved) {
+      if (!saved || !saved.text) { return; }
+      var card = el("div", "cm-practice-card", "");
+      card.appendChild(el("div", "cm-ai-badge", "AI-generated practice question"));
+      card.appendChild(el("div", "cm-practice-text", saved.text));
+
+      var prov = el("div", "cm-provenance", "");
+      var cites = saved.citations || [];
+      if (cites.length) {
+        prov.appendChild(el("span", "cm-sources-label", "Derived from"));
+        cites.forEach(function (c) {
+          var link = el("a", "cm-chip-link", c.display_name || c.usage_key);
+          link.href = safeHref(c.url);
+          prov.appendChild(link);
+        });
+      } else {
+        prov.textContent = "Source unavailable for this question.";
+      }
+      card.appendChild(prov);
+
+      if (saved.question_id) {
+        selfAssessment(card, {
+          cloId: saved.clo_id,
+          questionId: saved.question_id,
+          band: saved.difficulty_band,
+          attemptId: saved.attempt_id,
+          answered: !!saved.answered,
+          text: saved.text,
+          citations: cites
+        });
+      }
+      practiceTarget().appendChild(card);
+    });
+    /* The form should invite another question, not the first one. */
+    if (practiceSend && practiceSlot.querySelector(".cm-practice-card")) {
+      practiceSend.textContent = "Generate another →";
+    }
+    syncPracticeTools();
   }
 
   /* --- practice generation ------------------------------------------- *
@@ -1436,8 +1814,10 @@ function CourseMateTutor(runtime, element, initArgs) {
     card.appendChild(badge);
     var body = el("div", "cm-practice-text", "");
     card.appendChild(body);
-    /* Replaces the previous question rather than stacking beneath it. */
-    slotTarget(practiceSlot).appendChild(card);
+    /* Appended, so earlier questions and the student's self-assessment of them
+     * stay on screen. Each card owns its own answer, citations and attempt id;
+     * nothing here is shared between cards. */
+    practiceTarget().appendChild(card);
 
     /* **This surface deliberately did NOT get the chat's two 2026-08-14
      * changes** — the waiting indicator and `renderAnswer`. Scoped out, not
@@ -1497,10 +1877,10 @@ function CourseMateTutor(runtime, element, initArgs) {
                * leave an empty AI-generated badge on screen claiming a question
                * that was never written. */
               if (!answer) { discardCard(); }
-              showPrepNotice(frame.error_code || "unavailable");
+              showPrepNotice(frame.error_code || "unavailable", "practice");
               break;
             case "done":
-              if (frame.truncated) { showPrepNotice("truncated"); }
+              if (frame.truncated) { showPrepNotice("truncated", "practice"); }
               /* Provenance line. §9.0 permits this question to reach the student
                * ungated BECAUSE it is labelled and cited, so a question that
                * arrived with no citation says so rather than looking sourced. */
@@ -1523,7 +1903,25 @@ function CourseMateTutor(runtime, element, initArgs) {
                * offering it. An abstention leaves `answer` empty and never
                * reaches this branch. */
               if (frame.question_id && answer) {
-                selfAssessment(card, cloId, frame.question_id, frame.difficulty_band);
+                var attempt = selfAssessment(card, {
+                  cloId: cloId,
+                  questionId: frame.question_id,
+                  band: frame.difficulty_band,
+                  text: answer,
+                  citations: sources
+                });
+                /* E2: store the card so a reload does not destroy the run.
+                 * `attempt` is the id the live card is already using — carried,
+                 * never regenerated, so a restored card is the SAME attempt. */
+                persistPractice({
+                  attempt_id: attempt,
+                  question_id: frame.question_id,
+                  clo_id: cloId,
+                  difficulty_band: frame.difficulty_band || "",
+                  text: answer,
+                  citations: sources,
+                  answered: false
+                });
               }
               break;
           }
@@ -1536,6 +1934,14 @@ function CourseMateTutor(runtime, element, initArgs) {
       practiceClo.disabled = false;
       practiceBand.disabled = false;
       practiceSend.disabled = false;
+      /* Says what the next press does. The form was always reusable, but the
+       * label still read "Generate a question" over a card that already held
+       * one, so nothing on screen suggested asking again was possible — which
+       * is most of why generation looked like a one-shot action. */
+      if (practiceSlot && practiceSlot.querySelector(".cm-practice-card")) {
+        practiceSend.textContent = "Generate another →";
+      }
+      syncPracticeTools();
     });
   }
 
@@ -1546,6 +1952,10 @@ function CourseMateTutor(runtime, element, initArgs) {
       requestPractice(practiceClo.value, practiceBand.value);
     });
   }
+
+  /* E2. After the practice controls exist, so a restored card lands in the slot
+   * rather than the shared log fallback. */
+  restorePractice();
 
   prepForm.addEventListener("submit", function (event) {
     event.preventDefault();

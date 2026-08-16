@@ -161,6 +161,23 @@ async function askWithErrorFrame(code) {
   return root;
 }
 
+/** Generate a PRACTICE question whose stream returns an `error` frame. */
+async function generateWithErrorFrame(code) {
+  const root = buildPage();
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/mint")) {
+      return { ok: true, json: async () => ({ token: "t", stream_path: "/coursemate/api/chat" }) };
+    }
+    return sse([{ type: "error", error_code: code }, { type: "done" }]);
+  };
+  boot(root);
+  find(root, '.cm-panel[data-panel="prep"]').dataset.base = "/coursemate/api/examprep";
+  find(root, ".cm-practice-clo").value = "CLO-3";
+  await find(root, ".cm-practice-form")._listeners.submit({ preventDefault() {} });
+  await settle();
+  return root;
+}
+
 const noticeOf = (root) => find(root, ".cm-notice");
 const GENERIC = "Something went wrong.";
 
@@ -293,6 +310,40 @@ const tests = {
   async "preparing still says the course is being prepared"() {
     const notice = noticeOf(await askWithErrorFrame("preparing"));
     assert.match(notice.textContent, /still being prepared/i);
+  },
+
+  /* --- G1: an outcome with no tagged past-paper source ------------------ *
+   *
+   * CLO-3 on the live course has zero tagged questions, so the generator
+   * abstains before it ever retrieves anything. The student saw either silence
+   * or the planner's "not enough material" line, neither of which explains that
+   * practice questions need a real question to model. */
+
+  async "practice explains that a question needs a past-paper source"() {
+    const notice = find(await generateWithErrorFrame("abstained"), ".cm-prep-notice");
+    assert.match(notice.textContent, /modelled on a real past-paper question/i);
+    assert.match(notice.textContent, /none is tagged to this outcome/i);
+  },
+
+  async "practice does not reuse the planner's wording"() {
+    // "not enough material to plan" is about the PLANNER running short. The
+    // practice generator abstains for a different reason entirely.
+    const notice = find(await generateWithErrorFrame("abstained"), ".cm-prep-notice");
+    assert.doesNotMatch(notice.textContent, /plan that reliably/i);
+  },
+
+  async "the chat abstention is untouched"() {
+    // Same code, different surface: in chat it really does mean the lesson
+    // material does not cover the question.
+    const notice = noticeOf(await askWithErrorFrame("abstained"));
+    assert.match(notice.textContent, /doesn't appear to be covered/i);
+    assert.doesNotMatch(notice.textContent, /past-paper/i);
+  },
+
+  async "a non-abstain practice error keeps its own wording"() {
+    const notice = find(await generateWithErrorFrame("preparing"), ".cm-prep-notice");
+    assert.match(notice.textContent, /haven't been loaded/i);
+    assert.doesNotMatch(notice.textContent, /past-paper question/i);
   },
 
   async "unavailable still says the tutor is unavailable"() {

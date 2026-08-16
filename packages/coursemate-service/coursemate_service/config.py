@@ -194,6 +194,24 @@ class Settings(BaseSettings):
     #: failure runs, and here an unproven agent loop answering students is the
     #: failure.
     agent_enabled: bool = False
+
+    #: Answer evaluation (F2). **Off, and it must stay off until the accuracy of
+    #: the comparison has been measured.**
+    #:
+    #: §11.2 settles that on the personal path "measurement *is* the control —
+    #: there is no human backstop". There is currently no grading dataset and no
+    #: grading rubric — `feature_b_rubric.py` scores generated QUESTIONS — so
+    #: nothing has established how often this comparison is right. Turning this
+    #: on ships an unmeasured claim to a student.
+    #:
+    #: Enabling it changes one more thing worth stating out loud: the student's
+    #: written answer leaves the page for the first time. Until F2 the UI said it
+    #: never would.
+    #:
+    #: Even ON, a question with no `reference_answer` abstains — which today is
+    #: every question in the live bank.
+    answer_evaluation_enabled: bool = False
+
     #: Loop ceiling. Six is enough for the deepest planned path — CLOs, mastery,
     #: past questions, course content, one re-plan after an error, synthesis — and
     #: a cap that is routinely hit is a budget, not a safety net, so hitting it is

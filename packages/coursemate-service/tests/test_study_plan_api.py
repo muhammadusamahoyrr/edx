@@ -118,7 +118,9 @@ async def test_a_budget_larger_than_the_bank_returns_what_exists(loaded):
     plan = await examprep.study_plan(StudyPlanRequest(marks_budget=200), _claims())
 
     assert _total(plan) == 40
-    assert any("bank had nothing smaller that fit" in (i.rationale or "")
+    # Every outcome was drained, so the shortfall clause must say the pool is
+    # empty rather than that the leftovers were too big.
+    assert any("no more past-paper questions are tagged" in (i.rationale or "")
                for i in plan.items)
 
 

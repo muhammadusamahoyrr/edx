@@ -233,6 +233,17 @@ NOT_ROUTED_TO_NOTICES: frozenset[str] = frozenset({
     "clo_id, question_id and attempt_id are all required",
     "difficulty_band must be easy, medium or hard",
     "invalid identifier",
+    # Same category: a mastery-handler validation message. It is also
+    # unreachable from the shipped client, which never sends `source` — it fires
+    # only if something starts claiming an attempt was graded, and the only
+    # audience for that sentence is whoever wrote that caller.
+    "source must be self_reported; nothing here evaluates answers",
+    # Conversation switching. Rendered by the picker putting itself back where
+    # it was, not in the notice bar: the student's chat is unchanged, so a
+    # page-level alarm would overstate what happened. Only reachable from a
+    # client asking for a conversation that does not exist, which is a bug in
+    # the caller rather than a state the student can reach.
+    "no such conversation",
 })
 
 

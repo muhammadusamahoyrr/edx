@@ -222,7 +222,12 @@ const tests = {
     const { root } = await drive([{ type: "error", error_code: "abstained" }]);
     assert.equal(find(root, ".cm-practice-card"), null, "empty AI-generated card left on screen");
     assert.equal(find(root, ".cm-prep-notice").hidden, false);
-    assert.match(find(root, ".cm-prep-notice").textContent, /isn't enough|not covered/i);
+    /* Practice has its own abstention wording as of G1: the generator models
+       every question on a real past-paper one, so an outcome with none tagged
+       can never produce anything. The planner's "not enough material" line was
+       about a different failure. */
+    assert.match(find(root, ".cm-prep-notice").textContent,
+                 /modelled on a real past-paper question/i);
   },
 
   async "preparing and abstained render different messages"() {
