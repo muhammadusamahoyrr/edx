@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Move the four Open edX containers onto the freshly built image.
+# Move every Open edX container onto the freshly built image.
 #
 #   MSYS_NO_PATHCONV=1 tools/ops/adopt_new_image.sh
 #
@@ -22,16 +22,42 @@
 set -eu
 
 IMAGE=docker.io/overhangio/openedx:21.0.8-indigo
-SERVICES="lms cms lms-worker cms-worker"
+
+#: **Every container that runs the openedx image**, not just the four that
+#: obviously do. `coursemate-beat` was missing here and is built from the same
+#: image (see `deploy/tutor-plugin/coursemate.yml`), so it was never recreated
+#: and never checked — it could sit on a stale image indefinitely while this
+#: script reported success.
+SERVICES="lms cms lms-worker cms-worker coursemate-beat"
 HERE="$(cd "$(dirname "$0")" && pwd)"
+
+#: True when every expected container is already on $NEW.
+#:
+#: **This used to read `tutor_local-lms-1` alone**, and that is a real defect
+#: rather than a tidiness point: on 2026-08-16 an earlier command had already
+#: moved `lms`, so the check saw a match, printed "nothing to do" and exited 0
+#: while `lms-worker` stayed on the previous image. A partial adoption reporting
+#: success is the exact failure shape this repository keeps re-finding, and the
+#: verification that would have caught it (step 3) was unreachable behind this
+#: early exit.
+all_on_target() {
+  local target="$1" c now
+  for c in $SERVICES; do
+    now=$(docker inspect "tutor_local-$c-1" --format '{{.Image}}' 2>/dev/null || echo "")
+    [ "$now" = "$target" ] || return 1
+  done
+  return 0
+}
 
 echo "=== 1. preflight: is the new image actually new, and does it carry the package? ==="
 NEW=$(docker images --no-trunc --format '{{.ID}}' "$IMAGE" | head -1)
-OLD=$(docker inspect tutor_local-lms-1 --format '{{.Image}}')
-echo "  running image: ${OLD:0:19}"
 echo "  latest image : ${NEW:0:19}"
-if [ "$OLD" = "$NEW" ]; then
-  echo "  containers are ALREADY on the latest image; nothing to do."
+for c in $SERVICES; do
+  printf '  %-16s %s\n' "$c" \
+    "$(docker inspect "tutor_local-$c-1" --format '{{.Image}}' 2>/dev/null | cut -c1-19)"
+done
+if all_on_target "$NEW"; then
+  echo "  ALL expected containers are already on the latest image; nothing to do."
   exit 0
 fi
 docker run --rm --entrypoint bash "$IMAGE" -c \
@@ -48,14 +74,19 @@ echo
 echo "=== 3. did they actually move? ==="
 FAILED=0
 for c in $SERVICES; do
-  NOW=$(docker inspect "tutor_local-$c-1" --format '{{.Image}}')
+  NOW=$(docker inspect "tutor_local-$c-1" --format '{{.Image}}' 2>/dev/null || echo "")
   if [ "$NOW" = "$NEW" ]; then
-    printf "  %-12s ON NEW IMAGE\n" "$c"
+    printf "  %-16s ON NEW IMAGE\n" "$c"
+  elif [ -z "$NOW" ]; then
+    printf "  %-16s NOT RUNNING  <-- expected container is absent\n" "$c"
+    FAILED=1
   else
-    printf "  %-12s STILL ON %s  <-- did not move\n" "$c" "${NOW:0:19}"
+    printf "  %-16s STILL ON %s  <-- did not move\n" "$c" "${NOW:0:19}"
     FAILED=1
   fi
 done
+# Adoption is not complete until EVERY expected container matches. Reporting
+# success with one behind is how a worker runs last week's code unnoticed.
 [ "$FAILED" -eq 0 ] || { echo "FATAL: not all containers moved." >&2; exit 1; }
 
 echo
