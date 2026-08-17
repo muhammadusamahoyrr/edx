@@ -50,6 +50,17 @@ _COUNTERS: dict[str, str] = {
     #: than the primary answered, which is the same condition that raises the
     #: DEGRADED frame the student sees.
     "degraded_answers_total": "Answers served by a fallback deployment, not the primary.",
+    #: The outline path splits in two, and the split is the thing worth watching.
+    #: Before these existed, an outline answer, a fallthrough and an ordinary
+    #: question were indistinguishable — all three moved `chat_requests_total`
+    #: and nothing else, so "is the outline path ever used" and "how often does a
+    #: course have no author summaries" were unanswerable from a running
+    #: instance.
+    "outline_answers_total": "Outline questions answered deterministically from author summaries.",
+    #: A high ratio against `outline_answers_total` means most courses have no
+    #: author-written overview — which is the measurement that decides whether
+    #: the structural fallback is worth building.
+    "outline_fallthrough_total": "Outline questions with no usable summary, sent to ordinary retrieval.",
 }
 
 _lock = threading.Lock()

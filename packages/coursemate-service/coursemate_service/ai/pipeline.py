@@ -108,6 +108,7 @@ class AnswerPipeline:
                 yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.PREPARING)
                 return
             if outline is not None and outline.chunks:
+                metrics.increment("outline_answers_total")
                 for frame in _outline_frames(outline):
                     yield frame
                 return
@@ -116,6 +117,12 @@ class AnswerPipeline:
             # present three ranked passages as an overview. Nothing below claims
             # completeness, so no new wire signal is needed to stay honest; the
             # limitation is recorded in docs rather than invented as a frame.
+            #
+            # Counted, because the ratio of this to `outline_answers_total` is
+            # what says whether courses in this deployment actually carry author
+            # overviews — the measurement that decides whether the structural
+            # fallback is worth building.
+            metrics.increment("outline_fallthrough_total")
 
         query = retrieval_query(request.question, request.history, request.usage_key)
         try:
@@ -264,6 +271,26 @@ class AnswerPipeline:
                     messages=messages,
                     stream=True,
                     max_tokens=settings.max_output_tokens,
+                    # **Variance reduction, NOT determinism.** No sampling
+                    # parameter was sent at all until now, so the provider's own
+                    # default applied and identical prompts produced materially
+                    # different answers: measured on the live index, one
+                    # byte-identical ordinary prompt gave **7 distinct answers in
+                    # 10 runs**, and at temperature=0 the same prompt gave **1 in
+                    # 5**.
+                    #
+                    # That is a large improvement and it is not a guarantee. The
+                    # same experiment on a long, open-ended prompt still produced
+                    # four different answers under temperature=0, seed=42, top_p=1
+                    # AND a pinned upstream provider — the residual comes from
+                    # batched GPU inference and cannot be closed from here. Short
+                    # grounded answers converge; long enumerations do not.
+                    #
+                    # So this is worth having and must never be described as
+                    # making the tutor reproducible. The outline path does not
+                    # rely on it: it returns before this call and reaches no
+                    # provider at all, which is what makes *it* deterministic.
+                    temperature=0,
                     **({"mock_response": settings.mock_response} if settings.mock_response else {}),
                 ),
                 timeout=settings.model_timeout_seconds,

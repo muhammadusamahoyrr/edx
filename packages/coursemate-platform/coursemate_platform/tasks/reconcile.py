@@ -203,13 +203,13 @@ def reconcile_all(self) -> dict:
 
 
 def _active_version(offering_id: str) -> str | None:
-    """The version currently being served, so a top-up lands in it."""
-    from ..client import http
+    """The version currently being served, so a top-up lands in it.
 
-    try:
-        return (http.get(f"/coursemate/api/ingest/stats/{offering_id}") or {}).get(
-            "active_version"
-        )
-    except Exception:
-        log.exception("sweep: could not read active version for %s", offering_id)
-        return None
+    Thin wrapper kept so this module's call sites read unchanged; the one
+    implementation now lives in `client.endpoints` because the publish path
+    needs the same value and two copies would be two things that must agree
+    about the field activation keys on.
+    """
+    from ..client.endpoints import active_version
+
+    return active_version(offering_id)

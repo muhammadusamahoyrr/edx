@@ -537,6 +537,135 @@ async def test_a_provider_without_outline_support_is_not_an_error(store):
     assert frames[-1].type is FrameType.ERROR
 
 
+# --- 4b. the wiring itself ---------------------------------------------------
+#
+# Every test above drives an injected double that defines `fetch_outline`.
+# `AnswerPipeline._fetch_outline` discovers the capability with `getattr` and
+# falls back silently when it is absent — so renaming the method on the REAL
+# provider would turn every outline question back into ordinary retrieval with
+# no exception and no failing test.
+#
+# That is the defect shape this repository keeps finding: B1/B2, the C2 cache and
+# the practice loop were each correct in isolation and unwired in production.
+# These two tests exercise the DEFAULT pipeline — no injected provider — so the
+# path from `stream()` through the real `CourseContextProvider` to the boundary
+# is covered by something that fails when it breaks.
+
+
+def test_the_default_pipeline_uses_the_real_context_provider():
+    """The cheap half: the default wiring is the real class, and it carries the
+    capability the pipeline probes for by name."""
+    from coursemate_service.ai.retrieval import CourseContextProvider
+
+    pipeline = AnswerPipeline()
+    assert isinstance(pipeline.context, CourseContextProvider)
+    assert callable(getattr(pipeline.context, "fetch_outline", None)), (
+        "AnswerPipeline._fetch_outline discovers this by name; renaming it "
+        "disables every outline question silently"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_outline_request_reaches_the_real_provider(store, monkeypatch):
+    """The half that matters: drive `stream()` with the DEFAULT provider and stub
+    only the boundary, so the call genuinely traverses
+    `stream -> _fetch_outline -> CourseContextProvider.fetch_outline ->
+    boundary.course_summary_blocks`."""
+    from coursemate_service.ai import retrieval
+
+    blocks = store.summary_blocks(OFFERING, tenant="default")
+    seen: dict[str, object] = {}
+
+    class _Boundary:
+        def has_index(self, offering_id):
+            return True
+
+        def index_version(self, offering_id):
+            return "v1"
+
+        def course_summary_blocks(self, offering_id, claims):
+            seen["offering_id"] = offering_id
+            seen["sub"] = claims.sub
+            return blocks
+
+    monkeypatch.setattr(retrieval, "boundary", _Boundary())
+
+    # No context_provider argument: this is the production wiring.
+    frames = await _drain(AnswerPipeline(), _request(), _claims())
+
+    assert seen["offering_id"] == OFFERING, "the boundary was never reached"
+    assert seen["sub"] == "5", "claims did not travel to the boundary"
+    text = "".join(f.text or "" for f in frames if f.type is FrameType.TOKEN)
+    assert "author-provided overview" in text
+    assert len([f for f in frames if f.type is FrameType.CITATION]) == len(blocks)
+
+
+# --- 4c. observability -------------------------------------------------------
+#
+# Before these counters, an outline answer, an outline fallthrough and an
+# ordinary question were indistinguishable in a running instance: all three moved
+# `chat_requests_total` and nothing else. So "is this path ever used" and "how
+# many courses have no author overview" — the measurement that decides whether
+# the structural fallback is worth building — could not be answered at all.
+
+
+@pytest.mark.asyncio
+async def test_an_outline_answer_counts_once(store):
+    from coursemate_service import metrics
+
+    metrics.reset_for_tests()
+    provider = _Recorder(_chunks_from(store))
+    await _drain(AnswerPipeline(provider), _request(), _claims())
+
+    snap = metrics.snapshot()
+    assert snap["outline_answers_total"] == 1
+    assert snap["outline_fallthrough_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_fallthrough_counts_once_and_not_as_an_answer(store):
+    """The course-without-summaries case. Counting it as an answer would make the
+    two indistinguishable again, which is the thing being fixed."""
+    from coursemate_service import metrics
+
+    metrics.reset_for_tests()
+    provider = _Recorder([])
+    await _drain(AnswerPipeline(provider), _request(), _claims())
+
+    snap = metrics.snapshot()
+    assert snap["outline_fallthrough_total"] == 1
+    assert snap["outline_answers_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_question_moves_neither_counter(store):
+    from coursemate_service import metrics
+
+    metrics.reset_for_tests()
+    provider = _Recorder(_chunks_from(store))
+    await _drain(AnswerPipeline(provider), _request("What is a named release?"),
+                 _claims())
+
+    snap = metrics.snapshot()
+    assert snap["outline_answers_total"] == 0
+    assert snap["outline_fallthrough_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_an_unindexed_course_is_not_counted_as_either(store):
+    """`PREPARING` is neither an answer nor a fallthrough — the course has no
+    index at all, so counting it would corrupt the ratio the pair exists for."""
+    from coursemate_service import metrics
+
+    metrics.reset_for_tests()
+    provider = _Recorder([], index_missing=True)
+    await _drain(AnswerPipeline(provider), _request(), _claims())
+
+    snap = metrics.snapshot()
+    assert snap["outline_answers_total"] == 0
+    assert snap["outline_fallthrough_total"] == 0
+
+
 # --- 5. ordinary questions are untouched ------------------------------------
 
 

@@ -334,3 +334,54 @@ async def test_a_grounded_answer_is_not_marked(monkeypatch):
     assert [f for f in frames if f.type == FrameType.UNSUPPORTED_CLAIM] == []
     assert [f for f in frames if f.type == FrameType.CITATION], "citation went missing"
     client.reset_router()
+
+
+# --- generation parameters --------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_ordinary_path_sends_temperature_zero(monkeypatch):
+    """No sampling parameter was sent at all until this landed.
+
+    The provider's own default therefore applied, and a byte-identical ordinary
+    prompt produced **7 distinct answers in 10 runs** against the live index; at
+    `temperature=0` the same prompt produced **1 in 5**.
+
+    This pins the parameter, not a determinism claim. The same experiment on a
+    long open-ended prompt still produced four different answers under
+    `temperature=0`, `seed=42`, `top_p=1` and a pinned upstream provider — the
+    residual is batched GPU inference and cannot be closed from here. The value
+    of this test is that removing the argument is a visible change rather than a
+    silent regression to provider defaults.
+    """
+    from coursemate_service.ai import client
+    from coursemate_service.ai import pipeline as pl
+
+    client.reset_router()
+    seen: list[dict] = []
+
+    def _recording_router():
+        router = _fake_router("A deadlock is a cycle of waits.")
+        inner = router.acompletion
+
+        async def _acompletion(**kw):
+            seen.append(kw)
+            return await inner(**kw)
+
+        router.acompletion = _acompletion
+        return router
+
+    monkeypatch.setattr(pl, "get_router", lambda: _recording_router())
+    await _collect(
+        pl.AnswerPipeline(_grounded("A deadlock is a cycle of waits.")),
+        ChatRequest(question="What is a deadlock?"),
+    )
+
+    assert seen, "the provider was never called"
+    assert seen[0]["temperature"] == 0
+    # The rest of the call must not have moved.
+    assert seen[0]["model"] == "strong"
+    assert seen[0]["stream"] is True
+    assert "top_p" not in seen[0], "only temperature was authorised"
+    assert "seed" not in seen[0]
+    client.reset_router()
