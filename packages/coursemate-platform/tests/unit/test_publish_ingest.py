@@ -26,32 +26,83 @@ import pytest
 
 pytest.importorskip("django")
 
-# --- celery, stubbed rather than skipped -------------------------------------
+# --- the task layer's imports, stubbed rather than skipped -------------------
 #
-# `celery` is not in `requirements-dev.txt`, so importing any task module raises
-# and these tests would have to `importorskip` — which that file explicitly
-# argues against: *"a suite that quietly does not run is worse than one that
-# fails."* Skipping here would leave the publish lifecycle untested in exactly
-# the environment where it is meant to be tested.
+# `coursemate_platform/tasks/__init__.py` imports every task module, and
+# `tasks/ingest.py` imports `celery` and `opaque_keys` at module scope. Neither
+# is in `requirements-dev.txt`, so importing the task raises there — and
+# `importorskip` is what that file explicitly argues against: *"a suite that
+# quietly does not run is worse than one that fails."* Skipping would leave the
+# publish lifecycle untested in exactly the environment meant to test it.
 #
-# `shared_task` is pure scheduling plumbing; nothing under test depends on it.
-# Stubbing it exercises the real function body with no new dependency. Installed
-# before any `coursemate_platform.tasks` import, including the ones inside the
-# test functions below.
-if "celery" not in sys.modules:  # pragma: no branch - deterministic in the suite
-    _celery = types.ModuleType("celery")
+# **Installed unconditionally, and that is the point.** The first version of this
+# file stubbed only celery and only when absent, so a machine that happened to
+# have `opaque_keys` (it arrives transitively with some XBlock resolutions) ran
+# against the real package while CI, which does not, failed at collection. The
+# suite was green locally for a reason that did not hold anywhere else. Stubbing
+# both, always, makes local and CI exercise the same thing — which is the only
+# property that makes a green local run mean anything.
+#
+# `shared_task` is scheduling plumbing and nothing under test depends on it. The
+# key stub IS faithful, so `offering_id = str(key.course_key)` — real derivation
+# in the code under test — is still genuinely asserted rather than mocked away.
 
-    def _shared_task(*args, **kwargs):
-        if args and callable(args[0]) and not kwargs:
-            return args[0]                    # bare @shared_task
+_celery = types.ModuleType("celery")
 
-        def _decorate(fn):
-            return fn                          # @shared_task(bind=True, ...)
 
-        return _decorate
+def _shared_task(*args, **kwargs):
+    if args and callable(args[0]) and not kwargs:
+        return args[0]                        # bare @shared_task
 
-    _celery.shared_task = _shared_task
-    sys.modules["celery"] = _celery
+    def _decorate(fn):
+        return fn                              # @shared_task(bind=True, ...)
+
+    return _decorate
+
+
+_celery.shared_task = _shared_task
+sys.modules["celery"] = _celery
+
+
+class _CourseKey:
+    """`course-v1:ORG+COURSE+RUN`, which is what the code stringifies."""
+
+    def __init__(self, org: str, course: str, run: str) -> None:
+        self._value = f"course-v1:{org}+{course}+{run}"
+
+    def __str__(self) -> str:
+        return self._value
+
+    def __eq__(self, other) -> bool:
+        return str(self) == str(other)
+
+
+class _UsageKey:
+    """Parses `block-v1:ORG+COURSE+RUN+type@T+block@B` down to its course key.
+
+    Real parsing, not a canned answer: the task derives `offering_id` from this,
+    and a stub returning a constant would assert nothing about that derivation.
+    """
+
+    def __init__(self, course_key: _CourseKey) -> None:
+        self.course_key = course_key
+
+    @classmethod
+    def from_string(cls, raw: str) -> _UsageKey:
+        org, course, run = raw.split(":", 1)[1].split("+")[:3]
+        return cls(_CourseKey(org, course, run))
+
+
+_keys = types.ModuleType("opaque_keys.edx.keys")
+_keys.UsageKey = _UsageKey
+_keys.CourseKey = _CourseKey
+_edx = types.ModuleType("opaque_keys.edx")
+_edx.keys = _keys
+_opaque = types.ModuleType("opaque_keys")
+_opaque.edx = _edx
+sys.modules["opaque_keys"] = _opaque
+sys.modules["opaque_keys.edx"] = _edx
+sys.modules["opaque_keys.edx.keys"] = _keys
 
 from django.conf import settings as django_settings
 
