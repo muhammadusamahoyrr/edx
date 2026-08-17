@@ -105,6 +105,110 @@ def last_student_turn(history: Sequence[Turn], exclude: str | None = None) -> st
     return None
 
 
+#: Words that ask for a COMPLETE SET rather than for an answer to a question.
+#:
+#: Deliberately excludes "summarise"/"summary": *"summarise the roadmap section"*
+#: asks for a précis of one part, not for the course's contents, and admitting it
+#: would route a narrowing question down the exhaustive path.
+#:
+#: **`complete`, `full`, `whole` and `entire` were here and were removed**, after
+#: adversarial probing showed they are usually predicate adjectives describing
+#: something *other* than a set of topics. They misrouted four plausible
+#: questions — *"Is this course complete?"*, *"Is the full course available
+#: offline?"*, *"Can I download the full course?"*, *"Do I get a certificate for
+#: the whole course?"* — each of which would have been answered with the course
+#: overview instead of with an answer. None of the questions this path exists for
+#: needs them: they all carry `list`, `enumerate`, `all`, `every` or `contents`.
+_ENUMERATION = frozenset({
+    "list", "lists", "listing", "enumerate", "enumerates",
+    "all", "every", "contents",
+})
+
+#: Enumeration signals that are only signals in PHRASE form.
+#:
+#: Bare "overview" and "outline" are frequently nouns naming a page — *"where is
+#: the course overview page?"* — and routing those produced an overview of the
+#: course in answer to a question about navigation. Requiring the `of` complement
+#: keeps *"give me an overview of this course"* while dropping the noun use.
+#:
+#: The verb use (*"outline the contents of this course"*) still routes, via
+#: `contents` in `_ENUMERATION`, so this narrowing costs nothing measured.
+_ENUMERATION_PHRASES: tuple[str, ...] = ("overview of", "outline of")
+
+#: Nouns that mean THE COURSE AS A WHOLE. Unambiguous on their own.
+_WHOLE_COURSE = frozenset({"course", "syllabus", "curriculum"})
+
+#: Content nouns that mean "everything of this kind" — but only in the PLURAL.
+#: Singular "section"/"module" narrows ("the roadmap section"), so it is absent
+#: here on purpose: that asymmetry is what separates *"list all modules"* from
+#: *"what does the roadmap section teach"*.
+_CONTENT_PLURAL = frozenset({
+    "topics", "modules", "sections", "units", "lessons", "chapters",
+})
+
+#: Phrases that narrow an otherwise-exhaustive question to one part of the
+#: course. Their presence returns the question to ordinary retrieval, because a
+#: FILTERED enumeration is not something the author-summary source can answer —
+#: it would return the whole overview to a student who asked about one topic.
+_NARROWING = (
+    "about", "regarding", "concerning", "related to", "with respect to",
+    "in the section", "in the module", "in the chapter",
+    "in section", "in module", "in chapter", "specific to",
+)
+
+
+def is_outline_query(question: str) -> bool:
+    """Whether this asks for the course's CONTENTS rather than about its content.
+
+    Three conditions, all required, and the conjunction is the whole design:
+
+    1. an enumeration signal — the student wants a complete set, not an answer
+    2. a whole-course scope signal — that set is *the course*, not one part
+    3. no narrowing phrase — "all topics **about** contributing" is a filtered
+       question and the author-summary source cannot answer it honestly
+
+    **Fails safe.** Every uncertain case returns False and falls through to the
+    ordinary retrieve → rerank → gate → LLM path. That direction is chosen
+    deliberately: a false negative reproduces today's behaviour, which is known
+    and survivable, while a false positive answers a specific question with a
+    course overview — surprising, and wrong in a way the student cannot detect.
+
+    Pure, like `is_under_specified` above and for the same reason: the whole
+    routing decision can be exercised exhaustively in microseconds.
+
+    It is knowingly conservative. *"What is covered in this course?"* carries no
+    enumeration word and therefore does NOT route here. Widening the rule to
+    catch it is a measurable change and should be made against real questions,
+    not guessed.
+
+    **Three known false positives remain, and they are recorded rather than
+    papered over.** *"Are all lessons graded?"*, *"I finished all the modules,
+    what now?"* and *"Do all sections have quizzes?"* all pair a bare quantifier
+    with a plural content noun while asking about a PROPERTY of the course rather
+    than its contents. Separating those needs to know that "graded" is a property
+    and "covered" is not, which a word list cannot do; the honest options are a
+    parser or a small classifier, and neither is worth it for three phrasings.
+    `test_outline_query.py` pins them as `xfail(strict=True)`, so whoever does
+    fix it is told immediately.
+    """
+    text = " ".join(str(question or "").split()).lower()
+    if not text:
+        return False
+
+    # Narrowing is checked on the raw string, because these are phrases rather
+    # than tokens ("in the section", "related to").
+    if any(phrase in text for phrase in _NARROWING):
+        return False
+
+    tokens = set(_WORD.findall(text))
+    enumerating = bool(tokens & _ENUMERATION) or any(
+        phrase in text for phrase in _ENUMERATION_PHRASES
+    )
+    if not enumerating:
+        return False
+    return bool(tokens & (_WHOLE_COURSE | _CONTENT_PLURAL))
+
+
 def retrieval_query(
     question: str,
     history: Sequence[Turn] = (),

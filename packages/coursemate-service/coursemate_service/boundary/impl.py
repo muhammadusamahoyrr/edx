@@ -103,6 +103,31 @@ class CourseIntelligenceImpl:
         self._audit(claims, "retrieve_course_context", offering_id, len(chunks))
         return chunks
 
+    def course_summary_blocks(
+        self, offering_id: str, claims: StudentClaims
+    ) -> list[StoredChunk]:
+        """Author-written overview blocks — same chokepoint, no ranking.
+
+        Step 2 (authorize) and step 4 (audit) are identical to
+        `retrieve_course_context` and are here rather than at the caller for the
+        reason §6.5 gives: a second path that authorized itself would be a second
+        place to forget. Step 3 is inside `summary_blocks`, which shares
+        `search()`'s access SQL rather than restating it.
+
+        Step 1's absence is the only difference and it is not a relaxation: there
+        is no query, so there is nothing to resolve against the index.
+        """
+        self._authorize(claims, offering_id)
+
+        blocks = get_store().summary_blocks(
+            offering_id,
+            tenant=settings.tenant,
+            group_tokens=frozenset(claims.group_tokens or ()),
+        )
+
+        self._audit(claims, "course_summary_blocks", offering_id, len(blocks))
+        return blocks
+
     def has_index(self, offering_id: str) -> bool:
         return get_store().has_index(offering_id)
 

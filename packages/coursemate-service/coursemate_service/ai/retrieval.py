@@ -48,6 +48,57 @@ class CourseContextProvider:
         stream."""
         return await asyncio.to_thread(self.fetch_sync, question, claims)
 
+    async def fetch_outline(self, claims: StudentClaims) -> ContextResult:
+        """Async wrapper, for the same reason `fetch` has one: SQLite blocks."""
+        return await asyncio.to_thread(self.fetch_outline_sync, claims)
+
+    def fetch_outline_sync(self, claims: StudentClaims) -> ContextResult:
+        """The course's author-written overview, or an empty result.
+
+        Deliberately shaped as a `ContextResult` so the pipeline's existing
+        citation construction applies unchanged — the same `Citation`, built from
+        the same modulestore read, pointing at the same deep link. An outline
+        answer cites exactly like any other answer because it *is* course
+        content; only the way it was selected differs.
+
+        `top_score` is left at its default and must not be gated on: these blocks
+        were not ranked, so there is no confidence to compare against tau. The
+        gate is skipped on this path — see `pipeline.stream` — rather than being
+        fed a number that would only look meaningful.
+        """
+        offering_id = claims.offering_id
+
+        if not boundary.has_index(offering_id):
+            log.info("no index for offering %s", offering_id)
+            return ContextResult(chunks=[], top_score=0.0, index_missing=True)
+
+        try:
+            blocks = boundary.course_summary_blocks(offering_id, claims)
+        except AuthorizationError as exc:
+            # Identical handling to `fetch_sync`: denied scope returns EMPTY, and
+            # `index_version` stays None so nothing can be cached against it.
+            log.warning("authorization denied: %s", exc)
+            return ContextResult(chunks=[], top_score=0.0, index_missing=False)
+
+        version = boundary.index_version(offering_id)
+
+        return ContextResult(
+            index_version=version,
+            index_missing=False,
+            chunks=[
+                ContextChunk(
+                    text=b.text,
+                    citation=Citation(
+                        usage_key=b.usage_key,
+                        display_name=b.display_name or b.block_id,
+                        url=_citation_url(b.usage_key, claims.course_id),
+                    ),
+                    score=b.score,
+                )
+                for b in blocks
+            ],
+        )
+
     def fetch_sync(
         self, question: str, claims: StudentClaims, limit: int | None = None
     ) -> ContextResult:

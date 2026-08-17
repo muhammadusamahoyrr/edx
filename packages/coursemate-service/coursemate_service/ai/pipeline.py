@@ -26,9 +26,9 @@ from ..budget import estimate_tokens, ledger
 from ..config import settings
 from . import gate
 from .client import PRIMARY_DEPLOYMENT, NoModelConfigured, deployment_of, get_router
-from .context import ContextProvider
+from .context import ContextProvider, ContextResult
 from .prompts import build_messages
-from .query import retrieval_query
+from .query import is_outline_query, retrieval_query
 from .verify import supporting_chunks, unsupported_sentences
 
 log = logging.getLogger(__name__)
@@ -43,6 +43,28 @@ class AnswerPipeline:
             from .retrieval import CourseContextProvider
             context_provider = CourseContextProvider()
         self.context = context_provider
+
+    async def _fetch_outline(self, claims: StudentClaims) -> ContextResult | None:
+        """The author's overview, or None when this provider cannot supply one.
+
+        `ContextProvider` is an injection seam and several test doubles implement
+        only `fetch`. Asking for the capability rather than assuming it keeps
+        every existing double working and makes the fallback explicit: a provider
+        without outline support routes outline questions down the ordinary path,
+        which is exactly what happened before this branch existed.
+
+        A failure here is not an error the student should see. The ordinary path
+        is still available and still correct, so this degrades to it rather than
+        ending the turn.
+        """
+        fetch_outline = getattr(self.context, "fetch_outline", None)
+        if fetch_outline is None:
+            return None
+        try:
+            return await fetch_outline(claims)
+        except Exception:
+            log.exception("outline fetch failed; falling back to retrieval")
+            return None
 
     async def stream(
         self, request: ChatRequest, claims: StudentClaims
@@ -60,6 +82,40 @@ class AnswerPipeline:
         # gets `request.question`: the model must see what was actually asked,
         # and only the retriever needs the reconstruction.
         metrics.increment("chat_requests_total")
+
+        # --- 0. outline questions are a different shape ---------------------
+        # "List all the topics in this course" is a question about the course's
+        # CONTENTS, and retrieval cannot answer it: `search` returns the
+        # `rerank_top_k` passages most similar to the words typed, which is a
+        # selection and therefore never exhaustive. Measured on the live course,
+        # that is 3 of 55 chunks — and ten identical prompts produced ten
+        # different lists, because the completeness the student asked for was
+        # being improvised by the model from a 6% sample.
+        #
+        # Raising `top_k` does not fix it (a bigger selection is still a
+        # selection, and `max_output_tokens` bounds the answer anyway), and
+        # neither does `temperature=0` — measured, it narrows the spread and
+        # still produced four different answers under a pinned provider and a
+        # fixed seed. The fix is to stop asking a ranker a question about
+        # structure.
+        #
+        # Placed before retrieval, and it returns without reaching the provider:
+        # the answer is the author's own overview, so there is nothing for a
+        # model to add and nothing for sampling to vary.
+        if is_outline_query(request.question):
+            outline = await self._fetch_outline(claims)
+            if outline is not None and outline.index_missing:
+                yield StreamFrame(type=FrameType.ERROR, error_code=ErrorCode.PREPARING)
+                return
+            if outline is not None and outline.chunks:
+                for frame in _outline_frames(outline):
+                    yield frame
+                return
+            # No author summaries — DemoX has none, and that is a real answer,
+            # not a failure. Fall through to ordinary retrieval rather than
+            # present three ranked passages as an overview. Nothing below claims
+            # completeness, so no new wire signal is needed to stay honest; the
+            # limitation is recorded in docs rather than invented as a frame.
 
         query = retrieval_query(request.question, request.history, request.usage_key)
         try:
@@ -372,6 +428,58 @@ class AnswerPipeline:
             )
 
         yield StreamFrame(type=FrameType.DONE, provider=provider_used, truncated=truncated)
+
+
+#: What the outline answer calls itself.
+#:
+#: **It claims authorship, not completeness**, and the distinction is the whole
+#: honesty of this path. The blocks are what the course author wrote as their
+#: overview; whether that overview names every page is the author's decision and
+#: not something this system can verify. "Here is every topic in this course"
+#: would be a claim about the course; this is a claim about the source, which is
+#: the only one the data supports.
+_OUTLINE_HEADING = "This course's author-provided overview covers:"
+
+#: Said plainly at the end rather than buried, because the failure this whole
+#: change exists to fix was a partial answer that read as a complete one.
+_OUTLINE_CAVEAT = (
+    "This is the overview written by the course author. It may not name every "
+    "page in the course."
+)
+
+
+def _outline_frames(result: ContextResult) -> list[StreamFrame]:
+    """The outline answer, as frames. Pure, and deliberately so.
+
+    No provider call, no sampling, no ranking — the same input produces the same
+    bytes every time, which is the property the ordinary path cannot offer and
+    the reason this path exists.
+
+    Reuses TOKEN and CITATION rather than adding a frame type: the browser
+    already renders both, so this needs no contract version bump and no platform
+    change to ship. One TOKEN carries the whole answer, matching `_replay`'s
+    reasoning — re-simulating a typewriter would mean inventing timings that
+    never happened.
+
+    Citations are emitted per block and are never narrowed by
+    `supporting_chunks`. That filter exists to turn "we searched this" into "the
+    answer used this"; here the answer *is* the blocks, so every one of them
+    contributed by construction and dropping any would under-cite.
+    """
+    body = [_OUTLINE_HEADING, ""]
+    for chunk in result.chunks:
+        body.append(f"## {chunk.citation.display_name}")
+        body.append(chunk.text.strip())
+        body.append("")
+    body.append(_OUTLINE_CAVEAT)
+
+    frames = [StreamFrame(type=FrameType.TOKEN, text="\n".join(body))]
+    frames += [
+        StreamFrame(type=FrameType.CITATION, citation=chunk.citation)
+        for chunk in result.chunks
+    ]
+    frames.append(StreamFrame(type=FrameType.DONE, provider=None, truncated=False))
+    return frames
 
 
 async def _replay(payload: dict) -> AsyncIterator[StreamFrame]:

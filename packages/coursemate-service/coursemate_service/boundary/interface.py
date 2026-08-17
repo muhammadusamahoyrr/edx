@@ -49,6 +49,22 @@ class CourseIntelligence(Protocol):
         """Scoped, filtered, reranked and audited course content."""
         ...
 
+    def course_summary_blocks(
+        self, offering_id: str, claims: StudentClaims
+    ) -> list[StoredChunk]:
+        """The author-written overview blocks for this offering, or empty.
+
+        A second read path into course content, and therefore behind the same
+        four steps as `retrieve_course_context`: identity, scope, filter before
+        selection, audit. It is not a cheaper or looser route — the only thing it
+        drops is *ranking*, because there is no query to rank against.
+
+        Empty is a real and common answer: a course whose author wrote no
+        summaries has no overview to give, and the caller must fall back rather
+        than present something else as one.
+        """
+        ...
+
     def has_index(self, offering_id: str) -> bool:
         """Whether this offering has been indexed at all.
 

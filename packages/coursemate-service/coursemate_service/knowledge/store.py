@@ -105,6 +105,76 @@ _STOP = frozenset({
 
 _WORD = re.compile(r"[a-z0-9]+")
 
+#: **The block-level access rule, written once.** §6.3 requires unauthorized
+#: content never to be a *candidate*, and every query that reaches `chunks` has
+#: to enforce it identically. A second retrieval path that re-typed this clause —
+#: even correctly, today — is the shape of defect this codebase keeps finding:
+#: a control that is right in one path and subtly absent from the next.
+#:
+#: `{marks}` is filled by `_access_params`, never by a caller.
+_ACCESS_CLAUSE = """
+                  AND (NOT EXISTS (SELECT 1 FROM chunk_groups g
+                                   WHERE g.chunk_id = c.id)
+                       OR EXISTS (SELECT 1 FROM chunk_groups g
+                                  WHERE g.chunk_id = c.id
+                                    AND g.group_token IN ({marks})))
+"""
+
+
+def _access_params(group_tokens: frozenset[str]) -> tuple[str, tuple[str, ...]]:
+    """The access clause and its bind parameters, for one caller's groups.
+
+    Empty IN () is a syntax error in SQLite, so an empty group set still needs a
+    placeholder. NULL never matches a token, which gives exactly the intended
+    behaviour: the caller sees unrestricted chunks only. Sorted so the parameter
+    order is deterministic and a query plan is reusable.
+    """
+    marks = ",".join("?" * len(group_tokens)) if group_tokens else "NULL"
+    return _ACCESS_CLAUSE.format(marks=marks), tuple(sorted(group_tokens))
+
+
+#: Phrases an author writes when they are summarising what a unit taught.
+#:
+#: **Measured, not guessed.** Eleven candidates were run against both live
+#: courses; exactly these two families fired. On OEX101 they select 4 of 55
+#: blocks — `Learning Objectives` and three `Module Summary` blocks — and on
+#: DemoX (227 chunks) they select none, which is the correct answer for a course
+#: whose author wrote no summaries.
+#:
+#: Matching on the BODY rather than the title is the point. Title matching was
+#: measured first and pulls in `History overview`, `Takeaways` and DemoX's
+#: `Assessments Summary` — blocks that are not summaries of what was taught.
+#:
+#: The container noun and the finishing verb are generalised over, because those
+#: are variants of the same authored sentence. Anything beyond that family must
+#: be measured against real courses before it is added here; an unmeasured marker
+#: silently changes which blocks a student is shown as their course overview.
+_SUMMARY_MARKERS: tuple[str, ...] = (
+    "in this module we learned",
+    "in this section we learned",
+    "in this unit we learned",
+    "in this chapter we learned",
+    "in this course we learned",
+    "after finishing this course you",
+    "after finishing this module you",
+    "after completing this course you",
+    "after completing this module you",
+)
+
+#: Punctuation authors vary freely inside these sentences ("we learned:" vs
+#: "we learned"). Stripped before matching so a colon does not decide whether a
+#: student sees their course overview.
+_PUNCT = re.compile(r"[,;:!.’'\"]")
+
+
+def _normalise_for_marker(text: str) -> str:
+    return re.sub(r"\s+", " ", _PUNCT.sub(" ", (text or "").lower())).strip()
+
+
+def _is_summary_text(text: str) -> bool:
+    normalised = _normalise_for_marker(text)
+    return any(_normalise_for_marker(m) in normalised for m in _SUMMARY_MARKERS)
+
 
 def _stem(word: str) -> str:
     """Crude suffix trimming, to match FTS5's `porter` tokenizer approximately.
@@ -298,10 +368,7 @@ class ChunkStore:
         # (Found by the hostile-input test, not by review.)
         match = " OR ".join(f'"{t}"' for t in terms)
 
-        # Empty IN () is a syntax error in SQLite, so an empty group set still
-        # needs a placeholder. NULL never matches a token, which gives exactly
-        # the intended behaviour: the caller sees unrestricted chunks only.
-        marks = ",".join("?" * len(group_tokens)) if group_tokens else "NULL"
+        access_sql, access_params = _access_params(group_tokens)
 
         with self._lock:
             rows = self._conn.execute(
@@ -312,15 +379,11 @@ class ChunkStore:
                 JOIN chunks c ON c.id = chunks_fts.rowid
                 WHERE chunks_fts MATCH ?
                   AND c.tenant = ? AND c.offering_id = ? AND c.active = 1
-                  AND (NOT EXISTS (SELECT 1 FROM chunk_groups g
-                                   WHERE g.chunk_id = c.id)
-                       OR EXISTS (SELECT 1 FROM chunk_groups g
-                                  WHERE g.chunk_id = c.id
-                                    AND g.group_token IN ({marks})))
+                  {access_sql}
                 ORDER BY raw
                 LIMIT ?
                 """,
-                (match, tenant, offering_id, *sorted(group_tokens), limit),
+                (match, tenant, offering_id, *access_params, limit),
             ).fetchall()
 
         if not rows:
@@ -387,6 +450,73 @@ class ChunkStore:
         # coverage does (it weights rare terms), so ordering and gating use the
         # signal each is good at.
         return results
+
+    def summary_blocks(
+        self,
+        offering_id: str,
+        *,
+        tenant: str,
+        group_tokens: frozenset[str] = frozenset(),
+    ) -> list[StoredChunk]:
+        """The author's own summary blocks for this offering, in index order.
+
+        **This is not retrieval, and that is the point.** `search()` answers
+        "which passages resemble this question" — a *selection*, which by
+        construction cannot be exhaustive. A student asking what a course covers
+        is asking about the course's contents, and the honest source for that is
+        the overview its author wrote, not the three passages that happen to
+        score highest against the words they typed.
+
+        No query, no BM25, no reranking, no model. Selection is a fixed predicate
+        over indexed text, so ten calls return the same rows in the same order —
+        which is what makes the answer above this reproducible.
+
+        **Scoping is identical to `search()` and shares its SQL.** Tenant,
+        offering and `active` are in the WHERE clause, and block-level access
+        comes from `_ACCESS_CLAUSE` — the same string `search()` uses, not a copy.
+        A summary block is course content: a caller without the group token must
+        no more see it here than through retrieval.
+
+        `score` is set to 1.0 and means *nothing about relevance* — there is no
+        query to be relevant to. It exists because `StoredChunk` requires it, and
+        the outline path does not gate on confidence (there is no ranking whose
+        confidence could be in question). Callers must not compare it against
+        `confidence_threshold`.
+
+        The marker test runs in Python rather than SQL because it normalises
+        punctuation, which SQL `LIKE` cannot do. The scan is bounded by the
+        offering and happens only on an outline question — 55 rows on OEX101,
+        227 on DemoX. If a course ever makes that cost real, the fix is a
+        generated column, not a looser filter.
+        """
+        access_sql, access_params = _access_params(group_tokens)
+
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT c.usage_key, c.block_id, c.display_name, c.content_type,
+                       c.text, c.ordinal
+                FROM chunks c
+                WHERE c.tenant = ? AND c.offering_id = ? AND c.active = 1
+                  {access_sql}
+                ORDER BY c.id
+                """,
+                (tenant, offering_id, *access_params),
+            ).fetchall()
+
+        return [
+            StoredChunk(
+                usage_key=r["usage_key"],
+                block_id=r["block_id"],
+                display_name=r["display_name"],
+                content_type=r["content_type"],
+                text=r["text"],
+                ordinal=r["ordinal"],
+                score=1.0,
+            )
+            for r in rows
+            if _is_summary_text(r["text"])
+        ]
 
     def indexed_usage_keys(self, offering_id: str) -> list[str]:
         """Every distinct block currently *served* for this offering.
