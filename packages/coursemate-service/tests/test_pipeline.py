@@ -385,3 +385,167 @@ async def test_the_ordinary_path_sends_temperature_zero(monkeypatch):
     assert "top_p" not in seen[0], "only temperature was authorised"
     assert "seed" not in seen[0]
     client.reset_router()
+
+
+# --- citation dedupe --------------------------------------------------------
+#
+# `chunk_block` splits a long block into several chunks that all keep the parent
+# block's `usage_key`, and `supporting_chunks` scores them independently. Two
+# chunks of one lesson could therefore both emit a citation, and the student saw
+# the same source twice, with the same label and the same link.
+#
+# Measured on the live DemoX index before this landed: "logic gate design"
+# returned two chunks of `Design a Logic Gate` in a three-slot context and
+# emitted 2 citations resolving to 1 block.
+
+
+def _one_block_twice(other=None):
+    """A context where two chunks share ONE usage_key — the production shape."""
+    from coursemate_contracts.chat import Citation
+    from coursemate_service.ai.context import ContextChunk, ContextResult
+
+    chunks = [
+        ContextChunk(text="transistors and resistances in a logic gate", score=0.9,
+                     citation=Citation(usage_key="u-same",
+                                       display_name="Design a Logic Gate")),
+        ContextChunk(text="the checker verifies the voltage of the logic gate", score=0.8,
+                     citation=Citation(usage_key="u-same",
+                                       display_name="Design a Logic Gate")),
+    ]
+    if other is not None:
+        chunks.append(ContextChunk(text=other, score=0.7,
+                                   citation=Citation(usage_key="u-other",
+                                                     display_name="Specialty Tools")))
+
+    class _P:
+        async def fetch(self, question, claims):
+            return ContextResult(chunks=chunks, top_score=0.9)
+    return _P()
+
+
+def test_dedupe_keeps_one_citation_per_block():
+    from coursemate_contracts.chat import Citation
+    from coursemate_service.ai.pipeline import _dedupe_citations
+
+    a1 = Citation(usage_key="A", display_name="Block A")
+    a2 = Citation(usage_key="A", display_name="Block A")
+    b = Citation(usage_key="B", display_name="Block B")
+
+    assert [c.usage_key for c in _dedupe_citations([a1, a2, b])] == ["A", "B"]
+
+
+def test_dedupe_preserves_first_seen_order():
+    """A, B, A -> A, B. The strongest supporting chunk decides where its block
+    appears; re-sorting would silently re-rank sources a student is told are
+    ranked."""
+    from coursemate_contracts.chat import Citation
+    from coursemate_service.ai.pipeline import _dedupe_citations
+
+    a1 = Citation(usage_key="A", display_name="A")
+    b = Citation(usage_key="B", display_name="B")
+    a2 = Citation(usage_key="A", display_name="A")
+
+    assert [c.usage_key for c in _dedupe_citations([a1, b, a2])] == ["A", "B"]
+    assert [c.usage_key for c in _dedupe_citations([b, a1, a2])] == ["B", "A"]
+
+
+def test_dedupe_keeps_every_distinct_block():
+    from coursemate_contracts.chat import Citation
+    from coursemate_service.ai.pipeline import _dedupe_citations
+
+    cits = [Citation(usage_key=k, display_name=k) for k in ("A", "B", "C", "D")]
+    assert [c.usage_key for c in _dedupe_citations(cits)] == ["A", "B", "C", "D"]
+
+
+def test_dedupe_does_not_merge_blocks_that_share_a_label():
+    """Deduping on the LABEL instead of the key would merge genuinely different
+    sources: "Feedback" maps to 55 different blocks in the live DemoX index."""
+    from coursemate_contracts.chat import Citation
+    from coursemate_service.ai.pipeline import _dedupe_citations
+
+    same_name = [Citation(usage_key="u1", display_name="Feedback"),
+                 Citation(usage_key="u2", display_name="Feedback")]
+    assert len(_dedupe_citations(same_name)) == 2
+
+
+def test_dedupe_of_nothing_is_nothing():
+    from coursemate_service.ai.pipeline import _dedupe_citations
+    assert _dedupe_citations([]) == []
+
+
+@pytest.mark.asyncio
+async def test_two_chunks_of_one_block_emit_one_citation(monkeypatch):
+    """End to end through the real pipeline, in the shape production produced."""
+    from coursemate_service.ai import client
+    from coursemate_service.ai import pipeline as pl
+
+    client.reset_router()
+    monkeypatch.setattr(pl, "get_router", lambda: _fake_router(
+        "A logic gate uses transistors and resistances."))
+    frames = await _collect(
+        pl.AnswerPipeline(_one_block_twice(other="specialty tools for transistors")),
+        ChatRequest(question="logic gate design"))
+
+    keys = [f.citation.usage_key for f in frames if f.type == FrameType.CITATION]
+    assert keys == list(dict.fromkeys(keys)), "duplicate citation emitted: " + str(keys)
+    assert keys.count("u-same") == 1
+    client.reset_router()
+
+
+@pytest.mark.asyncio
+async def test_a_normal_answer_is_unchanged_by_dedupe(monkeypatch):
+    """The control arm: distinct blocks must all still be cited, in order."""
+    from coursemate_contracts.chat import Citation
+    from coursemate_service.ai import client
+    from coursemate_service.ai import pipeline as pl
+    from coursemate_service.ai.context import ContextChunk, ContextResult
+
+    client.reset_router()
+
+    class _P:
+        async def fetch(self, question, claims):
+            return ContextResult(top_score=0.9, chunks=[
+                ContextChunk(text="deadlock waits on a lock", score=0.9,
+                             citation=Citation(usage_key="u1", display_name="Locks")),
+                ContextChunk(text="a mutex protects a resource", score=0.8,
+                             citation=Citation(usage_key="u2", display_name="Mutexes")),
+            ])
+
+    monkeypatch.setattr(pl, "get_router", lambda: _fake_router(
+        "A deadlock waits on a lock; a mutex protects a resource."))
+    frames = await _collect(pl.AnswerPipeline(_P()), ChatRequest(question="q"))
+
+    assert [f.citation.usage_key for f in frames
+            if f.type == FrameType.CITATION] == ["u1", "u2"]
+    client.reset_router()
+
+
+@pytest.mark.asyncio
+async def test_mandatory_citation_survives_dedupe(monkeypatch):
+    """Section 8.5: an answer that cannot cite must abstain, so
+    `supporting_chunks` returns EVERY index when nothing overlaps. Dedupe must
+    not turn that into zero citations — it may only collapse repeats of one
+    block."""
+    from coursemate_contracts.chat import Citation
+    from coursemate_service.ai import client
+    from coursemate_service.ai import pipeline as pl
+    from coursemate_service.ai.context import ContextChunk, ContextResult
+
+    client.reset_router()
+
+    class _P:
+        async def fetch(self, question, claims):
+            return ContextResult(top_score=0.9, chunks=[
+                ContextChunk(text="alpha beta gamma", score=0.9,
+                             citation=Citation(usage_key="u1", display_name="One")),
+                ContextChunk(text="delta epsilon zeta", score=0.8,
+                             citation=Citation(usage_key="u2", display_name="Two")),
+            ])
+
+    monkeypatch.setattr(pl, "get_router", lambda: _fake_router(
+        "Kubernetes orchestrates pods."))
+    frames = await _collect(pl.AnswerPipeline(_P()), ChatRequest(question="q"))
+
+    cited = [f.citation.usage_key for f in frames if f.type == FrameType.CITATION]
+    assert cited == ["u1", "u2"], "the mandatory-citation fallback was lost"
+    client.reset_router()

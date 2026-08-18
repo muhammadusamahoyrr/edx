@@ -30,6 +30,12 @@ function makeNode(tag, cls) {
     tagName: tag, className: cls || "", textContent: "", hidden: false,
     disabled: false, value: "", href: "", dataset: {}, children: [],
     parentNode: null, _listeners: {},
+    /* `childNodes` alias. The renderer asks "has anything been written here",
+     * which in a real DOM must count text nodes — see tutor.js `closePara`.
+     * This double keeps its original single-list model; only
+     * test_answer_formatting.mjs separates elements from text nodes, because
+     * that is the file asserting the distinction. */
+    get childNodes() { return node.children; },
     appendChild(c) { c.parentNode = node; node.children.push(c); return c; },
     removeChild(c) {
       const i = node.children.indexOf(c);

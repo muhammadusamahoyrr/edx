@@ -251,8 +251,19 @@ function CourseMateTutor(runtime, element, initArgs) {
     var i = 0;
     var para = null;
 
+    /* `childNodes`, NOT `children`. `children` counts ELEMENT children only,
+     * and `appendInline` emits a text node for anything that is not `**bold**`
+     * — so a paragraph of plain prose had zero element children and was
+     * silently dropped. Every answer whose prose happened to contain bold
+     * survived, which is why this went unseen: the deterministic outline
+     * answer quotes the course author verbatim, contains no markup at all, and
+     * rendered as bare headings with the body missing.
+     *
+     * The test double hid it too. Its `appendChild` pushed text nodes into
+     * `children`, so the fake DOM disagreed with the real one about the one
+     * property this line reads. */
     function closePara() {
-      if (para && para.children.length) { container.appendChild(para); }
+      if (para && para.childNodes.length) { container.appendChild(para); }
       para = null;
     }
 
@@ -323,8 +334,15 @@ function CourseMateTutor(runtime, element, initArgs) {
 
       if (!para) { para = el("p", "cm-answer-p"); }
       /* A single newline inside a paragraph is a soft wrap, not a break: the
-       * model wraps prose and `pre-wrap` used to make those look deliberate. */
-      if (para.children.length) {
+       * model wraps prose and `pre-wrap` used to make those look deliberate.
+       *
+       * `childNodes` for the same reason as `closePara` above — this asks "has
+       * anything been written yet", and with `children` a first line of plain
+       * prose counted as nothing, so the separating space was skipped and
+       * "continues
+on" rendered as "continueson". Same one-word mistake, same
+       * hiding place in the test double. */
+      if (para.childNodes.length) {
         para.appendChild(document.createTextNode(" "));
       }
       appendInline(para, line.trim());
@@ -354,6 +372,83 @@ function CourseMateTutor(runtime, element, initArgs) {
     } catch (e) {
       return "#";
     }
+  }
+
+  /* --- math -----------------------------------------------------------------
+   *
+   * Course content carries TeX in Open edX's own delimiters. Measured in the
+   * live index: 6 active chunks hold `\(…\)` or `\[…\]`, and `Design a Logic
+   * Gate` alone contributes three — `\(Z = \lnot{(C(A+B))}\)`, `\(R_{ON}\)`,
+   * `\[\frac{V_{DD}\cdot R_{EQ}}{…}\]`. The model quotes that notation back
+   * because SYSTEM_GROUNDED tells it to prefer the course's own terminology, so
+   * TeX in an answer is faithful, not a formatting mistake.
+   *
+   * `renderAnswer` builds text nodes and nothing else, so until now the student
+   * read the backslashes. Nothing needed to be parsed to fix that: the host page
+   * already loads MathJax 2.7.5, configured with `inlineMath [["\\(","\\)"]]`
+   * and `displayMath [["\\[","\\]"]]` — exactly what arrives. It simply typesets
+   * the document once at load, and this answer is injected long afterwards. The
+   * missing piece was the hand-off, not a renderer.
+   *
+   * Absent MathJax (it comes from a CDN) the answer stays as it reads today.
+   * A detached node is skipped too: `settle()` removes the turn when nothing was
+   * produced, so an abstention has nothing left to typeset. */
+  function typesetMath(node) {
+    var MJ = window.MathJax;
+    if (!node || !node.parentNode) { return; }
+    if (!MJ || !MJ.Hub || typeof MJ.Hub.Queue !== "function") { return; }
+    MJ.Hub.Queue(["Typeset", MJ.Hub, node], function () { sanitizeMath(node); });
+  }
+
+  /* **Why typesetting alone is not safe here, measured on this deployment.**
+   *
+   * MathJax's own `Safe` extension is NOT loaded — `MathJax.Extension.Safe` is
+   * undefined and `Safe.js` is absent from all 33 files the hub fetched. Only
+   * `noUndefined.js` is present, and that is cosmetic. Probed against the live
+   * page, TeX therefore reaches the DOM with its attributes intact:
+   *
+   *     \href{javascript:alert(1)}{X}   ->  <a href="javascript:alert(1)"> x3
+   *     \style{background:url(http://…)} ->  style="background: url("http://…")"
+   *     \cssId{pwn}{x}                   ->  id="pwn"
+   *
+   * Answer text is model output shaped by uploaded documents and by the
+   * student's own question — semi-trusted and untrusted under §10.6 — so that is
+   * the same script-injection path the no-innerHTML rule exists to close, and
+   * handing it to a TeX interpreter unguarded would reopen it.
+   *
+   * The fix is scoped to OUR node rather than to MathJax's configuration.
+   * `MathJax.Hub.Config({extensions:["Safe.js"]})` is one line, but it is global:
+   * it would also silently disarm `\href` inside every capa problem on the page,
+   * in courses this block does not own. So the output is whitelisted instead —
+   * a whitelist on produced attributes, not a blacklist of macros, which is what
+   * makes it complete rather than a list to keep extending.
+   *
+   * `safeHref` is reused deliberately: citation chips and math links must not
+   * disagree about which URLs are allowed.
+   *
+   * Residual and accepted: `\cssId`/`\class` can still inject an id or a class.
+   * Neither executes anything nor loads anything; the worst case is a duplicate
+   * id inside an answer bubble. Named here so it is a decision, not an oversight. */
+  var MATH_HREF_ATTRS = ["href", "xlink:href"];
+
+  function sanitizeMath(node) {
+    if (!node || node.nodeType !== 1) { return; }
+    var i;
+    for (i = 0; i < MATH_HREF_ATTRS.length; i++) {
+      var name = MATH_HREF_ATTRS[i];
+      var url = node.getAttribute(name);
+      if (url !== null && url !== undefined && safeHref(url) === "#") {
+        node.removeAttribute(name);
+      }
+    }
+    /* `url(...)` is the only thing in a style attribute that reaches the network,
+     * and a background beacon in an answer is a disclosure, not a nuisance. */
+    var style = node.getAttribute("style");
+    if (style && style.toLowerCase().indexOf("url(") !== -1) {
+      node.removeAttribute("style");
+    }
+    var kids = node.childNodes || [];
+    for (i = 0; i < kids.length; i++) { sanitizeMath(kids[i]); }
   }
 
   /* One place that builds a citation chip, used by both the live stream and the
@@ -425,6 +520,11 @@ function CourseMateTutor(runtime, element, initArgs) {
         sourcesRow(bubble).appendChild(citationNode(c));
       });
       log.appendChild(node);
+      /* Typeset only once the turn is IN the document. MathJax measures layout
+       * as it typesets and a detached subtree measures against nothing, so this
+       * cannot move up into `turnNode`. Tutor turns only: a student's question
+       * is their own words, and is not formatted for the same reason. */
+      if (turn.role === "tutor") { typesetMath(answerOf(node)); }
     });
     log.scrollTop = log.scrollHeight;
     /* Owned here rather than at each call site: this function already runs at
@@ -822,6 +922,19 @@ function CourseMateTutor(runtime, element, initArgs) {
         }).then(function () {
           settle();
           if (!answer) { return; }
+          /* Here rather than in `case "done"`, for two reasons that are not
+           * stylistic. `settle()` has just removed the turn if nothing was
+           * produced, so an abstention — which arrives as an `error` frame with
+           * no tokens — cannot reach a typeset at all; putting the call in the
+           * frame switch would race that removal. And a stream that drops
+           * without a closing `done` still leaves a partial answer on screen,
+           * which should read the same as any other.
+           *
+           * `renderAnswer` runs on EVERY token and opens with `clearNode`, so
+           * this must never be per-token: MathJax's queue is asynchronous, and a
+           * job queued for token N lands after token N+1 has already destroyed
+           * the nodes it was given. Once, when the text stops changing. */
+          typesetMath(answerText);
           history.push({
             role: "tutor", content: answer,
             citations: citations, unsupported: unsupported
@@ -1299,6 +1412,11 @@ function CourseMateTutor(runtime, element, initArgs) {
               break;
             case "done":
               if (frame.truncated) { showPrepNotice("truncated"); }
+              /* Same renderer as chat, so the same hand-off — once, at the end.
+               * There is no `settle()` on this path, so the empty-answer case is
+               * guarded here instead: an error frame leaves `answer` at "" and
+               * there is nothing to typeset. */
+              if (answer) { typesetMath(answerNode); }
               break;
           }
         });

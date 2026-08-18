@@ -35,19 +35,33 @@ let nodes = [];
 function makeNode(tag, cls) {
   const node = {
     tagName: tag, className: cls || "", textContent: "", hidden: false,
-    disabled: false, value: "", href: "", dataset: {}, children: [],
+    disabled: false, value: "", href: "", dataset: {}, childNodes: [],
     parentNode: null, _listeners: {}, _attrs: {},
-    appendChild(c) { c.parentNode = node; node.children.push(c); return c; },
+    /* **`children` is ELEMENTS ONLY, as in a real DOM.** This double used to
+     * push text nodes into `children`, which is the reason a real rendering
+     * bug passed this suite: `closePara` read `children.length` to decide
+     * whether a paragraph had content, and in the browser a plain-prose
+     * paragraph has zero ELEMENT children and was discarded. Here it had one,
+     * so the test agreed with code that did not work. A double that is wrong
+     * about the property under test cannot fail. */
+    get children() { return node.childNodes.filter((c) => c.tagName !== "#text"); },
+    appendChild(c) { c.parentNode = node; node.childNodes.push(c); return c; },
     removeChild(c) {
-      const i = node.children.indexOf(c);
+      const i = node.childNodes.indexOf(c);
       if (i < 0) { throw new Error("NotFoundError: node is not a child"); }
-      node.children.splice(i, 1); c.parentNode = null;
+      node.childNodes.splice(i, 1); c.parentNode = null;
     },
     addEventListener(ev, fn) { node._listeners[ev] = fn; },
     querySelector(sel) { return find(node, sel); },
     querySelectorAll(sel) { return findAll(node, sel); },
     setAttribute(k, v) { node._attrs[k] = v; },
     getAttribute(k) { return node._attrs[k] ?? null; },
+    removeAttribute(k) { delete node._attrs[k]; },
+    /* Real DOM constants, because `sanitizeMath` walks `childNodes` and must
+     * skip text nodes the same way it does in a browser. A double that reports
+     * every node as an element would let a bug through on the one distinction
+     * the walk is built around. */
+    nodeType: tag === "#text" ? 3 : 1,
     classList: { toggle() {}, add() {}, remove() {} },
     matches(sel) {
       const base = sel.replace(/\[[^\]]*\]/g, "");
@@ -64,7 +78,7 @@ function makeNode(tag, cls) {
      * correct behaviour looked like a bug. Trimming inside a recursion destroys
      * exactly the whitespace that carries meaning between inline nodes. */
     get raw() {
-      return [node.textContent, ...node.children.map((c) => c.raw)].join("");
+      return [node.textContent, ...node.childNodes.map((c) => c.raw)].join("");
     },
     get text() { return node.raw.trim(); },
   };
@@ -72,7 +86,7 @@ function makeNode(tag, cls) {
   return node;
 }
 
-function walk(root, fn) { fn(root); root.children.forEach((c) => walk(c, fn)); }
+function walk(root, fn) { fn(root); root.childNodes.forEach((c) => walk(c, fn)); }
 function find(root, sel) { let hit = null; walk(root, (n) => { if (!hit && n !== root && n.matches(sel)) hit = n; }); return hit; }
 function findAll(root, sel) { const out = []; walk(root, (n) => { if (n !== root && n.matches(sel)) out.push(n); }); return out; }
 
@@ -152,6 +166,55 @@ async function render(chunks) {
   return tutorAnswer(root);
 }
 
+/* --- MathJax double ------------------------------------------------------
+ *
+ * The host page loads MathJax 2.7.5 from a CDN; this suite has neither, which
+ * is the point. Absent, `typesetMath` must no-op and the answer must still
+ * read. Present, it must be handed the FINISHED node exactly once.
+ *
+ * `Queue(args, done)` mirrors the real v2 signature. Real typesetting is
+ * asynchronous, so `sync: false` keeps the callback for the caller to fire —
+ * that is what makes the sanitiser testable without a browser. */
+function installMathJax({ sync = true } = {}) {
+  const calls = [];
+  globalThis.window.MathJax = {
+    Hub: {
+      Queue(args, done) {
+        calls.push({
+          verb: args[0],
+          node: args[2],
+          /* Snapshotted AT CALL TIME. Reading it afterwards would prove
+           * nothing about when the call happened. */
+          textAtCall: args[2] ? args[2].text : null,
+          attached: !!(args[2] && args[2].parentNode),
+          done,
+        });
+        if (sync && typeof done === "function") { done(); }
+      },
+    },
+  };
+  return calls;
+}
+
+function removeMathJax() { delete globalThis.window.MathJax; }
+
+/** Stream arbitrary frames (not just tokens) and return the whole page root. */
+async function renderRaw(frames) {
+  const root = buildPage();
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/mint")) {
+      return { ok: true, json: async () => ({ token: "t", stream_path: "/coursemate/api/chat" }) };
+    }
+    if (String(url).includes("persist_turn")) { return { ok: true, json: async () => ({}) }; }
+    return sse(frames);
+  };
+  boot(root);
+  find(root, ".cm-input").value = "q";
+  await find(root, ".cm-form")._listeners.submit({ preventDefault() {} });
+  await settle();
+  return root;
+}
+
 /** Render the same text through the HISTORY path instead of the live stream. */
 function renderFromHistory(text) {
   const root = buildPage();
@@ -171,7 +234,7 @@ const BLOCK_TAGS = new Set(["p", "ul", "ol", "li", "div"]);
 
 function readable(node) {
   if (node.tagName === "#text") { return node.textContent; }
-  const inner = node.textContent + node.children.map(readable).join("");
+  const inner = node.textContent + node.childNodes.map(readable).join("");
   return BLOCK_TAGS.has(node.tagName) ? `\n${inner}\n` : inner;
 }
 
@@ -180,7 +243,7 @@ const wordsOf = (node) => readable(node).match(/\w+/g) || [];
 /** A structural fingerprint: tag/class tree plus text, ignoring node identity. */
 function shape(node) {
   if (!node) { return "null"; }
-  const kids = node.children.map(shape).join(",");
+  const kids = node.childNodes.map(shape).join(",");
   return `${node.tagName}.${node.className}[${node.textContent}](${kids})`;
 }
 
@@ -541,6 +604,226 @@ const tests = {
 
     assert.deepEqual(rendered, expected,
       `split into ${chunks.length} tokens, the answer no longer matches its source`);
+  },
+
+  /* --- the outline answer, and the class of bug it exposed --------------- */
+
+  async "a paragraph of plain prose survives, with no inline markup at all"() {
+    /* **The regression.** `closePara` gated on `para.children.length`, which
+     * counts ELEMENT children. `appendInline` emits a text node for anything
+     * that is not `**bold**`, so a paragraph with no markup had zero element
+     * children and was thrown away.
+     *
+     * It reached production. The deterministic outline answer quotes the course
+     * author verbatim and contains no markup, so a real browser rendered four
+     * bare headings and dropped every word of the body — including the caveat
+     * saying the overview may be incomplete. */
+    const out = await render("Named releases are cut twice a year.");
+    assert.equal(find(out, ".cm-answer-p") !== null, true,
+      "a plain-prose paragraph was dropped entirely");
+    assert.match(out.text, /Named releases are cut twice a year\./);
+  },
+
+  async "the outline answer keeps its headings AND its prose"() {
+    /* The exact shape `_outline_frames` emits: a lead-in line, `##` headings
+     * with unmarked prose beneath each, and a closing caveat. Before the fix
+     * only the headings survived. */
+    const answer = [
+      "This course's author-provided overview covers:",
+      "",
+      "## Learning Objectives",
+      "After finishing this course you'll learn about the project's history.",
+      "",
+      "## Module Summary",
+      "In this module, we learned how the community operates.",
+      "",
+      "This is the overview written by the course author. It may not name every page in the course.",
+    ].join("\n");
+
+    const out = await render(answer);
+    const heads = findAll(out, ".cm-answer-h").map((h) => h.text);
+    assert.deepEqual(heads, ["Learning Objectives", "Module Summary"]);
+
+    assert.equal(findAll(out, ".cm-answer-p").length, 4,
+      "lead-in, two body paragraphs and the caveat must all render");
+    assert.match(out.text, /author-provided overview covers/);
+    assert.match(out.text, /project's history/);
+    assert.match(out.text, /how the community operates/);
+    assert.match(out.text, /may not name every page/,
+      "the honesty caveat was dropped — the one line the answer must never lose");
+  },
+
+  async "the double itself distinguishes elements from text nodes"() {
+    /* Guards the harness, not the renderer. This double used to push text nodes
+     * into `children`, so it disagreed with the browser about the exact
+     * property `closePara` reads — and a suite that models the DOM wrongly
+     * cannot fail on a DOM bug. */
+    const out = await render("plain words only");
+    const para = find(out, ".cm-answer-p");
+    assert.equal(para.children.length, 0, "text nodes must NOT count as children");
+    assert.equal(para.childNodes.length > 0, true, "but they must be childNodes");
+  },
+
+  /* --- math: the hand-off to the host page's MathJax --------------------
+   *
+   * Course content carries TeX in Open edX's own delimiters — measured: 6
+   * active chunks, three of them in `Design a Logic Gate` — and the model
+   * quotes it back. `renderAnswer` builds text nodes, so the student read
+   * `\(Z = \lnot{(C(A+B))}\)` as characters. The page already loads MathJax
+   * 2.7.5 configured for exactly `\(…\)` and `\[…\]`; only the call was
+   * missing.
+   *
+   * These tests cannot check glyphs — there is no MathJax here. They check the
+   * CONTRACT, which is the part that broke: called once, after the text stops
+   * changing, on a node still in the document, and never on a destroyed one. */
+
+  async "with no MathJax the LaTeX stays readable text, and nothing throws"() {
+    removeMathJax();
+    const a = await render("The energy is \\(x^2 + y^2\\) as shown.");
+    assert.equal(a.text, "The energy is \\(x^2 + y^2\\) as shown.",
+      "absent MathJax must leave the answer exactly as it reads today");
+    const display = await render("Identity:\n\n\\[E = mc^2\\]\n\nfollows.");
+    assert.match(display.text, /\\\[E = mc\^2\\\]/);
+  },
+
+  async "a stream of many tokens typesets exactly ONCE"() {
+    /* The regression this exists for. `renderAnswer` runs on EVERY token and
+     * opens with `clearNode`; MathJax's queue is asynchronous, so a per-token
+     * typeset lands on nodes the next token has already destroyed. */
+    const calls = installMathJax();
+    const tokens = ["The ", "gate ", "\\(Z = ", "\\lnot{(C(A+B))}", "\\) ", "is ", "shown."];
+    await render(tokens);
+    removeMathJax();
+    assert.equal(calls.length, 1, `typeset ran ${calls.length} times for ${tokens.length} tokens`);
+    assert.equal(calls[0].verb, "Typeset");
+  },
+
+  async "the typeset receives the FINISHED answer, not a partial one"() {
+    const calls = installMathJax();
+    await render(["Half of \\(x^2", " + y^2\\) done."]);
+    removeMathJax();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].textAtCall, "Half of \\(x^2 + y^2\\) done.",
+      "typeset saw a partial answer — it ran before the last render");
+  },
+
+  async "the typeset target is still in the document when it runs"() {
+    const calls = installMathJax();
+    await render("\\(R_{ON}\\) matters.");
+    removeMathJax();
+    assert.equal(calls[0].attached, true, "typeset was handed a detached node");
+    assert.equal((calls[0].node.className || "").includes("cm-answer"), true);
+  },
+
+  async "the reloaded history path typesets too"() {
+    /* A page reload must not change how an answer looks. This file has been
+     * bitten three times by exactly that shape — citations, unsupported marks,
+     * and the prose that Phase B restored. */
+    const calls = installMathJax();
+    const a = renderFromHistory("Recall \\(E = mc^2\\) from earlier.");
+    removeMathJax();
+    assert.equal(calls.length, 1, "a reloaded answer was never typeset");
+    assert.equal(calls[0].node, a, "typeset was handed the wrong node");
+    assert.equal(calls[0].attached, true);
+  },
+
+  async "an abstention typesets nothing, because its turn is already gone"() {
+    /* `settle()` removes the turn when no tokens arrived. Calling typeset from
+     * the frame switch would race that removal and hand MathJax an orphan. */
+    const calls = installMathJax();
+    const root = await renderRaw([{ type: "error", error_code: "abstained" }, { type: "done" }]);
+    removeMathJax();
+    assert.equal(calls.length, 0, "typeset ran on an answer that was never produced");
+    assert.equal(tutorTurns(root).length, 0, "the empty turn should have been removed");
+  },
+
+  async "a stream that drops without `done` still typesets what arrived"() {
+    const calls = installMathJax();
+    await renderRaw([{ type: "token", text: "Partial \\(x^2\\)" }]);
+    removeMathJax();
+    assert.equal(calls.length, 1, "a truncated answer was left as raw LaTeX");
+  },
+
+  /* --- math: the trust boundary ----------------------------------------
+   *
+   * Measured on the live page, NOT assumed: `MathJax.Extension.Safe` is
+   * undefined and `Safe.js` is absent from all 33 files the hub loaded, so
+   * `\href{javascript:…}` reaches the DOM as a working anchor. Answer text is
+   * model output shaped by uploaded documents and by the student's question —
+   * semi-trusted and untrusted under §10.6 — so the output is whitelisted after
+   * typesetting. Fired manually here, which is what `sync: false` is for. */
+
+  async "a javascript: link produced by TeX is stripped after typesetting"() {
+    const calls = installMathJax({ sync: false });
+    const a = await render("click \\(\\href{javascript:alert(1)}{HERE}\\)");
+
+    const bad = a.appendChild(makeNode("a", ""));
+    bad.setAttribute("href", "javascript:alert(1)");
+    const badXlink = a.appendChild(makeNode("a", ""));
+    badXlink.setAttribute("xlink:href", "javascript:alert(1)");
+    const beacon = a.appendChild(makeNode("g", ""));
+    beacon.setAttribute("style", "color:red;background:url(http://evil.example/p)");
+
+    calls[0].done();
+    removeMathJax();
+
+    assert.equal(bad.getAttribute("href"), null, "a javascript: href survived");
+    assert.equal(badXlink.getAttribute("xlink:href"), null, "a javascript: xlink:href survived");
+    assert.equal(beacon.getAttribute("style"), null, "a url() beacon survived");
+  },
+
+  async "ordinary links and styles produced by TeX are left alone"() {
+    /* The control arm. A sanitiser that strips everything is not a sanitiser,
+     * and would quietly break the citation chips that share `safeHref`. */
+    const calls = installMathJax({ sync: false });
+    const a = await render("see \\(\\href{https://example.org/x}{ref}\\)");
+
+    const ok = a.appendChild(makeNode("a", ""));
+    ok.setAttribute("href", "https://example.org/x");
+    const rel = a.appendChild(makeNode("a", ""));
+    rel.setAttribute("href", "/courses/x");
+    const styled = a.appendChild(makeNode("g", ""));
+    styled.setAttribute("style", "color:red");
+
+    calls[0].done();
+    removeMathJax();
+
+    assert.equal(ok.getAttribute("href"), "https://example.org/x");
+    assert.equal(rel.getAttribute("href"), "/courses/x");
+    assert.equal(styled.getAttribute("style"), "color:red");
+  },
+
+  async "the sanitiser reaches nested nodes and ignores text nodes"() {
+    const calls = installMathJax({ sync: false });
+    const a = await render("nested \\(x\\)");
+    const outer = a.appendChild(makeNode("g", ""));
+    const inner = outer.appendChild(makeNode("a", ""));
+    inner.setAttribute("href", "javascript:alert(1)");
+    outer.appendChild(Object.assign(makeNode("#text", ""), { textContent: "plain" }));
+
+    calls[0].done();
+    removeMathJax();
+    assert.equal(inner.getAttribute("href"), null, "a nested javascript: href survived");
+  },
+
+  /* --- the Phase-B prose fix must not regress -------------------------- */
+
+  async "prose still survives when MathJax IS present"() {
+    /* Phase B restored plain-prose paragraphs by reading `childNodes` rather
+     * than `children`. Adding the typeset hand-off must not undo that, and the
+     * answer must be complete BEFORE MathJax is ever handed it. */
+    const calls = installMathJax();
+    const a = await render(
+      "## Heading\n\nA paragraph of plain prose with no markup at all.\n\n" +
+      "Another one, mentioning \\(x^2\\) in passing.");
+    removeMathJax();
+
+    const paras = findAll(a, ".cm-answer-p");
+    assert.equal(paras.length, 2, "a plain-prose paragraph was dropped again");
+    assert.equal(findAll(a, ".cm-answer-h").length, 1);
+    assert.match(a.text, /A paragraph of plain prose with no markup at all\./);
+    assert.match(calls[0].textAtCall, /no markup at all/,
+      "MathJax was handed the answer before the prose was rendered into it");
   },
 };
 

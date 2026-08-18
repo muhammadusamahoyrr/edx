@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 
 from coursemate_contracts.auth import StudentClaims
 from coursemate_contracts.chat import ChatRequest, Citation, FrameType, StreamFrame
@@ -368,7 +368,12 @@ class AnswerPipeline:
         # used this" — three authoritative links under a sentence none of them
         # support. `supporting_chunks` returns everything when nothing overlaps,
         # so the mandatory-citation promise still holds in the worst case.
-        cited = [context.chunks[idx].citation for idx in supporting_chunks(answer, chunk_texts)]
+        # Deduped by usage_key: one block can fill several context slots, and the
+        # same source rendered twice reads as two independent confirmations.
+        cited = _dedupe_citations(
+            context.chunks[idx].citation
+            for idx in supporting_chunks(answer, chunk_texts)
+        )
         for citation in cited:
             yield StreamFrame(type=FrameType.CITATION, citation=citation)
 
@@ -455,6 +460,44 @@ class AnswerPipeline:
             )
 
         yield StreamFrame(type=FrameType.DONE, provider=provider_used, truncated=truncated)
+
+
+def _dedupe_citations(citations: Iterable[Citation]) -> list[Citation]:
+    """One citation per block, in first-seen order.
+
+    **A block can occupy more than one context slot.** `chunk_block` splits a
+    long block into several chunks, each keeping its parent's `usage_key`, and
+    `supporting_chunks` scores them independently — so two chunks of one lesson
+    can both support the answer and both emit a citation. The student then sees
+    the same source twice, with the same label and the same link.
+
+    Measured on the live DemoX index, not hypothesised: `"logic gate design"`
+    returned two chunks of `Design a Logic Gate` in a three-slot context and
+    emitted 2 citations resolving to 1 block; `"design a logic gate truth
+    table"` emitted 3 resolving to 2.
+
+    First-seen order, so the strongest supporting chunk decides where its block
+    appears: `supporting_chunks` yields indices in context order, and context
+    order is the reranker's. Sorting or set-ordering here would quietly re-rank
+    the sources under a student who was told they are ranked.
+
+    **This cannot change retrieval.** It runs after generation, on the citation
+    list alone; `context.chunks` is untouched, the model has already seen every
+    chunk, and the confidence gate read `top_score` long before this point.
+    Nothing here feeds back into ranking, scoring or selection.
+
+    Deduping on `usage_key` rather than on the label is deliberate: the label is
+    not unique. `"Feedback"` maps to 55 different blocks in DemoX, so collapsing
+    by name would merge genuinely different sources into one.
+    """
+    seen: set[str] = set()
+    unique: list[Citation] = []
+    for citation in citations:
+        if citation.usage_key in seen:
+            continue
+        seen.add(citation.usage_key)
+        unique.append(citation)
+    return unique
 
 
 #: What the outline answer calls itself.
