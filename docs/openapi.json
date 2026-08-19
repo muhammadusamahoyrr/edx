@@ -759,6 +759,16 @@
               }
             ],
             "title": "Difficulty Band"
+          },
+          "mastery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MasterySnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [

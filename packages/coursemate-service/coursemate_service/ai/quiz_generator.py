@@ -43,6 +43,7 @@ from coursemate_contracts.examprep import (
     band_of,
     band_range,
 )
+from coursemate_contracts.mastery import MasterySnapshot
 from pydantic import ValidationError
 
 from ..boundary.impl import AuthorizationError, boundary
@@ -330,6 +331,45 @@ class QuizGenerator:
         return question.strip()
 
     @staticmethod
+    def _rotation_index(
+        snapshot: MasterySnapshot | None,
+        offering_id: str,
+        clo_id: str,
+        span: int,
+    ) -> int:
+        """Which candidate leads, so a student is not shown one seed forever.
+
+        **Zero is the answer to every uncertainty**, and zero is exactly the
+        behaviour this had before: no snapshot, an unknown outcome, a single
+        candidate, or a snapshot minted elsewhere all leave the order untouched.
+        A browser that never sends the field is therefore not a browser that
+        behaves differently — it behaves identically.
+
+        `offering_id` is checked, not trusted. The snapshot is browser-carried
+        and so attacker-controlled; one minted for another offering is discarded
+        rather than allowed to shape this request, the same rule
+        `ai/planner.py` applies to the same object. Getting it wrong here would
+        only reorder seeds within an outcome the caller is already authorized
+        for — but "it only reorders" is not a reason to skip the check.
+
+        Attempts, not a hash of the student id: a hash varies between students
+        and is constant for each one, which is the half of the problem that does
+        not matter. The count moves as they practise, so the seed moves with it.
+        """
+        if snapshot is None or span <= 1:
+            return 0
+        if snapshot.offering_id != offering_id:
+            log.warning(
+                "mastery snapshot for %s arrived on a practice request scoped "
+                "to %s; ignoring", snapshot.offering_id, offering_id,
+            )
+            return 0
+        row = snapshot.by_clo().get(clo_id)
+        if row is None:
+            return 0
+        return row.attempts % span
+
+    @staticmethod
     def _cosine(a: list[float], b: list[float]) -> float:
         """Cosine similarity. Pure, so the thresholds can be tested without a
         provider — the numbers are the decision, the transport is not."""
@@ -514,6 +554,7 @@ class QuizGenerator:
         *,
         clo_id: str,
         difficulty_band: str | None = None,
+        mastery: MasterySnapshot | None = None,
     ) -> AsyncIterator[StreamFrame]:
         """Yield frames for one practice question. Never raises.
 
@@ -553,6 +594,24 @@ class QuizGenerator:
         # `source` leads so a requested difficulty band still wins the first pick;
         # the rest follow in store order. Bounded by `_SOURCE_CANDIDATES`.
         ordered = [source] + [c for c in candidates if c.question_id != source.question_id]
+
+        # Which of them leads. Reordering here rather than gating everything and
+        # then choosing: the loop below still stops at the FIRST candidate that
+        # passes, so this costs exactly the retrievals it cost before.
+        #
+        # Only when no band was asked for. An explicit `difficulty_band` is a
+        # preference the student stated, and `_find_source` already put the
+        # matching candidate first — rotating past it would answer a different
+        # question than the one asked.
+        if difficulty_band is None and len(ordered) > 1:
+            index = self._rotation_index(
+                mastery, claims.offering_id, clo_id, len(ordered)
+            )
+            if index:
+                ordered = ordered[index:] + ordered[:index]
+                log.info(
+                    "rotated %s seeds by %d for %s", len(ordered), index, clo_id,
+                )
 
         context = None
         first_code: ErrorCode | None = None

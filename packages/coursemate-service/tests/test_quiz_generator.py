@@ -15,6 +15,7 @@ import pytest
 from coursemate_contracts.auth import StudentClaims
 from coursemate_contracts.chat import Citation, FrameType
 from coursemate_contracts.errors import ErrorCode
+from coursemate_contracts.mastery import CLOMastery, MasterySnapshot
 from coursemate_contracts.examprep import (
     ExamType,
     PracticeQuestion,
@@ -569,8 +570,118 @@ def test_the_embedding_timeout_is_a_setting_of_its_own():
 
     field = Settings.model_fields["semantic_embedding_timeout_seconds"]
     assert field.default == 5.0
-    assert "semantic_embedding_timeout_seconds" != "model_timeout_seconds"
+    # Two distinct fields, so raising one cannot raise the other.
+    assert {"semantic_embedding_timeout_seconds", "model_timeout_seconds"} <= set(
+        Settings.model_fields
+    )
     assert Settings.model_fields["model_timeout_seconds"].default == 60
+
+
+# --- seed rotation: a student must not see one seed forever -----------------
+#
+# The generator models each question on a real past-paper one, and the candidate
+# list is ordered `year DESC, marks DESC` — so the same outcome led with the same
+# seed on every request. Rotating by the student's own attempt count spreads the
+# questions across an outcome's seeds without any server-side state.
+
+
+def _snapshot(offering: str, clo_id: str, attempts: int) -> MasterySnapshot:
+    return MasterySnapshot(
+        offering_id=offering,
+        clos=[CLOMastery(clo_id=clo_id, attempts=attempts, correct=0)],
+    )
+
+
+def _seeds():
+    """Three candidates, in the order the store returns them."""
+    # Distinct `source_doc_id` per seed: the paper citation names it, which is
+    # how a test can see WHICH seed the generator modelled on.
+    return [
+        _source(question_id="Q-A", source_doc_id="paper-A.pdf", text="Alpha question text"),
+        _source(question_id="Q-B", source_doc_id="paper-B.pdf", text="Beta question text"),
+        _source(question_id="Q-C", source_doc_id="paper-C.pdf", text="Gamma question text"),
+    ]
+
+
+def _ctx_all_pass():
+    return _CtxByText({s.text: _scored(0.90) for s in _seeds()})
+
+
+async def _seed_used(monkeypatch, *, attempts=None, offering=OFFERING, band=None):
+    """Which seed the generator actually modelled on, via `derived_from`."""
+    seeds = _seeds()
+    gen = _make_multi(monkeypatch, sources=seeds, ctx=_ctx_all_pass(), router=_Router(OK))
+    snap = None if attempts is None else _snapshot(offering, "CLO-1", attempts)
+    frames = [f async for f in gen.stream(
+        _claims(), clo_id="CLO-1", difficulty_band=band, mastery=snap)]
+    assert frames[-1].type == FrameType.DONE
+    # The paper citation is emitted first and names the seed's source document;
+    # the seed itself is what `_build` records, so read it from the citation set.
+    return next(f.citation.usage_key for f in frames if f.type == FrameType.CITATION)
+
+
+@pytest.mark.asyncio
+async def test_no_mastery_keeps_todays_seed(monkeypatch):
+    """The compatibility guarantee. An older browser sends no snapshot, and must
+    get exactly the behaviour it got before this existed."""
+    seeds = _seeds()
+    gen = _make_multi(monkeypatch, sources=seeds, ctx=_ctx_all_pass(), router=_Router(OK))
+    frames = [f async for f in gen.stream(_claims(), clo_id="CLO-1")]
+
+    assert frames[-1].type == FrameType.DONE
+    assert QuizGenerator._rotation_index(None, OFFERING, "CLO-1", 3) == 0
+
+
+@pytest.mark.asyncio
+async def test_the_seed_advances_as_the_student_practises(monkeypatch):
+    """The point of the change: three attempts, three different seeds."""
+    used = [await _seed_used(monkeypatch, attempts=n) for n in (0, 1, 2)]
+
+    assert len(set(used)) == 3, f"seeds did not rotate: {used}"
+
+
+@pytest.mark.asyncio
+async def test_rotation_wraps_and_is_deterministic(monkeypatch):
+    """Same input, same seed — twice. A student refreshing does not reroll, and
+    attempt 3 returns to the first seed rather than running out."""
+    assert await _seed_used(monkeypatch, attempts=3) == await _seed_used(monkeypatch, attempts=0)
+    assert await _seed_used(monkeypatch, attempts=1) == await _seed_used(monkeypatch, attempts=1)
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_band_is_not_rotated_past(monkeypatch):
+    """A stated preference outranks variety. `_find_source` already put the
+    band-matching candidate first; rotating would answer a different request."""
+    hard = await _seed_used(monkeypatch, attempts=2, band="hard")
+    none = await _seed_used(monkeypatch, attempts=0)
+    assert hard == none, "an explicit difficulty_band was rotated past"
+
+
+def test_a_snapshot_from_another_offering_is_ignored():
+    """Browser-carried, therefore attacker-controlled — the same rule
+    `ai/planner.py` applies. Checked, not trusted."""
+    foreign = _snapshot("course-v1:Other+Course+2024", "CLO-1", attempts=2)
+    assert QuizGenerator._rotation_index(foreign, OFFERING, "CLO-1", 3) == 0
+
+
+def test_rotation_falls_back_to_zero_on_every_uncertainty():
+    """Zero is today's behaviour, so every unknown degrades to it rather than to
+    something arbitrary."""
+    snap = _snapshot(OFFERING, "CLO-1", attempts=2)
+    assert QuizGenerator._rotation_index(None, OFFERING, "CLO-1", 3) == 0     # no snapshot
+    assert QuizGenerator._rotation_index(snap, OFFERING, "CLO-1", 1) == 0     # one candidate
+    assert QuizGenerator._rotation_index(snap, OFFERING, "CLO-9", 3) == 0     # unknown outcome
+    assert QuizGenerator._rotation_index(snap, OFFERING, "CLO-1", 3) == 2     # and the real case
+
+
+def test_rotation_sums_attempts_across_bands():
+    """`by_clo()` aggregates, so a student who practised easy and hard has moved
+    the index by both — not by whichever row happens to come first."""
+    snap = MasterySnapshot(offering_id=OFFERING, clos=[
+        CLOMastery(clo_id="CLO-1", difficulty_band="easy", attempts=1, correct=1),
+        CLOMastery(clo_id="CLO-1", difficulty_band="hard", attempts=1, correct=0),
+    ])
+    assert QuizGenerator._rotation_index(snap, OFFERING, "CLO-1", 3) == 2
 
 
 def test_cosine_is_exact_on_known_vectors():

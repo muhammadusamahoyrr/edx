@@ -345,7 +345,13 @@ async def practice_stream(
     return StreamingResponse(
         _encode_holding_slot(
             generator.stream(
-                claims, clo_id=request.clo_id, difficulty_band=request.difficulty_band
+                claims,
+                clo_id=request.clo_id,
+                difficulty_band=request.difficulty_band,
+                # Ordering only — which past-paper question seeds the generation.
+                # Scope still comes from the JWT, and a snapshot minted for
+                # another offering is discarded inside the generator.
+                mastery=request.mastery,
             ),
             claims.sub,
             token,

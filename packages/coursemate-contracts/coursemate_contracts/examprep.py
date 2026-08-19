@@ -432,6 +432,26 @@ class PracticeRequest(BaseModel):
     #: band. Not defaulted to `easy` — an absent preference is not a preference,
     #: and guessing one would silently narrow what the student is offered.
     difficulty_band: Literal["easy", "medium", "hard"] | None = None
+    #: The same browser-carried snapshot `StudyPlanRequest` takes, used here for
+    #: one narrow purpose: **which past-paper question seeds the generation**.
+    #:
+    #: The generator models each new question on a real one, and picked the same
+    #: seed every time — the candidate list is ordered `year DESC, marks DESC`,
+    #: so an outcome's heaviest question led on every request. A student
+    #: practising the same outcome repeatedly saw questions clustered around one
+    #: source. Rotating by the attempt count spreads them across the outcome's
+    #: seeds instead, and needs no server-side state to do it.
+    #:
+    #: Optional, and the request means the same thing without it: absent, the
+    #: rotation index is 0 and the seed is exactly what it was before. An older
+    #: browser that never sends it is not broken by this, which is why
+    #: `CONTRACT_VERSION` does not move.
+    #:
+    #: Scope is still the JWT's. This shapes ordering only — it cannot name a
+    #: source, widen an offering, or reach another student's record, and a
+    #: snapshot minted for a different offering is discarded rather than trusted
+    #: (the same check `ai/planner.py` applies).
+    mastery: MasterySnapshot | None = None
 
 
 class StudyPlanRequest(BaseModel):

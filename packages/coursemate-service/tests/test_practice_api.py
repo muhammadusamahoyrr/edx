@@ -290,10 +290,45 @@ async def test_enrollment_is_re_derived_and_failure_denies(stack, monkeypatch):
 
 def test_the_request_carries_no_identity():
     """Scope comes from the JWT. A payload field for it would be a field an
-    attacker can set, and the source question is chosen server-side."""
+    attacker can set, and the source question is chosen server-side.
+
+    **`mastery` was added 2026-08-19 and this test was widened deliberately.**
+    It is not an identity field, but `MasterySnapshot` carries an `offering_id`
+    of its own — so the payload now *does* contain an attacker-settable offering
+    id, nested. The guarantee therefore moved from "absent" to "checked", which
+    is the same position `StudyPlanRequest` has held since it shipped.
+
+    Widening the allow-list without asserting the new guarantee would have
+    turned this test into a rubber stamp, so the check that actually matters is
+    pinned below and in
+    `test_quiz_generator.py::test_a_snapshot_from_another_offering_is_ignored`.
+    """
     fields = set(PracticeRequest.model_fields)
-    assert fields == {"clo_id", "difficulty_band"}
+    assert fields == {"clo_id", "difficulty_band", "mastery"}
+    # Still no identity at the TOP level: nothing here names the student, the
+    # offering, the tenant, or the source question. `offering_id` stays in this
+    # set deliberately — it appears only nested inside `mastery`, where it is
+    # discarded on mismatch, and a future top-level one would be a real widening
+    # that this line is here to catch.
     assert not (fields & {"student_id", "offering_id", "tenant", "question_id"})
+
+
+def test_a_nested_offering_id_cannot_widen_scope():
+    """The price of carrying `mastery`: the payload gained a settable
+    `offering_id` one level down. It must shape nothing.
+
+    Asserted against the generator's own guard rather than end-to-end, because
+    this is the line that decides it — a snapshot minted elsewhere is discarded,
+    leaving the seed order exactly as it would have been with no snapshot.
+    """
+    from coursemate_contracts.mastery import CLOMastery, MasterySnapshot
+    from coursemate_service.ai.quiz_generator import QuizGenerator
+
+    forged = MasterySnapshot(
+        offering_id="course-v1:Someone+Else+2024",
+        clos=[CLOMastery(clo_id="CLO-1", attempts=7, correct=0)],
+    )
+    assert QuizGenerator._rotation_index(forged, OFFERING, "CLO-1", 3) == 0
 
 
 @pytest.mark.parametrize("band", ["trivial", "EASY", "0", "hardest"])
@@ -323,3 +358,57 @@ async def test_status_offers_no_outcomes_when_the_caller_is_denied(stack, monkey
     )
     status = await examprep.status(_claims())
     assert status.clo_options == []
+
+
+# --- the mastery snapshot reaches the generator (seed rotation) --------------
+
+
+def test_practice_request_still_validates_without_mastery():
+    """The compatibility guarantee, at the contract boundary. A browser that
+    predates the field sends exactly this and must not get a 422."""
+    request = PracticeRequest(clo_id="CLO-1", difficulty_band="medium")
+    assert request.mastery is None
+
+
+def test_practice_request_accepts_the_same_snapshot_study_plan_takes():
+    """One representation, not two. `StudyPlanRequest.mastery` and this are the
+    same type, so the browser posts the object it already holds."""
+    from coursemate_contracts.examprep import StudyPlanRequest
+    from coursemate_contracts.mastery import CLOMastery, MasterySnapshot
+
+    snap = MasterySnapshot(
+        offering_id=OFFERING,
+        clos=[CLOMastery(clo_id="CLO-1", attempts=2, correct=1)],
+    )
+    practice = PracticeRequest(clo_id="CLO-1", mastery=snap)
+    plan = StudyPlanRequest(marks_budget=50, mastery=snap)
+
+    assert practice.mastery == plan.mastery
+    assert (
+        PracticeRequest.model_fields["mastery"].annotation
+        == StudyPlanRequest.model_fields["mastery"].annotation
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_route_forwards_mastery_to_the_generator(stack, monkeypatch):
+    """A field the contract accepts and the route drops is a field that does
+    nothing — this repo has shipped that shape before. Assert it arrives."""
+    from coursemate_contracts.mastery import CLOMastery, MasterySnapshot
+    seen = {}
+
+    async def _spy(claims, **kw):
+        seen.update(kw)
+        if False:
+            yield  # pragma: no cover - makes this an async generator
+
+    from coursemate_service.ai import quiz_generator as qg
+    monkeypatch.setattr(qg.generator, "stream", _spy)
+    snap = MasterySnapshot(
+        offering_id=OFFERING,
+        clos=[CLOMastery(clo_id="CLO-1", attempts=3, correct=1)],
+    )
+    await _post(PracticeRequest(clo_id="CLO-1", mastery=snap), _claims())
+
+    assert seen.get("mastery") is snap, "the route dropped the snapshot"
+    assert seen.get("clo_id") == "CLO-1"
