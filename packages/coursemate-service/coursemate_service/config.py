@@ -144,6 +144,36 @@ class Settings(BaseSettings):
     fallback_api_key: str | None = None
     fallback_api_base: str | None = None
 
+    #: Embedding model for the generator's semantic duplicate check (§9.0).
+    #:
+    #: Routed through LiteLLM like every other model, so it needs no second
+    #: provider path: `ollama/*` resolves via the same `OLLAMA_API_BASE` the
+    #: `cheap` tier already uses. Measured at ~300–500 ms per call against a
+    #: generation that takes seconds, so it is noise on the serve path.
+    #:
+    #: **Empty disables the check**, and the generator then relies on the token
+    #: -overlap reprint check alone. That is the correct behaviour for a
+    #: deployment with no embedding provider, and it is what the test suite
+    #: uses — a unit test that reaches the network is not a unit test.
+    duplicate_embedding_model: str = "ollama/nomic-embed-text"
+
+    #: The duplicate check's own ceiling. **Deliberately NOT
+    #: `model_timeout_seconds`**, which is sized for a generation and is 300 in
+    #: this deployment — borrowing it would let an optional half-second check
+    #: hold a student's connection for five minutes per attempt, ten across the
+    #: retry.
+    #:
+    #: Measured at 490–623 ms for a batch of four texts against local Ollama, so
+    #: 5 s is roughly 8× headroom. A slower provider is a hung one as far as this
+    #: check is concerned, and giving up costs nothing: the timeout is caught,
+    #: the check returns "no opinion", and the token-overlap check still runs.
+    #:
+    #: A *reachable but wedged* provider is the case this exists for. Ollama
+    #: dying outright fails fast; the `socat` forwarder listening while Ollama is
+    #: unusable is a documented failure of this stack, and there the connection
+    #: opens and never answers.
+    semantic_embedding_timeout_seconds: float = 5.0
+
     #: Per-request ceiling. Beyond this the provider is hung, not slow, and
     #: holding the student's connection open helps nobody.
     model_timeout_seconds: int = 60

@@ -29,6 +29,12 @@ _TEST_ENV = {
     # but a test suite whose behaviour depends on an inherited environment
     # variable is a suite that passes on one machine and fails on another.
     "COURSEMATE_AGENT_ENABLED": "false",
+    # Same reasoning as enrollment: the generator's semantic duplicate check
+    # calls an embedding provider, and a unit test that reaches the network is
+    # not a unit test. Empty disables it, so every existing test exercises the
+    # token-overlap path unchanged. The tests that cover the semantic band
+    # enable it explicitly and stub the provider.
+    "COURSEMATE_DUPLICATE_EMBEDDING_MODEL": "",
 }
 
 for _key, _value in _TEST_ENV.items():

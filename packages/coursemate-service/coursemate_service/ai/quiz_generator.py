@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from collections.abc import AsyncIterator
 
 from coursemate_contracts.auth import StudentClaims
@@ -83,6 +84,50 @@ _SOURCE_CANDIDATES = 10
 #: for this outcome, so it costs no extra query: those are also the questions a
 #: reprint is most likely to duplicate.
 DUPLICATE_THRESHOLD = 0.6
+
+#: Embedding cosine at or above which a generated question is REJECTED as a
+#: semantic duplicate, and the band below it where the evidence is too weak to
+#: reject on.
+#:
+#: **Why a second check at all.** `DUPLICATE_THRESHOLD` above is token overlap.
+#: It catches reprinting and is structurally blind to rewording — its own
+#: docstring says so. A paraphrase of a past-paper question labelled
+#: "AI-generated" is the same false claim to the student as a copy of one.
+#:
+#: **Measured, and narrower than it looks — read this before changing it.**
+#: Calibrated 2026-08-19 against `nomic-embed-text` on 103 labelled pairs:
+#: 5 authored paraphrases, 3 real generated-vs-seed pairs the live system had
+#: already accepted, 41 same-outcome different-question pairs, and 54
+#: different-outcome pairs.
+#:
+#:     class                              n    min      p50      max
+#:     paraphrase (should be caught)       5   0.8732   0.9221   0.9441
+#:     accepted output vs its seed         3   0.6792   0.7342   0.7928
+#:     same outcome, DIFFERENT question   41   0.3734   0.6130   0.8850
+#:     different outcome                  54   0.3627   0.4494   0.7543
+#:
+#:     tau     caught/5     false-flags/44
+#:     0.86    5            1
+#:     0.90    4            0
+#:     0.92    3            0
+#:
+#: **The classes overlap by 0.0118 and no single threshold separates them**, so
+#: this is a band rather than a line. The highest "different question" pair is
+#: *"State what a named release is."* against *"Give one example of a named
+#: release."* at **0.8850** — genuinely different questions a student could
+#: answer independently. On short factual questions cosine conflates *topic*
+#: with *identity*, because there is not enough text to tell them apart. That is
+#: a property of the task, not a tuning problem, and it is why the middle band
+#: spends a retry instead of refusing.
+#:
+#: Real accepted output tops out at 0.7928, well clear of both numbers, so the
+#: false-positive risk on what the generator actually produces is low.
+#:
+#: n=5 positives, authored by the same person who set the threshold. Indicative,
+#: not settled — thinner evidence than `_TOP_SHARE` has, and it must not be
+#: quoted as a rate. Re-label before moving either number.
+SEMANTIC_DUPLICATE_THRESHOLD = 0.92
+SEMANTIC_UNCERTAIN_THRESHOLD = 0.86
 
 #: Attempts at a valid generation. Two means one controlled retry — a model that
 #: produced unparseable output once often succeeds on a second try, and a model
@@ -283,6 +328,68 @@ class QuizGenerator:
         if not isinstance(question, str) or not question.strip():
             return None
         return question.strip()
+
+    @staticmethod
+    def _cosine(a: list[float], b: list[float]) -> float:
+        """Cosine similarity. Pure, so the thresholds can be tested without a
+        provider — the numbers are the decision, the transport is not."""
+        dot = sum(x * y for x, y in zip(a, b, strict=True))
+        na = math.sqrt(sum(x * x for x in a))
+        nb = math.sqrt(sum(x * x for x in b))
+        if na == 0.0 or nb == 0.0:
+            return 0.0
+        return dot / (na * nb)
+
+    async def _semantic_duplicate(
+        self, question_text: str, candidates: list[QuestionRecord]
+    ) -> tuple[str, float] | None:
+        """The closest past-paper question by embedding cosine, or None.
+
+        **`None` means "no opinion", never "not a duplicate".** The check is
+        disabled when no embedding model is configured, and it returns `None`
+        on any provider failure. A caller that read that as a clean bill of
+        health would turn an outage into a silent weakening of §9.0's labelling
+        guarantee — so the caller keeps the token-overlap check either way, and
+        that check is the floor when this one is unavailable.
+
+        One request for the generated question and every candidate together:
+        the provider is asked once, not once per candidate.
+        """
+        model = settings.duplicate_embedding_model
+        if not model or not candidates:
+            return None
+
+        texts = [question_text] + [c.text for c in candidates]
+        try:
+            import litellm
+
+            response = await asyncio.wait_for(
+                litellm.aembedding(model=model, input=texts),
+                # Its OWN ceiling, not `model_timeout_seconds`. That one is
+                # sized for a generation (300 in this deployment) and would let
+                # a half-second check hold the student's connection for minutes.
+                timeout=settings.semantic_embedding_timeout_seconds,
+            )
+            vectors = [row["embedding"] for row in response.data]
+        except Exception:
+            # Deliberately broad, and deliberately not fatal: a duplicate check
+            # that cannot run must not take generation down with it.
+            log.warning("semantic duplicate check unavailable; falling back to "
+                        "token overlap alone", exc_info=True)
+            return None
+
+        if len(vectors) != len(texts):
+            log.warning("embedding returned %d vectors for %d texts; skipping "
+                        "the semantic check", len(vectors), len(texts))
+            return None
+
+        produced, sources = vectors[0], vectors[1:]
+        scored = [
+            (self._cosine(produced, vec), record.question_id)
+            for vec, record in zip(sources, candidates, strict=True)
+        ]
+        score, question_id = max(scored)
+        return question_id, score
 
     @staticmethod
     def _is_reprint(question_text: str, candidates: list[QuestionRecord]) -> str | None:
@@ -540,6 +647,40 @@ class QuizGenerator:
                     # retry on it, exactly as on malformed output.
                     log.warning("generated question reprints %s; rejecting", reprint)
                     text = None
+
+            if text is not None:
+                # Second check, different blind spot: token overlap catches a
+                # copy, this catches a rewording. Kept separate rather than
+                # merged because they fail differently — see the thresholds.
+                match = await self._semantic_duplicate(text, candidates)
+                if match is not None:
+                    similar_to, score = match
+                    if score >= SEMANTIC_DUPLICATE_THRESHOLD:
+                        log.warning(
+                            "generated question is a semantic duplicate of %s "
+                            "(cosine %.4f); rejecting", similar_to, score,
+                        )
+                        text = None
+                    elif score >= SEMANTIC_UNCERTAIN_THRESHOLD:
+                        # The measured overlap band. A real, answerable-in-its-
+                        # own-right question was observed at 0.8850 here, so
+                        # refusing outright would deny legitimate questions on
+                        # evidence that cannot support it. Spend a retry if one
+                        # is left; if this was the last attempt, serve it rather
+                        # than abstain — an uncertain question beats no question.
+                        if attempt < _MAX_ATTEMPTS:
+                            log.info(
+                                "generated question is close to %s (cosine "
+                                "%.4f); retrying for a clearer one",
+                                similar_to, score,
+                            )
+                            text = None
+                        else:
+                            log.info(
+                                "serving a question close to %s (cosine %.4f): "
+                                "no attempts left and the band is not decisive",
+                                similar_to, score,
+                            )
 
             if text is not None:
                 try:

@@ -359,6 +359,233 @@ async def test_the_reprint_check_still_sees_every_candidate(monkeypatch):
     assert router.calls == 2, "the reprint did not spend its retry"
 
 
+# --- the semantic duplicate band (P0-calibrated 0.86 / 0.92) ----------------
+#
+# Token overlap catches a copy and is blind to a rewording; cosine catches a
+# rewording and, on short factual questions, confuses topic with identity. The
+# two run together because they fail differently. These tests drive the cosine
+# side with a stubbed provider — the thresholds are the decision under test, the
+# transport is not.
+
+
+def _fake_embedding(score_for_first_candidate: float):
+    """An `aembedding` stand-in producing an exact cosine against candidate 0.
+
+    Two dimensions are enough: put the generated question on the unit x-axis and
+    rotate each candidate to the angle whose cosine is the score wanted. No
+    provider, no network, and the number under test is exact rather than
+    approximately whatever an embedding model happens to return.
+    """
+    import math as _math
+
+    async def _aembedding(model, input, **kw):  # noqa: A002 - litellm's kwarg name
+        vectors = [[1.0, 0.0]]
+        for i in range(len(input) - 1):
+            s = score_for_first_candidate if i == 0 else 0.10
+            vectors.append([s, _math.sqrt(max(0.0, 1.0 - s * s))])
+        return SimpleNamespace(data=[{"embedding": v} for v in vectors])
+
+    return _aembedding
+
+
+def _enable_semantic(monkeypatch, cosine: float):
+    """Turn the check on and pin what the provider will report."""
+    from coursemate_service.ai import quiz_generator as qg
+
+    monkeypatch.setattr(qg.settings, "duplicate_embedding_model", "stub/embed")
+    fake = SimpleNamespace(aembedding=_fake_embedding(cosine))
+    monkeypatch.setitem(__import__("sys").modules, "litellm", fake)
+
+
+@pytest.mark.asyncio
+async def test_a_semantic_duplicate_at_or_above_the_bar_is_rejected(monkeypatch):
+    """0.92+. A reworded past-paper question labelled AI-generated is the same
+    false claim to the student as a copied one — §9.0 rests on that label."""
+    _enable_semantic(monkeypatch, 0.95)
+    router = _Router(OK, OK)
+    gen = _make(monkeypatch, source=_source(), context=_grounded(), router=router)
+
+    frames = await _run(gen)
+
+    assert frames[-1].error_code == ErrorCode.ABSTAINED, "a paraphrase reached the student"
+    assert router.calls == 2, "rejection did not spend the retry"
+
+
+@pytest.mark.asyncio
+async def test_the_uncertain_band_retries_rather_than_refusing(monkeypatch):
+    """0.86–0.92 is the measured OVERLAP: a genuinely different question was
+    observed at 0.8850. Spend a retry, but if that was the last attempt serve
+    the question — refusing outright would deny legitimate questions on evidence
+    that cannot support it."""
+    _enable_semantic(monkeypatch, 0.8850)
+    router = _Router(OK, OK)
+    gen = _make(monkeypatch, source=_source(), context=_grounded(), router=router)
+
+    frames = await _run(gen)
+
+    assert frames[-1].type == FrameType.DONE, "an uncertain score refused permanently"
+    assert router.calls == 2, "the uncertain band did not spend a retry"
+    assert _text(frames), "nothing was served"
+
+
+@pytest.mark.asyncio
+async def test_a_hard_negative_at_0885_is_not_automatically_rejected(monkeypatch):
+    """The specific pair from the calibration — 'State what a named release is'
+    against 'Give one example of a named release'. Different questions; a
+    student can answer either without the other."""
+    _enable_semantic(monkeypatch, 0.8850)
+    gen = _make(monkeypatch, source=_source(), context=_grounded(), router=_Router(OK, OK))
+
+    assert (await _run(gen))[-1].type == FrameType.DONE
+
+
+@pytest.mark.asyncio
+async def test_below_the_band_is_accepted_without_a_retry(monkeypatch):
+    """Real accepted output measured 0.6792–0.7928 against its own seed. That
+    must cost nothing — no retry, no second model call."""
+    _enable_semantic(monkeypatch, 0.7928)
+    router = _Router(OK, OK)
+    gen = _make(monkeypatch, source=_source(), context=_grounded(), router=router)
+
+    frames = await _run(gen)
+
+    assert frames[-1].type == FrameType.DONE
+    assert router.calls == 1, "an accepted question was retried anyway"
+
+
+@pytest.mark.asyncio
+async def test_an_embedding_failure_falls_back_to_token_overlap(monkeypatch):
+    """A duplicate check that cannot run must not take generation down with it.
+    `None` means 'no opinion', never 'not a duplicate' — Jaccard is still the
+    floor, so the guarantee degrades rather than disappearing."""
+    from coursemate_service.ai import quiz_generator as qg
+
+    monkeypatch.setattr(qg.settings, "duplicate_embedding_model", "stub/embed")
+
+    async def _boom(model, input, **kw):  # noqa: A002
+        raise RuntimeError("provider down")
+
+    monkeypatch.setitem(__import__("sys").modules, "litellm",
+                        SimpleNamespace(aembedding=_boom))
+    router = _Router(OK)
+    gen = _make(monkeypatch, source=_source(), context=_grounded(), router=router)
+
+    frames = await _run(gen)
+
+    assert frames[-1].type == FrameType.DONE, "a provider outage broke generation"
+    assert router.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_a_reprint_is_still_caught_when_embeddings_are_unavailable(monkeypatch):
+    """The floor holds. Token overlap is not weakened by the second check being
+    absent, which is the whole reason it was kept."""
+    from coursemate_service.ai import quiz_generator as qg
+
+    monkeypatch.setattr(qg.settings, "duplicate_embedding_model", "stub/embed")
+
+    async def _boom(model, input, **kw):  # noqa: A002
+        raise RuntimeError("provider down")
+
+    monkeypatch.setitem(__import__("sys").modules, "litellm",
+                        SimpleNamespace(aembedding=_boom))
+    src = _source(text="Explain how a deadlock arises between two processes.")
+    parroted = '{"question": "Explain how a deadlock arises between two processes."}'
+    gen = _make(monkeypatch, source=src, context=_grounded(),
+                router=_Router(parroted, parroted))
+
+    assert (await _run(gen))[-1].error_code == ErrorCode.ABSTAINED
+
+
+@pytest.mark.asyncio
+async def test_the_check_is_skipped_when_no_embedding_model_is_configured(monkeypatch):
+    """The default in tests, and the correct behaviour for a deployment without
+    an embedding provider. It must cost nothing, not fail."""
+    from coursemate_service.ai import quiz_generator as qg
+
+    monkeypatch.setattr(qg.settings, "duplicate_embedding_model", "")
+    called = False
+
+    async def _tripwire(model, input, **kw):  # noqa: A002
+        nonlocal called
+        called = True
+        raise AssertionError("the provider was called with no model configured")
+
+    monkeypatch.setitem(__import__("sys").modules, "litellm",
+                        SimpleNamespace(aembedding=_tripwire))
+    gen = _make(monkeypatch, source=_source(), context=_grounded(), router=_Router(OK))
+
+    assert (await _run(gen))[-1].type == FrameType.DONE
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_the_embedding_call_uses_its_own_timeout_not_the_model_one(monkeypatch):
+    """The duplicate check must not borrow the generation ceiling.
+
+    `model_timeout_seconds` is 300 in the live deployment. A ~500 ms check
+    bounded by it would hold a student's connection for five minutes per
+    attempt against a reachable-but-wedged provider — the `socat` forwarder
+    listening while Ollama is unusable is a documented failure of this stack.
+
+    Driven by behaviour rather than by inspecting the call: the model ceiling is
+    set absurdly high, the dedicated one absurdly low, and the provider hangs.
+    If the wrong setting were used the test would take 300 s.
+    """
+    import asyncio as _asyncio
+    import time as _time
+
+    from coursemate_service.ai import quiz_generator as qg
+
+    monkeypatch.setattr(qg.settings, "duplicate_embedding_model", "stub/embed")
+    monkeypatch.setattr(qg.settings, "model_timeout_seconds", 300)
+    monkeypatch.setattr(qg.settings, "semantic_embedding_timeout_seconds", 0.05)
+
+    async def _hangs(model, input, **kw):  # noqa: A002
+        await _asyncio.sleep(30)
+
+    monkeypatch.setitem(__import__("sys").modules, "litellm",
+                        SimpleNamespace(aembedding=_hangs))
+    router = _Router(OK)
+    gen = _make(monkeypatch, source=_source(), context=_grounded(), router=router)
+
+    started = _time.monotonic()
+    frames = await _run(gen)
+    elapsed = _time.monotonic() - started
+
+    # Gave up on the dedicated bound, then served on the token-overlap check.
+    assert frames[-1].type == FrameType.DONE, "a hung provider broke generation"
+    assert router.calls == 1
+    assert elapsed < 5.0, (
+        f"took {elapsed:.2f}s — the embedding call is bounded by the wrong "
+        "setting, or is not bounded at all"
+    )
+
+
+def test_the_embedding_timeout_is_a_setting_of_its_own():
+    """A separate name, so raising the generation ceiling cannot silently raise
+    this one. 5 s is ~8x the 490-623 ms measured for a batch of four."""
+    from coursemate_service.config import Settings
+
+    field = Settings.model_fields["semantic_embedding_timeout_seconds"]
+    assert field.default == 5.0
+    assert "semantic_embedding_timeout_seconds" != "model_timeout_seconds"
+    assert Settings.model_fields["model_timeout_seconds"].default == 60
+
+
+def test_cosine_is_exact_on_known_vectors():
+    """The thresholds are the decision, so the arithmetic under them is pinned
+    separately from any provider."""
+    from coursemate_service.ai.quiz_generator import QuizGenerator as QG
+
+    assert QG._cosine([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
+    assert QG._cosine([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
+    assert QG._cosine([1.0, 0.0], [0.92, 0.3919], ) == pytest.approx(0.92, abs=1e-3)
+    # A zero vector has no direction; 0.0 beats a ZeroDivisionError on the
+    # serve path.
+    assert QG._cosine([0.0, 0.0], [1.0, 0.0]) == 0.0
+
+
 @pytest.mark.asyncio
 async def test_the_gate_uses_the_configured_threshold(monkeypatch):
     """Not a private bar. A generator that gated differently from chat would
