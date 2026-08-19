@@ -215,3 +215,105 @@ Worth writing down, because the absence is a decision:
 * **No "you are an expert in X".** It does not measurably help current models and
   it invites the model to answer from the expertise rather than from CONTEXT,
   which is precisely the failure mode §8.5 exists to prevent.
+
+---
+
+## 5. Development log — AI interactions (Phase 3)
+
+**This section is a different artifact from the four above.** Sections 1–4 are a
+*prompt library*: the strings CourseMate sends to a model at runtime. This one is
+the *development* log — the significant interactions with the AI coding tool
+(Claude Code) that produced the code, and what came of them.
+
+They were separate files in spirit and are one file here because the Phase 3
+brief names `prompts.md` for the development log. Keeping the library was the
+alternative to overwriting it, and the library is the more useful of the two for
+anyone reading the runtime behaviour.
+
+**Sourcing, stated so the log is not read as more than it is.** Entries for
+2026-08-19 are first-hand from that session. Entries for 2026-08-12 → 08-18 are
+**reconstructed from commit messages**, which in this repo carry the reasoning
+rather than just the diff — they are a faithful record of *what was decided and
+why*, not a transcript of what was typed. Where a date is reconstructed it says
+so. No interaction has been invented to fill a gap.
+
+### What the AI was actually used for
+
+Not autocomplete. The pattern that produced most of the value was: **ask for a
+diagnosis with evidence, refuse the first answer if it is not measured, then ask
+for the smallest change that the evidence supports.** Several entries below are
+cases where the first answer was wrong and the measurement caught it.
+
+### 2026-08-12 → 08-18 (reconstructed from commits)
+
+| Date | Interaction | Outcome |
+|---|---|---|
+| 08-13 | *"Find controls that claim to be true and are not."* A nine-item audit. | `8e9e263` "Fix three controls that reported success while doing nothing", `e32cb0f` readiness that could actually fail, `6696f3f` a contract-version lock nothing had called, `b340997` a tie-break setting whose declared default was the opposite of the code |
+| 08-13 | *"Correct the docs against the running system."* | `eb87823` corrected six stale claims; `91dd528` brought STATE in line with what was deployed |
+| 08-14 | *"Decide the model-routing topology and record the evidence."* | `26c36f5` ADR-0001; `2d8259c` a model-comparison harness; `28a4e4b` a failover probe. This is where the second provider became real rather than aspirational |
+| 08-14 | *"Three settings enforce nothing — prove it."* | `d0fb288` deleted two settings and declared one method rather than leaving them as decoration |
+| 08-14 | *"Clear the dead suppressions."* | `eb8062f` removed 84 stale `noqa` directives — the kind of task where AI is straightforwardly better than a human doing it by hand |
+| 08-15 | *"The plan renders as raw markup in the browser."* | `d507e8c` render it, `d35e7eb` **fail the build** if the plan emits markup the browser cannot render — the fix and the guard in the same pass |
+| 08-15 | *"Tests that skip are worse than tests that fail."* | `65c9ff2` and `c9129b7` made a missing dependency or missing `node` fail rather than silently skip nine suites |
+| 08-18 | *"Math renders on reload but not on a live answer."* | `ba9b245`. The AI's first theory (an F5 test) was **non-discriminating** — MathJax 2.7.5 typesets at window load, so a reload renders math with or without the fix. Only the live-stream path was broken |
+
+### 2026-08-19 (first-hand)
+
+**Verifying a learning outcome against the course material.** Asked whether
+OEX101's CLO-3 was valid. It read *"Configure and troubleshoot a Tutor-based Open
+edX deployment."* Evidence gathered from the live index: across 55 chunks,
+`troubleshoot` 0, `docker` 0, `configur` 1 (a definition), `deploy` 2 (release
+cadence) — and all four `Tutor` mentions point the reader at a *different* course.
+The course's own Learning Objectives block promises history, community, how the
+community operates, and ways to contribute. **The outcome was mis-specified, not
+under-covered.** Corrected, with `confirmed_by` set to null because the new text
+was derived from course material and no instructor confirmed it.
+
+**Diagnosing a feature that worked for one outcome and not another.** Practice
+generation always abstained on CLO-1 and always succeeded on CLO-2. The diagnosis
+was not "CLO-1 lacks content" — it was that the retrieval gate scores the *seed
+question's own text*, the store orders `marks DESC`, and CLO-1's heaviest question
+is an abstract essay scoring **0.3458 against tau 0.35**, while two siblings
+scored 0.8500 and 0.7292 and were never tried. Fixed by gating candidates in
+order (`dc15689`). Measured live afterwards: 0.78 tool-selection accuracy on the
+agent, and CLO-1 generating from the later candidate.
+
+**A UI bug found by asking "why does clicking this move the page?"** Source chips
+were rendered as `<a>` unconditionally; a paper carries no URL, and
+`safeHref(undefined)` returns `"#"`, which scrolls to the top and pushes a history
+entry. Fixed in `7afc011`. The existing test counted the chips but never checked
+their `href`, and the fixture encoded the bug faithfully — **the evidence had been
+in the repo the whole time and nothing looked at it.**
+
+#### Three times the AI was wrong, and how it was caught
+
+Recorded because a log of only successes would be worthless.
+
+1. **A correct diagnosis of the wrong thing.** The keepalive process was flagged
+   as fragile because its parent was PID 1428 "rather than PID 1". 1428 is WSL's
+   own `/init` session shim, whose parent *is* PID 1 — and being inside a WSL
+   session is precisely why the keepalive worked. The property called a weakness
+   was the mechanism.
+2. **A confident fix that failed outright.** Acting on that misreading, a systemd
+   unit was built to "properly" own the keepalive. It was enabled, active, and
+   **useless**: WSL ends the distro based on whether a *session* is live, not on
+   whether processes exist. With systemd, docker and 13 containers running, the
+   distro still died — `ps -o etime= -p 1` was observed *decreasing* between two
+   consecutive commands. Retiring the old keepalive on a wrong theory briefly
+   removed the protection entirely.
+3. **A rescue that was impossible before it was proposed.** After a rebuild took
+   an image's tag, `docker commit` was proposed to preserve the outgoing image. It
+   failed with `NotFound: content digest ... not found` — containerd had already
+   collected the blobs. The option had expired before it was offered.
+
+The common thread: each was a plausible answer that a green check would have
+confirmed. What caught all three was insisting on a measurement that could fail —
+`PID 1` age across separate invocations, an exit code, a re-read of the store.
+
+#### Test discipline
+
+New tests were **reverse-checked against a pre-fix copy** before being trusted.
+For the generator fallback, 4 of 6 new tests failed without the change and 2
+passed — the 2 being the ones that assert *unchanged* behaviour, which is the
+result you want. A test that has never failed proves nothing, and this is the
+cheapest way to prove it can.

@@ -9,7 +9,7 @@ the reasoning, not just the diff.
 
 ## STATE — read this first, then verify it
 
-Last updated 2026-08-12. **Treat every line as stale until checked** — the
+Last updated 2026-08-19. **Treat every line as stale until checked** — the
 commands to check are given. A note that disagrees with the running system is
 wrong; the system wins.
 
@@ -115,8 +115,8 @@ wrong; the system wins.
 |---|---|---|
 | Everything through the sweep | Done, verified live | `git log --oneline` |
 | Plugin migrations | **0001–0004 applied**, incl. 0003 (mastery) + 0004 (difficulty_band), against the live DB with real data | `tools/ops/migrate.sh` |
-| Service image | **`8fb7f3fd`, rebuilt 2026-08-13 from `d0fb288`** — planner, tagger, generator, WAL, B1/B2 retrieval, the C1 ceiling, the C2 cache, plus the audit work: contract-version guard, real readiness, metrics. 16 API routes live | `docker exec tutor_local-coursemate-1 python -c "import urllib.request,json;print(len(json.load(urllib.request.urlopen('http://127.0.0.1:8000/openapi.json'))['paths']))"` |
-| openedx image | **`834436d9`, rebuilt 2026-08-13 from `d0fb288`**, all 4 containers adopted it. Carries the study-plan UI, the D1 mark replay, the D2 self-assessment UI and the platform half of the contract lock | `tools/ops/adopt_new_image.sh` |
+| Service image | **`ef8b08430de6`, rebuilt 2026-08-19 from `dc15689`** — carries the generator's source-candidate fallback. Previously `8fb7f3fd` (2026-08-13): planner, tagger, generator, WAL, B1/B2 retrieval, the C1 ceiling, the C2 cache, plus the audit work: contract-version guard, real readiness, metrics. 18 API routes live | `docker exec tutor_local-coursemate-1 python -c "import urllib.request,json;print(len(json.load(urllib.request.urlopen('http://127.0.0.1:8000/openapi.json'))['paths']))"` |
+| openedx image | **`30fb683978d8`, rebuilt 2026-08-19 from `7afc011`**, all 5 containers adopted it. Carries the citation-chip URL handling, the mastery-badge repaint and the study-plan marks UI. Previously `834436d9` (2026-08-13), which carried the study-plan UI, the D1 mark replay, the D2 self-assessment UI and the platform half of the contract lock | `tools/ops/adopt_new_image.sh` |
 | Conversational retrieval (B1/B2) | **LIVE and browser-verified.** multi-turn r@3 0.333 → 0.917 | BENCHMARKS §3.8 |
 | Daily spend ceiling (C1) | **LIVE.** 100k tokens/student/course/UTC day. Provider reports no usage here, so it charges an estimate | BENCHMARKS §3.9, LIMITATIONS §4.1 |
 | First-turn response cache (C2) | **LIVE, and effectively inert.** The mechanism is browser-verified (74,973 ms → 133 ms, 0 charged) but `student_id` is in the key, so a hit needs the same student to re-ask as a *first* turn — and their history persists. Live counters after real traffic: **hits 0, misses 1** | `curl -H "Authorization: Bearer $CRED" .../coursemate/metrics` |
@@ -125,7 +125,7 @@ wrong; the system wins.
 | `/health/ready` | **Real check now.** Returns 503 when the index cannot be opened; Redis reported, never gating. An empty index is still *ready* (that is `preparing`) | `curl .../coursemate/health/ready` |
 | Metrics | **LIVE**, service-credential only, absent from the published spec. Six counters; verified moving under real traffic (`chat_requests_total` 0→1) | `curl -H "Authorization: Bearer $CRED" .../coursemate/metrics` |
 | Feature B end to end | **VERIFIED IN A REAL BROWSER** — tab, 100-mark plan, generated question, abstention, as enrolled `cm_student` | BENCHMARKS §3.7 |
-| OEX101 exam pack | **Loaded live** — 5 questions, 3 CLOs, 35 marks, 4 tagged | `/examprep/status` |
+| OEX101 exam pack | **Loaded live** — 5 questions, 3 CLOs, 35 marks, **all 5 tagged**. CLO-3 corrected 2026-08-19 and carries `confirmed_by: null` | `/examprep/status` |
 | Package in all 4 containers | From the IMAGE now, not container layers | `tools/ops/check_install.sh` |
 | Celery tasks registered | Yes, in both workers | `tools/ops/check_tasks.sh` |
 | Beat dispatches the sweep | **VERIFIED** — both from a derived image and the real container | `tools/verification/beat_container_probe.sh` |
@@ -168,6 +168,37 @@ enforces exactly that for error codes, and it has caught two of my own changes.
 
 The one thing left unhealthy is still the host, not CourseMate — see the warning
 above.
+
+**Done 2026-08-19:** three changes, deployed and verified server-side. Both
+images rebuilt and adopted; exam data was **not** reloaded or mutated by either
+deployment, and the rollback tags for both are preserved
+(`coursemate/service:0.1.0-prev3` → `09ee8b0fef53`,
+`overhangio/openedx:21.0.8-indigo-prev4` → `82ceb35d9244`).
+
+1. **The generator no longer abstains on one weak seed** (`dc15689`, service
+   image). `_find_source` returns up to ten candidates and the gate scores the
+   *seed question's own text*, so an outcome could be refused because its first
+   candidate was thin while usable ones sat unread. `stream` now gates candidates
+   in order and takes the first that passes. Verified live: CLO-1 generated from
+   a later candidate where it previously abstained; CLO-2 unchanged; **CLO-3 still
+   abstains immediately** because it has zero candidates — that path is untouched.
+   Behaviour is a strict superset: a passing first candidate short-circuits as
+   before, and when nothing passes the first candidate's error code is what the
+   student sees, so `PREPARING` and `ABSTAINED` stay distinct.
+2. **A source chip is a link only when it has somewhere to go** (`7afc011`,
+   openedx image). Papers deliberately carry no `url`, and every chip was still
+   rendered as an `<a>`; `safeHref(undefined)` is `"#"`, which scrolls the unit
+   page to the top and pushes a history entry. Chips without a usable URL now
+   render as an inert `<span>`; lesson citations with real URLs are unchanged.
+   **Verified in the image and by the browser-harness suites, not yet in a real
+   browser** — the DOM behaviour is not confirmed against a live page.
+3. **OEX101 CLO-3 was mis-specified, and is corrected.** It named Tutor
+   configuration and troubleshooting, which this course does not teach — it points
+   the reader at a different course for that. The corrected outcome is carried in
+   `tools/packs/oex101_final_2024.pack.json`, which is now the reviewed source of
+   truth for the offering's exam data. `confirmed_by` is **null**: the text was
+   derived from the course material, not confirmed by an instructor, and §7.3
+   shows the student that difference.
 
 **Known and still open** (evidence in the 2026-08-13 review):
 
@@ -213,6 +244,62 @@ above.
    safe by design (write→verify→swap) but it is not free.
 
 Rebuilding the *service* image is fine — ~20s, offline, no dependencies.
+
+## Keeping the WSL distro alive (2026-08-19)
+
+**The distro terminates during unattended gaps and takes all 13 containers with
+it.** The VM staying up is a different thing: `vmIdleTimeout=-1` in `.wslconfig`
+governs the VM, not the distro. The symptom is every Tutor container restarting
+mid-work, which reads as a Docker fault and is not one.
+
+**The rule that governs it — learned the hard way, do not re-derive:**
+
+> WSL decides the distro's lifetime by whether a **WSL session** is active, NOT
+> by whether processes exist inside the distro.
+
+A `systemd` unit running `sleep infinity` was built, enabled and proven active —
+and the distro **still died**, with systemd, docker, containerd and all 13
+containers running. Measured: `ps -o etime= -p 1` went `00:18` then `00:13`
+across two consecutive commands, i.e. the age *decreased* — the distro was dying
+after each `wsl.exe` invocation and rebooting on the next. A systemd service is
+owned by PID 1 and lives outside any WSL session, so WSL does not count it.
+**Do not try the systemd route again; it cannot work.**
+
+**A holder's parent must be `/init`, and that is the point.** `/init` is WSL's
+session shim. A keepalive whose parent is `/init` is inside a live WSL session,
+which is exactly what holds the distro. This was once mistaken for a weakness
+("it should be parented to PID 1") — that reading is backwards, and acting on it
+removed the protection.
+
+**What is deployed now.** A hidden logon script holding a real session:
+
+    %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\CourseMate-WSL-Start.vbs
+      -> sh.Run "wsl.exe -d Ubuntu-24.04 -e /usr/bin/sleep infinity", 0, False
+
+`0` hides the window, `False` means do not wait, so the script exits and leaves
+`wsl.exe` resident. Verified by running four separate `wsl.exe` invocations and
+watching PID 1's age climb monotonically while the same held pid persisted.
+
+**⚠ It is scoped to the interactive Windows logon.** It survives closing
+terminals and overnight idling *while logged in*. It does **not** survive Windows
+logoff, reboot, shutdown, or fast-user-switch. Closing that needs an elevated
+scheduled task ("run whether user is logged on or not") or a Windows service;
+both `Register-ScheduledTask` and `schtasks /Create` returned **Access is
+denied** without administrator rights.
+
+The blast radius of that gap is small: `docker.service` is `enabled` and all 13
+containers are `unless-stopped`, so a logon restores the stack on its own in
+~2–4 minutes. Nothing needs rebuilding.
+
+**To restore protection by hand** (e.g. after a distro cycle, from inside WSL):
+
+    setsid bash -c 'exec -a cm-keepalive-long sleep infinity' </dev/null >/dev/null 2>&1 &
+
+Never a finite duration — an earlier `sleep 86400` silently expired after a day
+and nothing restarted it. `setsid` is load-bearing; verify it outlived the shell
+with a **separate** `wsl` call, and confirm the distro is actually held by
+checking that PID 1's age *increases* across invocations. A process merely
+existing is not evidence.
 
 ## Ollama (host-side, 2026-08-11)
 
@@ -296,8 +383,10 @@ upstream `edX+DemoX+Demo_Course`).
 
 ## Tests
 
-    make check        # 6 contracts + OpenAPI drift check + 838 backend
-                      # + 93 browser tests
+    make check        # 6 contracts + OpenAPI drift check (18 paths)
+                      # + 1262 backend passed, 3 xfailed
+                      # + 297 browser passed across 9 suites
+                      # counts as of 2026-08-19; the target prints them
     make coverage     # gated at 80% for service+contracts (now 90.9%); platform ungated
     make agent-eval   # the 4 agent regression gates — needs no provider
     make openapi      # regenerate docs/openapi.json from the routes
@@ -408,10 +497,12 @@ What a fresh session most needs to know:
   settled for chat history. It is **not in Redis**: this deployment's Redis is
   `maxmemory-policy allkeys-lru`, which evicts keys with no TTL, AOF persists the
   eviction, and nothing logs it. Measured, not assumed.
-- **Nothing has run against a real model.** Every agent test drives the real loop
-  against a scripted router. `make agent-eval` measures the four regression gates
-  and reports tool-selection accuracy as NOT MEASURED. Do not report a number
-  from a stub. See LIMITATIONS §5.2.
+- **The offline suite runs against a scripted router, and says so.** Every agent
+  test in plain `make agent-eval` drives the real loop against a stub, so that
+  target still reports tool-selection accuracy as NOT MEASURED. **Do not report a
+  number from a stub** — that rule has not changed. The metric itself *has* since
+  been measured against a real model; see the `--live` entry below.
+  See LIMITATIONS §5.2.
 
 - **The AGENT is what ships dark — Feature B does not.** As of 2026-08-12 Feature
   B is deployed and browser-verified end to end: real PDF → extractor → CLO tagger
@@ -419,7 +510,22 @@ What a fresh session most needs to know:
   enrolled student. `agent_enabled` is still `False`, and that flag governs only
   `/examprep/plan`'s prose path. Do not describe Feature B as unbuilt.
 
-- **`--live` has been tried and it is still NOT MEASURED.** On 2026-08-12 the
-  local `qwen2.5:7b` timed out on nine of ten planning calls and printed `0.44`.
-  That figure measures timeouts, not tool choice, and must not be quoted. This
-  model cannot drive the loop; measuring it needs a hosted provider.
+- **`--live` tool-selection accuracy is `0.78`, measured 2026-08-19.** Run inside
+  the service container against the hosted `strong` deployment
+  (`openrouter/meta-llama/llama-3.3-70b-instruct`), with all 10 regression gates
+  passing. Reproduced twice. It is nine scored cases on one gold set against one
+  model — **a measurement, not a rate.**
+
+  **The earlier `0.44` was never a result and must still not be quoted.** On
+  2026-08-12 the local `qwen2.5:7b` timed out on nine of ten planning calls and
+  printed it; that figure measured timeouts, not tool choice. That note also said
+  measuring it "needs a hosted provider" — ADR-0001 supplied one on 2026-08-14,
+  and nobody re-ran the measurement until 2026-08-19. **The blocker was removed
+  five days before anyone noticed**, which is the more useful lesson than either
+  number.
+
+  **Why `0.78` is believed where `0.44` is not:** the run was timed against the
+  timeout threshold before the figure was read. `model_timeout_seconds` is 300,
+  so nine timing-out calls would take ~45 minutes; the whole run took **99
+  seconds**, so every call completed. Timeouts would also have *lowered* the
+  score, not inflated it — an empty tool list cannot match the gold's first tool.

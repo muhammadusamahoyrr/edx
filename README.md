@@ -240,8 +240,8 @@ a unit, publish. Full walkthrough: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ```bash
 make install     # venv + editable installs
-make check       # 6 architecture contracts, OpenAPI drift check, 838 backend
-                 # + 93 browser tests. No Open edX required
+make check       # 6 architecture contracts, OpenAPI drift check (18 paths),
+                 # 1262 backend + 297 browser tests. No Open edX required
 ```
 
 Tests are self-contained — a clean checkout runs green with no environment setup.
@@ -278,9 +278,28 @@ not production-deployed.**
 |---|---|
 | Verified working | Ingestion on publish, bootstrap, nightly sweep, video transcripts, retrieval, citations, abstention, enrollment re-derivation, block-level access, claim marking, two-course isolation |
 | Verified in a real browser (2026-08-12) | Exam-prep tab, budgeted study plan, generated practice question with provenance, abstention — as an enrolled non-staff student on the live stack |
+| Test suite (2026-08-19) | 6 contracts kept / 0 broken · OpenAPI current, 18 paths · **1262 backend passed + 3 xfailed** · **297 browser passed across 9 suites**, 0 failed |
 | Runs on | Tutor 21.0.8 / Open edX Ulmo, single node |
 | Not tried on | Other releases, Kubernetes, Learning Core, multiple replicas |
 | Not installable yet | Nothing is on PyPI or a public registry — this is a clone-and-build repo |
+
+**What a student can currently do**, all running on the live stack:
+
+* **Ask for practice on a specific learning outcome.** A generated question is
+  modelled on a real past-paper question, labelled AI-generated, and cited to
+  both the paper and the lessons it drew on.
+* **Get an honest refusal.** An outcome with no past-paper question to model on
+  produces an abstention, not an invented question — and the generator now tries
+  the *other* retrieved candidates before refusing, so an outcome is only
+  declined when none of its seeds can be grounded.
+* **Budget a revision session in marks.** The plan states what was asked for and
+  what could actually be filled, so a short question bank is reported as a
+  shortfall rather than padded or silently truncated.
+* **See where a question came from.** Source chips link into the courseware when
+  a real destination exists, and render as plain text when one does not — a
+  paper's identifier is not a link.
+* **Track their own progress per outcome**, self-assessed, which feeds the
+  weakest-first ordering of the next plan.
 
 **Known gaps, in the order they would be fixed** — the full list with reasons is
 in [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md), which is deliberately harsher
@@ -299,12 +318,17 @@ than this section:
    verified end to end in a real browser (see the table above). The agent is a
    separate thing: the tool registry, loop failure rules, mastery memory layer and
    MCP server are built and tested, but `agent_enabled` defaults to `False` and a
-   default install serves the deterministic planner. Running the loop against the
-   local CPU model on 2026-08-12 timed out on nine of ten planning calls, so
-   tool-selection accuracy is still unmeasured — `make agent-eval` says so rather
-   than printing a number.
+   default install serves the deterministic planner. Tool-selection accuracy is
+   **0.78** (2026-08-19, hosted provider, 10/10 regression gates passing,
+   reproduced twice) — nine scored cases on one gold set against one model, so a
+   measurement rather than a rate. The offline `make agent-eval` still reports
+   NOT MEASURED rather than printing a number, because a scripted router cannot
+   measure tool choice; the earlier run against a local CPU model on 2026-08-12
+   timed out on nine of ten planning calls and measured nothing at all.
 5. **Feature B's real-PDF evaluation is n=4.** One paper, five extracted
-   questions, four tagged and usable. CLO alignment and duplicate-freedom both
+   questions, four of them tagged and usable **as the bank stood on the day of
+   that run** — a historical measurement, not the current bank, which is now
+   fully tagged. CLO alignment and duplicate-freedom both
    scored 1.000, but four questions demonstrate that the pipeline works, not how
    often. Band plausibility could not be measured at all, because the extractor
    deliberately does not derive difficulty.
