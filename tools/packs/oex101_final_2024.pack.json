@@ -5,12 +5,12 @@
     {
       "clo_id": "CLO-1",
       "text": "Identify the organisations and roles that make up the Open edX community and describe how it is governed.",
-      "confirmed_by": "dr-lee"
+      "confirmed_by": null
     },
     {
       "clo_id": "CLO-2",
       "text": "Explain the Open edX named release process and evaluate its consequences for operators running their own installations.",
-      "confirmed_by": "dr-lee"
+      "confirmed_by": null
     },
     {
       "clo_id": "CLO-3",
