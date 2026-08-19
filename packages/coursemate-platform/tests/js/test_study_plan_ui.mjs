@@ -505,9 +505,9 @@ const tests = {
     assert.match(find(root, ".cm-plan-heading").textContent, /20 of 20 marks/);
   },
 
-  /* The service's PlanReport is deliberately not in the StudyPlan contract, so
-   * the shortfall is derived from what IS: requested minus the item total.
-   * Padding the plan, or saying nothing, would both misrepresent a short bank. */
+  /* Padding the plan, or saying nothing, would both misrepresent a short bank.
+   * This plan carries no requested_marks/planned_marks, so it also covers the
+   * fallback an older service still gets. */
   async "states unspent budget honestly"() {
     const { root } = await drive({ budget: "100" });
     const card = find(root, ".cm-plan-card");
@@ -515,6 +515,41 @@ const tests = {
     const unspent = find(card, ".cm-plan-unspent");
     assert.ok(unspent, "a short plan did not say it was short");
     assert.match(unspent.textContent, /80 marks could not be filled/);
+  },
+
+  /* The service states both numbers now. Deriving them in the browser is a
+     second copy of the planner's arithmetic, and this plan is one the copy
+     would get wrong: the items sum to 20 and the budget sent was 100, but the
+     service says it filled 35 of 90. */
+  async "the service's own totals win over anything the browser can derive"() {
+    const stated = {
+      ...PLAN_TWO_CLOS, requested_marks: 90, planned_marks: 35,
+    };
+    const { root } = await drive({ plan: stated, budget: "100" });
+    const card = find(root, ".cm-plan-card");
+
+    assert.match(find(card, ".cm-plan-heading").textContent, /35 of 90 marks/,
+      "the browser re-derived the totals instead of reading them");
+    assert.match(find(card, ".cm-plan-unspent").textContent, /55 marks could not be filled/);
+  },
+
+  /* Rollout order stays free — the same argument the contract-version lock makes
+     for a missing header. A shortfall line that disappears against an older
+     service is worse than one derived from the items. */
+  async "a plan with no stated totals still reports a shortfall"() {
+    const { root } = await drive({ plan: PLAN_TWO_CLOS, budget: "100" });
+
+    assert.match(find(find(root, ".cm-plan-card"), ".cm-plan-unspent").textContent,
+      /80 marks could not be filled/);
+  },
+
+  /* Zero is a real answer — nothing was filled — and must not be mistaken for
+     an absent field and replaced by the item sum. */
+  async "a stated zero is honoured, not treated as missing"() {
+    const stated = { offering_id: "o", items: [], requested_marks: 70, planned_marks: 0 };
+    const { root } = await drive({ plan: stated, budget: "70" });
+
+    assert.match(find(root, ".cm-plan-heading").textContent, /0 of 70 marks/);
   },
 
   async "a fully spent budget claims no shortfall"() {

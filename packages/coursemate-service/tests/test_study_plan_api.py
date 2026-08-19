@@ -125,6 +125,17 @@ async def test_a_budget_larger_than_the_bank_returns_what_exists(loaded):
 
 
 @pytest.mark.asyncio
+async def test_the_shortfall_reaches_the_client_on_the_wire(loaded):
+    """Not just the log. A client that has to subtract to learn it is short is a
+    client re-implementing the planner."""
+    plan = await examprep.study_plan(StudyPlanRequest(marks_budget=200), _claims())
+
+    assert plan.requested_marks == 200
+    assert plan.planned_marks == 40
+    assert plan.requested_marks - plan.planned_marks == 160
+
+
+@pytest.mark.asyncio
 async def test_the_shortfall_is_visible_to_an_operator_in_the_log(loaded, caplog):
     """An empty or short plan has four different causes — no pack, no outcomes,
     nothing tagged, nothing with marks — and they need different fixes. The

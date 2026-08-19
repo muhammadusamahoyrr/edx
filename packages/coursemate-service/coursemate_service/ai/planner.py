@@ -94,6 +94,23 @@ def _weight(clo: CLO, mastery: dict[str, CLOMastery]) -> float:
     return max(0.1, 1.0 - (m.accuracy or 0.0))
 
 
+def _plan(offering_id: str, report: "PlanReport",
+          items: list[StudyPlanItem] | None = None) -> StudyPlan:
+    """Build the plan from the report, so the two can never disagree.
+
+    `requested_marks` and `planned_marks` exist on both. Setting them at each
+    return site independently is how they drift — the contract would say 70/35
+    while the report said 70/34, and the student and the operator would be
+    reading different plans. Read once, here.
+    """
+    return StudyPlan(
+        offering_id=offering_id,
+        items=items or [],
+        requested_marks=report.requested_marks,
+        planned_marks=report.planned_marks,
+    )
+
+
 @dataclass
 class PlanReport:
     """Why the plan looks the way it does.
@@ -237,10 +254,10 @@ def build_plan(
 
     if marks_budget <= 0:
         report.reason = "marks budget must be positive"
-        return StudyPlan(offering_id=offering_id), report
+        return _plan(offering_id, report), report
     if not clos:
         report.reason = "no confirmed outcomes for this offering"
-        return StudyPlan(offering_id=offering_id), report
+        return _plan(offering_id, report), report
 
     ranked = sorted(clos, key=lambda c: weakness_key(c, mastery))[:max_clos]
 
@@ -259,7 +276,7 @@ def build_plan(
             "no past-paper question with a marks value is tagged to any of the "
             "outcomes selected"
         )
-        return StudyPlan(offering_id=offering_id), report
+        return _plan(offering_id, report), report
 
     shares = _split_budget([_weight(c, mastery) for c in usable], marks_budget)
 
@@ -308,7 +325,7 @@ def build_plan(
     elif report.unspent_marks > 0:
         report.reason = f"{report.unspent_marks} marks unspent; the bank ran short"
 
-    return StudyPlan(offering_id=offering_id, items=items), report
+    return _plan(offering_id, report, items), report
 
 
 def plan_for_offering(

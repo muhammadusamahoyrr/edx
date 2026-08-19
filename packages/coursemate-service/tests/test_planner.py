@@ -56,6 +56,61 @@ def total(plan) -> int:
     return sum(i.marks_budget for i in plan.items)
 
 
+# --- the shortfall the student is shown -------------------------------------
+
+
+def test_the_plan_states_what_was_asked_for_and_what_was_filled():
+    """The browser used to subtract the items from the budget it had sent. Those
+    are the planner's numbers, so the planner states them."""
+    clos = [clo("CLO-1")]
+    bank = {"CLO-1": [q("Q1", 20, "CLO-1")]}
+
+    plan, report = build_plan(OFFERING, clos, bank, marks_budget=70)
+
+    assert plan.requested_marks == 70
+    assert plan.planned_marks == 20
+    assert plan.planned_marks == total(plan)
+
+
+def test_the_contract_and_the_report_never_disagree():
+    """Both carry the same two numbers. Set independently they drift, and the
+    student and the operator end up reading different plans."""
+    clos = [clo(f"CLO-{i}") for i in range(1, 4)]
+    bank = {
+        f"CLO-{i}": [q(f"Q{i}-{j}", m, f"CLO-{i}") for j, m in enumerate((15, 10, 5, 3, 2, 1))]
+        for i in range(1, 4)
+    }
+    for budget in (1, 7, 35, 70, 200, 500):
+        plan, report = build_plan(OFFERING, clos, bank, marks_budget=budget)
+        assert plan.requested_marks == report.requested_marks
+        assert plan.planned_marks == report.planned_marks
+
+
+def test_an_unfillable_plan_still_states_the_request():
+    """The empty cases are exactly where a client cannot re-derive the number:
+    there are no items to sum, so a shortfall derived from them reads as zero."""
+    plan, report = build_plan(OFFERING, [], {}, marks_budget=70)
+
+    assert plan.items == []
+    assert plan.requested_marks == 70
+    assert plan.planned_marks == 0
+
+
+def test_allocation_is_unchanged_by_carrying_the_numbers():
+    """The fix reports; it does not plan. Same bank, same budget, same items."""
+    clos = [clo("CLO-1"), clo("CLO-2")]
+    bank = {
+        "CLO-1": [q("Q1", 15, "CLO-1"), q("Q2", 5, "CLO-1")],
+        "CLO-2": [q("Q3", 10, "CLO-2")],
+    }
+
+    plan, _ = build_plan(OFFERING, clos, bank, marks_budget=70)
+
+    assert [i.clo_id for i in plan.items] == ["CLO-1", "CLO-2"]
+    assert [i.question_ids for i in plan.items] == [["Q1", "Q2"], ["Q3"]]
+    assert total(plan) == 30
+
+
 # --- the budget promise ----------------------------------------------------
 
 

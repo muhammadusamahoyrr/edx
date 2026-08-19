@@ -1568,6 +1568,22 @@ on" rendered as "continueson". Same one-word mistake, same
       planned += typeof i.marks_budget === "number" ? i.marks_budget : 0;
     });
 
+    /* The service now states both numbers, so prefer them over re-deriving.
+     * Summing the items and echoing the budget we sent is a second copy of the
+     * planner's arithmetic living in the browser: it is right only while the
+     * service neither clamps the budget nor drops an outcome, and the day that
+     * changes this reports a shortfall that does not match the plan.
+     *
+     * The fallback stays because a plan can arrive from an older service — the
+     * same rollout-order argument the contract-version lock makes for a missing
+     * header — and a shortfall line that vanishes is worse than one derived. */
+    if (plan && typeof plan.planned_marks === "number") {
+      planned = plan.planned_marks;
+    }
+    if (plan && typeof plan.requested_marks === "number" && plan.requested_marks > 0) {
+      requested = plan.requested_marks;
+    }
+
     if (!items.length) {
       /* An empty plan is NOT an error, and must not render as one. The request
        * was fine; the course has nothing tagged with marks yet. Collapsing the

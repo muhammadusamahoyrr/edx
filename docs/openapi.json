@@ -1047,6 +1047,16 @@
           "offering_id": {
             "title": "Offering Id",
             "type": "string"
+          },
+          "planned_marks": {
+            "default": 0,
+            "title": "Planned Marks",
+            "type": "integer"
+          },
+          "requested_marks": {
+            "default": 0,
+            "title": "Requested Marks",
+            "type": "integer"
           }
         },
         "required": [

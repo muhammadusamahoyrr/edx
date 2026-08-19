@@ -272,6 +272,23 @@ class StudyPlan(BaseModel):
     offering_id: str
     items: list[StudyPlanItem] = Field(default_factory=list)
 
+    #: What the student asked for, and what the bank could actually fill.
+    #:
+    #: Carried rather than left to the caller to work out. The browser already
+    #: rendered a shortfall by subtracting the items' marks from the budget it
+    #: had sent, which is correct only for as long as those two numbers cannot
+    #: disagree — and they can: `marks_budget` is bounded (`ge=1, le=500`), a
+    #: plan can drop an outcome that has nothing budgetable, and any future
+    #: rounding lands here first. A client re-deriving the number is a second
+    #: implementation of the planner's arithmetic, kept in step by hand.
+    #:
+    #: Both are set from `PlanReport`, so the value a student sees and the value
+    #: an operator debugs from are the same number rather than two that agree
+    #: today. `PlanReport` itself stays out of the contract: *why* a plan is
+    #: short is diagnostic detail, *that* it is short is the student's business.
+    requested_marks: int = 0
+    planned_marks: int = 0
+
 
 class RevisionPlanOutcome(BaseModel):
     """One learning outcome in the unbudgeted revision plan, with its questions.
