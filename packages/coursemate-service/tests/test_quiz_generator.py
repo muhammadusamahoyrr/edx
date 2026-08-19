@@ -190,6 +190,175 @@ async def test_an_unindexed_course_reports_preparing_not_abstained(monkeypatch):
     assert (await _run(gen))[-1].error_code == ErrorCode.PREPARING
 
 
+class _CtxByText:
+    """Stand-in ContextProvider that scores each SOURCE QUESTION differently.
+
+    `_Ctx` returns one result whatever it is asked, which is why the gate looked
+    like a property of the outcome. It is a property of the individual seed
+    question, and telling those apart needs a double that can disagree with
+    itself.
+    """
+
+    def __init__(self, by_text: dict[str, ContextResult]):
+        self.by_text = by_text
+        self.asked: list[str] = []
+
+    def fetch_sync(self, question, claims, limit=None):
+        self.asked.append(question)
+        return self.by_text[question]
+
+
+def _scored(top_score: float) -> ContextResult:
+    """Grounded context at an exact score, to sit either side of tau."""
+    return ContextResult(
+        chunks=[ContextChunk(
+            text="A deadlock arises when processes wait on each other in a circular chain.",
+            citation=Citation(usage_key="block-v1:lesson", display_name="Deadlock avoidance"),
+            score=top_score,
+        )],
+        top_score=top_score,
+    )
+
+
+def _make_multi(monkeypatch, *, sources, ctx, router):
+    """`_make`, but with several candidates for the outcome."""
+    from coursemate_service.ai import quiz_generator as qg
+
+    monkeypatch.setattr(qg, "get_router", lambda: router)
+    monkeypatch.setattr(qg.boundary, "search_past_questions", lambda *a, **k: list(sources))
+    return QuizGenerator(context_provider=ctx)
+
+
+@pytest.mark.asyncio
+async def test_a_weak_first_candidate_falls_through_to_a_usable_one(monkeypatch):
+    """The bug this exists for, in the shape it was found in.
+
+    OEX101 CLO-1: the store orders `year DESC, marks DESC`, so the 15-mark
+    "critically evaluate ... governance" essay leads. Its own text scored 0.3458
+    against tau=0.35 — short by 0.004 — while "Name two major members of the Open
+    edX community" scored 0.8500. The generator gated the first candidate and
+    abstained, telling the student the best-covered outcome in the course was not
+    covered, with a usable seed already sitting in `candidates`.
+
+    The gate judges the SEED, not the outcome. One weak seed must not condemn the
+    outcome while other seeds exist.
+    """
+    essay = _source(question_id="Q-ESSAY", marks=15,
+                    text="Critically evaluate the claim that the community's governance is its main strength")
+    naming = _source(question_id="Q-NAME", marks=3,
+                     text="Name two major members of the Open edX community")
+    ctx = _CtxByText({essay.text: _scored(0.3458), naming.text: _scored(0.8500)})
+    router = _Router(OK)
+    gen = _make_multi(monkeypatch, sources=[essay, naming], ctx=ctx, router=router)
+
+    frames = await _run(gen)
+
+    assert frames[-1].type == FrameType.DONE, "generation did not proceed"
+    assert router.calls == 1, "the model was never asked"
+    # Both were gated, in order, and the passing one is the one it used.
+    assert ctx.asked == [essay.text, naming.text]
+    cited = [f.citation.usage_key for f in frames if f.type == FrameType.CITATION]
+    assert "final-2024.pdf" in cited
+
+
+@pytest.mark.asyncio
+async def test_the_second_candidate_becomes_the_source_it_was_modelled_on(monkeypatch):
+    """Falling through must move the PROVENANCE too.
+
+    Reporting the essay as the source while modelling on the naming question
+    would be a false claim about where the question came from — the same class of
+    error as labelling a reprint AI-generated.
+    """
+    essay = _source(question_id="Q-ESSAY", marks=15, difficulty=0.9,
+                    text="Critically evaluate the claim that the community's governance is its main strength")
+    naming = _source(question_id="Q-NAME", marks=3, difficulty=0.2,
+                     source_doc_id="paper-B.pdf",
+                     text="Name two major members of the Open edX community")
+    ctx = _CtxByText({essay.text: _scored(0.10), naming.text: _scored(0.90)})
+    gen = _make_multi(monkeypatch, sources=[essay, naming], ctx=ctx, router=_Router(OK))
+
+    frames = await _run(gen)
+
+    cited = [f.citation.usage_key for f in frames if f.type == FrameType.CITATION]
+    assert "paper-B.pdf" in cited, "cited the seed it did not use"
+    assert "final-2024.pdf" not in cited
+
+
+@pytest.mark.asyncio
+async def test_every_candidate_below_the_bar_still_abstains(monkeypatch):
+    """The safety property is unchanged: no usable seed means no question.
+
+    Falling through must not become "keep looking until something passes" — if
+    nothing reaches tau, the generator still refuses, and still before any model
+    call.
+    """
+    a = _source(question_id="Q-A", text="Alpha question text")
+    b = _source(question_id="Q-B", text="Beta question text")
+    c = _source(question_id="Q-C", text="Gamma question text")
+    ctx = _CtxByText({a.text: _scored(0.10), b.text: _scored(0.20), c.text: _scored(0.3499)})
+    router = _Router(OK)
+    gen = _make_multi(monkeypatch, sources=[a, b, c], ctx=ctx, router=router)
+
+    frames = await _run(gen)
+
+    assert frames[-1].error_code == ErrorCode.ABSTAINED
+    assert router.calls == 0, "abstention must cost no model call"
+    assert ctx.asked == [a.text, b.text, c.text], "it stopped looking early"
+
+
+@pytest.mark.asyncio
+async def test_an_unindexed_course_still_reports_preparing_across_candidates(monkeypatch):
+    """§5.1 survives the loop. A missing index is a property of the index, so
+    every candidate reports it — and the student must still be invited back
+    rather than told the material does not exist."""
+    a = _source(question_id="Q-A", text="Alpha question text")
+    b = _source(question_id="Q-B", text="Beta question text")
+    missing = ContextResult(chunks=[], top_score=0.0, index_missing=True)
+    ctx = _CtxByText({a.text: missing, b.text: missing})
+    gen = _make_multi(monkeypatch, sources=[a, b], ctx=ctx, router=_Router(OK))
+
+    assert (await _run(gen))[-1].error_code == ErrorCode.PREPARING
+
+
+@pytest.mark.asyncio
+async def test_a_passing_first_candidate_is_not_second_guessed(monkeypatch):
+    """The common path must be untouched: one candidate passes, one retrieval
+    happens, and no later candidate is even scored."""
+    good = _source(question_id="Q-GOOD", text="Alpha question text")
+    other = _source(question_id="Q-OTHER", text="Beta question text")
+    ctx = _CtxByText({good.text: _scored(0.90), other.text: _scored(0.99)})
+    gen = _make_multi(monkeypatch, sources=[good, other], ctx=ctx, router=_Router(OK))
+
+    frames = await _run(gen)
+
+    assert frames[-1].type == FrameType.DONE
+    assert ctx.asked == [good.text], "it kept scoring after a candidate passed"
+
+
+@pytest.mark.asyncio
+async def test_the_reprint_check_still_sees_every_candidate(monkeypatch):
+    """Falling through must not narrow the duplicate check.
+
+    `_is_reprint` compares against ALL candidates, not the chosen seed. If the
+    model reproduces the FIRST candidate — the one the gate rejected — that is
+    still a real exam question labelled AI-generated, and it must still be
+    caught.
+    """
+    essay = _source(question_id="Q-ESSAY",
+                    text="Critically evaluate the claim that governance is the main strength")
+    naming = _source(question_id="Q-NAME", text="Name two major members of the Open edX community")
+    ctx = _CtxByText({essay.text: _scored(0.10), naming.text: _scored(0.90)})
+    # The model parrots the REJECTED candidate back; both attempts do.
+    reprint = '{"question": "Critically evaluate the claim that governance is the main strength"}'
+    router = _Router(reprint, reprint)
+    gen = _make_multi(monkeypatch, sources=[essay, naming], ctx=ctx, router=router)
+
+    frames = await _run(gen)
+
+    assert frames[-1].error_code == ErrorCode.ABSTAINED, "a reprint reached the student"
+    assert router.calls == 2, "the reprint did not spend its retry"
+
+
 @pytest.mark.asyncio
 async def test_the_gate_uses_the_configured_threshold(monkeypatch):
     """Not a private bar. A generator that gated differently from chat would

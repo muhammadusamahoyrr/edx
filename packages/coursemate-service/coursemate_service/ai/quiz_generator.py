@@ -64,6 +64,11 @@ log = logging.getLogger(__name__)
 
 #: How many source candidates to pull before picking one. Small: the filter has
 #: already narrowed by outcome and band, and this is a retrieval, not a ranking.
+#:
+#: It also bounds how many candidates `stream` will gate before giving up, so the
+#: worst case is this many context retrievals (~31 ms each, BENCHMARKS §3.6)
+#: instead of one. That cost is paid only on the path that used to abstain
+#: outright, and it is noise beside a ~9.7 s generation.
 _SOURCE_CANDIDATES = 10
 
 #: Jaccard similarity at or above which a generated question counts as a reprint
@@ -421,13 +426,52 @@ class QuizGenerator:
             return
 
         # --- stage 2 -----------------------------------------------------
-        context = await asyncio.to_thread(self._fetch_context, source, claims)
-        outcome = gate.evaluate(context)
-        if (code := gate.ERROR_CODE[outcome]) is not None:
+        # Gate each candidate in turn, not just the first.
+        #
+        # The gate scores lesson material against the SOURCE QUESTION'S OWN TEXT,
+        # so it is judging the seed, not the outcome. Those come apart: on OEX101
+        # CLO-1 the first candidate is a 15-mark "critically evaluate ... the
+        # community's governance" essay that scored 0.3458 against tau=0.35 —
+        # short by 0.004 — while its two siblings, "Name two major members of the
+        # Open edX community" and "State what the Open edX community is", scored
+        # 0.8500 and 0.7292. The outcome is the best-covered topic in the course;
+        # only its heaviest seed is thinly covered. Abstaining on the first
+        # candidate told the student CLO-1 was not covered, which is the opposite
+        # of true, and it did so while two usable seeds sat in `candidates`.
+        #
+        # `year DESC, marks DESC` puts the heaviest question first, and the
+        # heaviest question is the most abstract one — the ordering that helps
+        # the planner actively picks the worst seed for retrieval.
+        #
+        # `source` leads so a requested difficulty band still wins the first pick;
+        # the rest follow in store order. Bounded by `_SOURCE_CANDIDATES`.
+        ordered = [source] + [c for c in candidates if c.question_id != source.question_id]
+
+        context = None
+        first_code: ErrorCode | None = None
+        for candidate in ordered:
+            result = await asyncio.to_thread(self._fetch_context, candidate, claims)
+            outcome = gate.evaluate(result)
+            code = gate.ERROR_CODE[outcome]
+            if code is None:
+                source, context = candidate, result
+                break
+            # The FIRST candidate's verdict is the one reported if none pass, so
+            # a total failure says exactly what it said before this loop existed
+            # — including PREPARING, which is a property of the index and so is
+            # the same for every candidate anyway.
+            if first_code is None:
+                first_code = code
+            log.info(
+                "generator gated for %s on %s: %s",
+                clo_id, candidate.question_id, outcome.value,
+            )
+
+        if context is None:
             # The same gate, the same threshold, the same mapping as chat —
             # "still being prepared" and "not covered" stay distinct (§5.1).
-            log.info("generator gated for %s: %s", clo_id, outcome.value)
-            yield StreamFrame(type=FrameType.ERROR, error_code=code)
+            log.info("generator gated for %s: no candidate passed", clo_id)
+            yield StreamFrame(type=FrameType.ERROR, error_code=first_code)
             return
 
         try:
