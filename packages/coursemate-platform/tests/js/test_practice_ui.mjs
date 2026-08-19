@@ -218,6 +218,43 @@ const tests = {
       "each source should be its own chip");
   },
 
+  /* The bug this exists for: the paper chip was `<a href="#">`, which scrolls
+   * the unit page to the top and pushes a history entry. Beside it the lesson
+   * chip navigated correctly, so the tutor looked like it broke at random
+   * rather than like one chip having nowhere to go. */
+  async "a paper citation with no url is not rendered as a link"() {
+    const { root } = await drive([
+      { type: "token", text: "Q?" },
+      { type: "citation", citation: CITATION_PAPER },
+      { type: "citation", citation: CITATION_LESSON },
+      { type: "done" },
+    ]);
+    const prov = find(find(root, ".cm-practice-card"), ".cm-provenance");
+    const chips = findAll(prov, ".cm-chip-link");
+    assert.equal(chips.length, 2, "both sources should still be chips");
+
+    const paper = chips[0];
+    assert.notEqual(paper.tagName, "a", "the paper rendered as a link");
+    assert.equal(paper.tagName, "span");
+    assert.ok(!paper.href, `a dead href was set: ${JSON.stringify(paper.href)}`);
+    assert.equal(paper.text, "final-2024.pdf", "the label was lost");
+  },
+
+  async "a lesson citation with a real url is still a working link"() {
+    const { root } = await drive([
+      { type: "token", text: "Q?" },
+      { type: "citation", citation: CITATION_PAPER },
+      { type: "citation", citation: CITATION_LESSON },
+      { type: "done" },
+    ]);
+    const prov = find(find(root, ".cm-practice-card"), ".cm-provenance");
+    const lesson = findAll(prov, ".cm-chip-link")[1];
+
+    assert.equal(lesson.tagName, "a", "a real destination stopped being a link");
+    assert.equal(lesson.href, "/courses/x/jump_to/block-v1:d");
+    assert.equal(lesson.text, "Deadlock avoidance");
+  },
+
   async "says so when a question arrives with no citation"() {
     const { root } = await drive([{ type: "token", text: "Q?" }, { type: "done" }]);
     const prov = find(find(root, ".cm-practice-card"), ".cm-provenance");
@@ -273,8 +310,16 @@ const tests = {
       { type: "done" },
     ]);
     const prov = find(find(root, ".cm-practice-card"), ".cm-provenance");
-    const link = prov.children.find((c) => c.tagName === "a");
-    assert.equal(link.href, "#", "javascript: url reached an href");
+    // `safeHref` is unchanged and still refuses the url; what changed is what a
+    // refusal LOOKS like. It used to be `<a href="#">` — neutral, but still a
+    // link that scrolls the page. A refused url now yields no anchor at all, so
+    // assert the stronger property: nothing clickable, and no href anywhere.
+    assert.equal(prov.children.find((c) => c.tagName === "a"), undefined,
+      "a refused url still produced a link");
+    const chip = findAll(prov, ".cm-chip-link")[0];
+    assert.equal(chip.tagName, "span");
+    assert.ok(!chip.href, "javascript: url reached an href");
+    assert.ok(!String(chip.href).includes("javascript:"));
   },
 };
 

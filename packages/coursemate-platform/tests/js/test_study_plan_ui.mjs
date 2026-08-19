@@ -950,6 +950,26 @@ CourseMateTutor;`, { filename: JS });
     assert.equal(chips[0].text, "oex101_final_2024.pdf");
   },
 
+  /* A paper is an identifier, not a destination. `href="#"` is not inert — it
+   * scrolls the unit page to the top and pushes a history entry, so the chip
+   * read as the tutor navigating away from the plan the student just asked for. */
+  async "a paper chip with no url is not a link"() {
+    const root = buildPage();
+    await drivePlannerStructured(root);
+    const slot = find(root, ".cm-prose-plan-slot") || find(root, ".cm-prep-log");
+    const chip = findAll(slot, ".cm-citation")[0];
+    const inner = chip.children[0];
+
+    assert.notEqual(inner.tagName, "a", "a paper with no url rendered as a link");
+    assert.equal(inner.tagName, "span");
+    assert.ok(!inner.href, `a dead href was set: ${JSON.stringify(inner.href)}`);
+    assert.equal(inner.text, "oex101_final_2024.pdf", "the label was lost");
+    // Styling is keyed on `.cm-citation a` OR `.cm-chip-link`, one shared
+    // declaration block — so the span must carry the class to look identical.
+    assert.ok(inner.className.includes("cm-chip-link"),
+      "the span would lose its styling without cm-chip-link");
+  },
+
   async "no markdown is parsed on this path"() {
     // Nothing should reach the student as raw markup, and equally nothing
     // should have needed a parser to get here.

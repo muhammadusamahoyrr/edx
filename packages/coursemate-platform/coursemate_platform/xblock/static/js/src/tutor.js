@@ -451,13 +451,43 @@ on" rendered as "continueson". Same one-word mistake, same
     for (i = 0; i < kids.length; i++) { sanitizeMath(kids[i]); }
   }
 
+  /* A source chip — an anchor ONLY when there is somewhere to go.
+   *
+   * Past papers deliberately carry no `url`: a `source_doc_id` is an identifier,
+   * not a courseware deep link, and the service will not invent one because a
+   * link that resolved to nothing is worse than none (§11.2b). That decision was
+   * correct and the renderer ignored it — every chip became an `<a>`, and
+   * `safeHref(undefined)` is `"#"`.
+   *
+   * `href="#"` is not an inert link. It scrolls the unit page to the top and
+   * pushes a history entry, so clicking "Derived from oex101_final_2024.pdf"
+   * threw the student back up the page and left Back doing nothing. Next to it
+   * the lesson chips navigated correctly, which made the tutor look like it
+   * broke at random rather than like one chip having no destination.
+   *
+   * So: no URL, no anchor. The span keeps `cm-chip-link` even inside
+   * `.cm-citation`, whose styling is otherwise keyed on the `a` tag — the two
+   * selectors share ONE declaration block, so the span is pixel-identical
+   * without touching the stylesheet. `safeHref` is unchanged and still decides
+   * what "usable" means, including refusing `javascript:`; a refused URL now
+   * renders as plain text instead of a dead link, which is also the better
+   * outcome. */
+  function chipNode(source, className) {
+    var label = source.display_name || source.usage_key;
+    var href = safeHref(source.url);
+    if (href === "#") {
+      return el("span", className || "cm-chip-link", label);
+    }
+    var link = el("a", className, label);
+    link.href = href;
+    return link;
+  }
+
   /* One place that builds a citation chip, used by both the live stream and the
    * reloaded history — so a persisted answer looks identical to a fresh one. */
   function citationNode(citation) {
     var wrap = el("span", "cm-citation");
-    var link = el("a", null, citation.display_name || citation.usage_key);
-    link.href = safeHref(citation.url);
-    wrap.appendChild(link);
+    wrap.appendChild(chipNode(citation, null));
     return wrap;
   }
 
@@ -1941,9 +1971,7 @@ on" rendered as "continueson". Same one-word mistake, same
       if (cites.length) {
         prov.appendChild(el("span", "cm-sources-label", "Derived from"));
         cites.forEach(function (c) {
-          var link = el("a", "cm-chip-link", c.display_name || c.usage_key);
-          link.href = safeHref(c.url);
-          prov.appendChild(link);
+          prov.appendChild(chipNode(c, "cm-chip-link"));
         });
       } else {
         prov.textContent = "Source unavailable for this question.";
@@ -2069,9 +2097,7 @@ on" rendered as "continueson". Same one-word mistake, same
               if (sources.length) {
                 prov.appendChild(el("span", "cm-sources-label", "Derived from"));
                 sources.forEach(function (c) {
-                  var link = el("a", "cm-chip-link", c.display_name || c.usage_key);
-                  link.href = safeHref(c.url);
-                  prov.appendChild(link);
+                  prov.appendChild(chipNode(c, "cm-chip-link"));
                 });
               } else {
                 prov.textContent = "Source unavailable for this question.";
