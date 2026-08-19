@@ -40,6 +40,14 @@ function makeNode(tag, cls) {
       if (i < 0) { throw new Error("NotFoundError: node is not a child"); }
       node.children.splice(i, 1); c.parentNode = null;
     },
+    replaceChild(newChild, oldChild) {
+      const i = node.children.indexOf(oldChild);
+      if (i < 0) { throw new Error("NotFoundError: node is not a child"); }
+      newChild.parentNode = node;
+      node.children[i] = newChild;
+      oldChild.parentNode = null;
+      return newChild;
+    },
     addEventListener(ev, fn) { node._listeners[ev] = fn; },
     querySelector(sel) { return find(node, sel); },
     querySelectorAll(sel) { return findAll(node, sel); },
@@ -140,7 +148,7 @@ async function generate(frames, { recordFails = false, recordError = null } = {}
   const src = readFileSync(JS, "utf8");
   const factory = vm.runInThisContext(`${src}\nCourseMateTutor;`, { filename: JS });
   factory({ handlerUrl: (_e, name) => `/handler/${name}` },
-          { querySelector: (s) => find(root, s) || root }, {});
+          { querySelector: (s) => find(root, s) || root, querySelectorAll: (s) => findAll(root, s) }, {});
 
   const prepPanel = find(root, '.cm-panel[data-panel="prep"]');
   prepPanel.dataset.base = "/coursemate/api/examprep";
@@ -160,8 +168,15 @@ const QUESTION = [
 
 const recordCalls = (calls) => calls.filter((c) => c.url.includes("/record_attempt"));
 
+/** The shape the XBlock actually seeds: `_mastery_snapshot()` always returns a
+ *  dict with `offering_id`, so the browser is never handed a bare `{clos: []}`.
+ *  Tests that start from anything else are testing a page that cannot exist. */
+const seededMastery = (clos = []) => ({
+  offering_id: "course-v1:OpenedX+OEX101+2023", clos, truncated: false,
+});
+
 /** Generate several questions on ONE page, the way a student actually would. */
-async function generateRun(framesList) {
+async function generateRun(framesList, { mastery = null, recordError = null, recordFails = false } = {}) {
   const root = buildPage();
   const calls = [];
   let next = 0;
@@ -172,6 +187,8 @@ async function generateRun(framesList) {
       return { ok: true, json: async () => ({ token: "t", stream_path: "/coursemate/api/chat" }) };
     }
     if (u.includes("/record_attempt")) {
+      if (recordFails) { throw new Error("network down"); }
+      if (recordError) { return { ok: true, json: async () => ({ error: recordError }) }; }
       return { ok: true, json: async () => ({ recorded: true }) };
     }
     /* E2: the client now persists each card. Without this the persist call
@@ -185,7 +202,7 @@ async function generateRun(framesList) {
   const src = readFileSync(JS, "utf8");
   const factory = vm.runInThisContext(`${src}\nCourseMateTutor;`, { filename: JS });
   factory({ handlerUrl: (_e, name) => `/handler/${name}` },
-          { querySelector: (s) => find(root, s) || root }, {});
+          { querySelector: (s) => find(root, s) || root }, mastery ? { mastery } : {});
 
   find(root, '.cm-panel[data-panel="prep"]').dataset.base = "/coursemate/api/examprep";
   find(root, ".cm-practice-clo").value = "CLO-1";
@@ -197,6 +214,25 @@ async function generateRun(framesList) {
   }
   return { root, calls };
 }
+
+/** One rendered plan row, built the way `planItemNode` builds it — label prose
+ *  AND the `data-clo` attribute the badge updater matches on. */
+function planItem(parent, cloId, marks) {
+  const itemNode = makeNode("div", "cm-plan-item");
+  const headNode = makeNode("div", "cm-plan-item-head");
+  const cloNode = makeNode("span", "cm-plan-clo");
+  cloNode.textContent = `${cloId} · ${marks} marks`;
+  cloNode.setAttribute("data-clo", cloId);
+  const masteryNode = makeNode("span", "cm-plan-mastery unpractised");
+  masteryNode.textContent = "not practised yet";
+  headNode.appendChild(cloNode);
+  headNode.appendChild(masteryNode);
+  itemNode.appendChild(headNode);
+  parent.appendChild(itemNode);
+  return itemNode;
+}
+
+const badgeText = (itemNode) => find(itemNode, ".cm-plan-mastery").textContent;
 
 const qFrames = (n) => ([
   { type: "token", text: `Question number ${n}?` },
@@ -493,6 +529,98 @@ const tests = {
     const { root } = await generateRun([qFrames(1)]);
     assert.match(find(root, ".cm-practice-send").textContent, /another/i,
       "nothing on screen suggested asking again was possible");
+  },
+
+  async "marking a card correct updates the in-memory mastery snapshot and re-renders the plan badge in DOM"() {
+    const { root } = await generateRun([qFrames(1)], { mastery: seededMastery() });
+    const itemNode = planItem(find(root, ".cm-practice-slot"), "CLO-1", 20);
+
+    find(find(root, ".cm-practice-card"), ".cm-selfcheck-got")._listeners.click();
+    await settle();
+
+    assert.match(badgeText(itemNode), /1\/1 self-marked/,
+      "badge text updated in DOM dynamically without reload");
+  },
+
+  /* The other button. "Not yet" is still an attempt — the counter has to move,
+     or a student who keeps getting an outcome wrong sees a plan that believes
+     they never tried it, which is the opposite of the recommendation they need. */
+  async "marking a card 'Not yet' counts the attempt without counting it correct"() {
+    const { root } = await generateRun([qFrames(1)], { mastery: seededMastery() });
+    const itemNode = planItem(find(root, ".cm-practice-slot"), "CLO-1", 20);
+
+    find(find(root, ".cm-practice-card"), ".cm-selfcheck-not")._listeners.click();
+    await settle();
+
+    assert.match(badgeText(itemNode), /0\/1 self-marked/,
+      "'Not yet' either lost the attempt or scored it as correct");
+  },
+
+  /* The badge must not move on a write that did not land. Showing 1/1 after a
+     failed save is the same lie the re-enabled buttons exist to prevent: the
+     student is told it counted, and the server has no record of it. */
+  async "a failed record_attempt leaves the badge and the snapshot untouched"() {
+    const { root } = await generateRun([qFrames(1)],
+      { mastery: seededMastery(), recordError: "unavailable" });
+    const itemNode = planItem(find(root, ".cm-practice-slot"), "CLO-1", 20);
+
+    const card = find(root, ".cm-practice-card");
+    find(card, ".cm-selfcheck-got")._listeners.click();
+    await settle();
+
+    assert.match(badgeText(itemNode), /not practised yet/,
+      "the badge counted an attempt the server never recorded");
+    assert.equal(find(card, ".cm-selfcheck-got").disabled, false,
+      "the retry path was left closed");
+  },
+
+  /* CLO-1 is a prefix of CLO-10. Matching the label text would repaint CLO-10's
+     badge with CLO-1's counters, so the id is matched exactly instead. */
+  async "recording CLO-1 does not repaint the badge of CLO-10"() {
+    const { root } = await generateRun([qFrames(1)], { mastery: seededMastery() });
+    const slot = find(root, ".cm-practice-slot");
+    const one = planItem(slot, "CLO-1", 20);
+    const ten = planItem(slot, "CLO-10", 5);
+
+    find(find(root, ".cm-practice-card"), ".cm-selfcheck-got")._listeners.click();
+    await settle();
+
+    assert.match(badgeText(one), /1\/1 self-marked/, "the practised outcome did not update");
+    assert.match(badgeText(ten), /not practised yet/,
+      "CLO-10's badge was overwritten by a prefix match on CLO-1");
+  },
+
+  /* The attempt has to land on the object the page already carries, not on a
+     copy: `mastery` is posted verbatim to study-plan and revision-plan. */
+  async "the attempt lands on the seeded snapshot, leaving offering_id intact"() {
+    const seeded = seededMastery();
+    const { root } = await generateRun([qFrames(1)], { mastery: seeded });
+    planItem(find(root, ".cm-practice-slot"), "CLO-1", 20);
+
+    find(find(root, ".cm-practice-card"), ".cm-selfcheck-got")._listeners.click();
+    await settle();
+
+    assert.equal(seeded.offering_id, "course-v1:OpenedX+OEX101+2023",
+      "the seeded snapshot was replaced rather than updated");
+    assert.deepEqual(seeded.clos, [{ clo_id: "CLO-1", attempts: 1, correct: 1 }],
+      "the attempt did not land on the snapshot the page carries");
+  },
+
+  /* With nothing seeded there is no `offering_id` to be had, and `MasterySnapshot`
+     requires one. `null` is a value the plan routes accept and ignore; an invented
+     `{clos: […]}` is one they reject. So the badge staying put is the correct
+     outcome here — a stale badge beats a plan request that 422s. */
+  async "with no seeded snapshot the code updates nothing rather than inventing one"() {
+    const { root, calls } = await generateRun([qFrames(1)]);
+    const itemNode = planItem(find(root, ".cm-practice-slot"), "CLO-1", 20);
+
+    find(find(root, ".cm-practice-card"), ".cm-selfcheck-got")._listeners.click();
+    await settle();
+
+    assert.equal(recordCalls(calls).length, 1,
+      "the attempt never reached the server, so this proves nothing");
+    assert.match(badgeText(itemNode), /not practised yet/,
+      "a snapshot was synthesised — it would reach the plan routes without offering_id");
   },
 };
 

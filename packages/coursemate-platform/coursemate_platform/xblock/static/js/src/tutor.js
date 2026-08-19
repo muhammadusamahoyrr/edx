@@ -1484,7 +1484,13 @@ on" rendered as "continueson". Same one-word mistake, same
     var marks = typeof item.marks_budget === "number" ? item.marks_budget : 0;
 
     var head = el("div", "cm-plan-item-head");
-    head.appendChild(el("span", "cm-plan-clo", item.clo_id + " · " + marks + " marks"));
+    /* The id is carried as an attribute as well as inside the label, because the
+     * label is prose — "CLO-1 · 20 marks" — and matching on prose means matching
+     * on a prefix, which makes CLO-1 match CLO-10. `clo_id` is free-form up to 64
+     * characters, so ten outcomes is all it takes to reach that. */
+    var cloNode = el("span", "cm-plan-clo", item.clo_id + " · " + marks + " marks");
+    cloNode.setAttribute("data-clo", item.clo_id);
+    head.appendChild(cloNode);
     head.appendChild(masteryBadge(item.clo_id));
     node.appendChild(head);
 
@@ -1785,6 +1791,47 @@ on" rendered as "continueson". Same one-word mistake, same
           text: cardText,
           citations: cardCitations,
           answered: true
+        });
+
+        /* Update in-memory mastery snapshot so badges stay in sync without refresh.
+         *
+         * MUTATE the seeded snapshot; never build a replacement. A synthesised
+         * `{clos: []}` would be missing `offering_id`, which `MasterySnapshot`
+         * requires — and `mastery` is posted verbatim to study-plan and
+         * revision-plan. `null` is a value those routes accept and ignore; an
+         * object without `offering_id` is one they reject, so inventing a
+         * snapshot would turn a silently-absent hint into a failed plan. */
+        if (mastery) {
+          if (!mastery.clos) { mastery.clos = []; }
+          var row = null;
+          for (var i = 0; i < mastery.clos.length; i++) {
+            if (mastery.clos[i].clo_id === cloId) {
+              row = mastery.clos[i];
+              break;
+            }
+          }
+          if (!row) {
+            row = { clo_id: cloId, attempts: 0, correct: 0 };
+            mastery.clos.push(row);
+          }
+          row.attempts = (row.attempts || 0) + 1;
+          if (correct) {
+            row.correct = (row.correct || 0) + 1;
+          }
+        }
+
+        /* Re-render affected .cm-plan-mastery badge(s) in the DOM. Matched on the
+         * `data-clo` attribute, which holds the id exactly, rather than on the
+         * label text, where a prefix test would let CLO-1 overwrite CLO-10. */
+        var items = root.querySelectorAll(".cm-plan-item");
+        items.forEach(function (itemNode) {
+          var cloNode = itemNode.querySelector(".cm-plan-clo");
+          if (cloNode && cloNode.getAttribute("data-clo") === cloId) {
+            var oldBadge = itemNode.querySelector(".cm-plan-mastery");
+            if (oldBadge && oldBadge.parentNode) {
+              oldBadge.parentNode.replaceChild(masteryBadge(cloId), oldBadge);
+            }
+          }
         });
       }).catch(function () {
         /* Cleared alongside the buttons: nothing was written, so the next press
