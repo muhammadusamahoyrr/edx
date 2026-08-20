@@ -115,8 +115,8 @@ wrong; the system wins.
 |---|---|---|
 | Everything through the sweep | Done, verified live | `git log --oneline` |
 | Plugin migrations | **0001–0004 applied**, incl. 0003 (mastery) + 0004 (difficulty_band), against the live DB with real data | `tools/ops/migrate.sh` |
-| Service image | **`b85322f06759`, rebuilt 2026-08-20 from `8f85daf`** — carries the generator's source-candidate fallback, the semantic duplicate check (live) and seed rotation (dormant until `tutor.js` sends the mastery snapshot). Previously `ef8b08430de6` (2026-08-19, the fallback alone) and `8fb7f3fd` (2026-08-13): planner, tagger, generator, WAL, B1/B2 retrieval, the C1 ceiling, the C2 cache, plus the audit work: contract-version guard, real readiness, metrics. 18 API routes live | `docker exec tutor_local-coursemate-1 python -c "import urllib.request,json;print(len(json.load(urllib.request.urlopen('http://127.0.0.1:8000/openapi.json'))['paths']))"` |
-| openedx image | **`30fb683978d8`, rebuilt 2026-08-19 from `7afc011`**, all 5 containers adopted it. Carries the citation-chip URL handling, the mastery-badge repaint and the study-plan marks UI. Previously `834436d9` (2026-08-13), which carried the study-plan UI, the D1 mark replay, the D2 self-assessment UI and the platform half of the contract lock | `tools/ops/adopt_new_image.sh` |
+| Service image | **`b85322f06759`, rebuilt 2026-08-20 from `8f85daf`** — carries the generator's source-candidate fallback, the semantic duplicate check (live) and seed rotation — **no longer dormant: `tutor.js` sends the mastery snapshot as of `2c948cd`**. Previously `ef8b08430de6` (2026-08-19, the fallback alone) and `8fb7f3fd` (2026-08-13): planner, tagger, generator, WAL, B1/B2 retrieval, the C1 ceiling, the C2 cache, plus the audit work: contract-version guard, real readiness, metrics. 18 API routes live | `docker exec tutor_local-coursemate-1 python -c "import urllib.request,json;print(len(json.load(urllib.request.urlopen('http://127.0.0.1:8000/openapi.json'))['paths']))"` |
+| openedx image | **`ea5ae2e2fb06`, rebuilt 2026-08-20 from `2c948cd`**, all 5 containers adopted it (lms, cms, lms-worker, cms-worker, coursemate-beat — each checked individually, not lms alone). Adds the practice request's `mastery` snapshot, which is what finally activates the service-side seed rotation. Also carries the citation-chip URL handling, the mastery-badge repaint and the study-plan marks UI. Previously `30fb683978d8` (2026-08-19, `7afc011`) and `834436d9` (2026-08-13), which carried the study-plan UI, the D1 mark replay, the D2 self-assessment UI and the platform half of the contract lock | `tools/ops/adopt_new_image.sh` |
 | Conversational retrieval (B1/B2) | **LIVE and browser-verified.** multi-turn r@3 0.333 → 0.917 | BENCHMARKS §3.8 |
 | Daily spend ceiling (C1) | **LIVE.** 100k tokens/student/course/UTC day. Provider reports no usage here, so it charges an estimate | BENCHMARKS §3.9, LIMITATIONS §4.1 |
 | First-turn response cache (C2) | **LIVE, and effectively inert.** The mechanism is browser-verified (74,973 ms → 133 ms, 0 charged) but `student_id` is in the key, so a hit needs the same student to re-ask as a *first* turn — and their history persists. Live counters after real traffic: **hits 0, misses 1** | `curl -H "Authorization: Bearer $CRED" .../coursemate/metrics` |
@@ -172,8 +172,8 @@ above.
 **Done 2026-08-19:** three changes, deployed and verified server-side. Both
 images rebuilt and adopted; exam data was **not** reloaded or mutated by either
 deployment, and the rollback tags for both are preserved
-(`coursemate/service:0.1.0-prev3` → `09ee8b0fef53`,
-`overhangio/openedx:21.0.8-indigo-prev4` → `82ceb35d9244`).
+(`coursemate/service:0.1.0-prev4` → `ef8b08430de6`,
+`overhangio/openedx:21.0.8-indigo-prev5` → `30fb683978d8`).
 
 1. **The generator no longer abstains on one weak seed** (`dc15689`, service
    image). `_find_source` returns up to ten candidates and the gate scores the
@@ -411,9 +411,9 @@ upstream `edX+DemoX+Demo_Course`).
 ## Tests
 
     make check        # 6 contracts + OpenAPI drift check (18 paths)
-                      # + 1262 backend passed, 3 xfailed
-                      # + 297 browser passed across 9 suites
-                      # counts as of 2026-08-19; the target prints them
+                      # + 1283 backend passed, 3 xfailed
+                      # + 299 browser passed across 9 suites
+                      # counts as of 2026-08-20; the target prints them
     make coverage     # gated at 80% for service+contracts (now 90.9%); platform ungated
     make agent-eval   # the 4 agent regression gates — needs no provider
     make openapi      # regenerate docs/openapi.json from the routes
