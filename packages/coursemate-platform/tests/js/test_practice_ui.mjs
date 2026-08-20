@@ -124,7 +124,8 @@ function sse(frames) {
 const CITATION_PAPER = { usage_key: "final-2024.pdf", display_name: "final-2024.pdf" };
 const CITATION_LESSON = { usage_key: "block-v1:d", display_name: "Deadlock avoidance", url: "/courses/x/jump_to/block-v1:d" };
 
-async function drive(frames, { statusClos = [{ clo_id: "CLO-1", text: "Deadlock", confirmed: true }] } = {}) {
+async function drive(frames, { statusClos = [{ clo_id: "CLO-1", text: "Deadlock", confirmed: true }],
+                              mastery = null } = {}) {
   const root = buildPage();
   const calls = [];
   globalThis.fetch = async (url, opts = {}) => {
@@ -144,7 +145,11 @@ async function drive(frames, { statusClos = [{ clo_id: "CLO-1", text: "Deadlock"
   const src = readFileSync(JS, "utf8");
   const factory = vm.runInThisContext(`${src}
 CourseMateTutor;`, { filename: JS });
-  factory({ handlerUrl: (_e, name) => `/handler/${name}` }, { querySelector: (s) => find(root, s) || root }, {});
+  /* Third argument is the block's initArgs — where the server-rendered
+   * mastery snapshot arrives. `null` is the honest default: a student who has
+   * never self-marked has no snapshot. */
+  factory({ handlerUrl: (_e, name) => `/handler/${name}` }, { querySelector: (s) => find(root, s) || root },
+          mastery ? { mastery: mastery } : {});
 
   // open the prep tab -> loads status -> enables the practice form
   const prepPanel = find(root, '.cm-panel[data-panel="prep"]');
@@ -171,12 +176,44 @@ const tests = {
     const post = calls.find((c) => String(c.url).includes("/practice/stream"));
     assert.ok(post, "no POST to /practice/stream");
     const body = JSON.parse(post.opts.body);
-    assert.deepEqual(Object.keys(body).sort(), ["clo_id", "difficulty_band"]);
+    /* `mastery` joined the shape on 2026-08-20. It is not identity — the JWT
+     * still scopes the request — and the service discards a snapshot minted
+     * for another offering. It is sent so the seed question rotates instead of
+     * being the same one on every request. */
+    assert.deepEqual(Object.keys(body).sort(),
+      ["clo_id", "difficulty_band", "mastery"]);
     assert.equal(body.clo_id, "CLO-1");
     assert.equal(body.difficulty_band, "medium");
+    // Still no identity in the payload.
+    assert.equal(body.student_id, undefined);
+    assert.equal(body.offering_id, undefined);
     assert.match(post.opts.headers.Authorization, /^Bearer /);
   },
 
+  /* #13 browser half. The service rotates the seed question using the mastery
+   * snapshot; without this the browser sent nothing and every practice request
+   * for a CLO got the same seed. These two pin both halves of that: the
+   * snapshot travels when it exists, and its absence is sent as null rather
+   * than as a fabricated empty snapshot the service would treat as real. */
+  async "carries the mastery snapshot the page already holds"() {
+    const snapshot = {
+      offering_id: "course-v1:X+OEX101+2024",
+      clos: [{ clo_id: "CLO-1", attempts: 4, correct: 3 }],
+    };
+    const { calls } = await drive([{ type: "token", text: "Q?" }, { type: "done" }],
+                                  { mastery: snapshot });
+    const post = calls.find((c) => String(c.url).includes("/practice/stream"));
+    assert.deepEqual(JSON.parse(post.opts.body).mastery, snapshot);
+  },
+
+  async "sends mastery as null when the page carries no snapshot"() {
+    const { calls } = await drive([{ type: "token", text: "Q?" }, { type: "done" }]);
+    const post = calls.find((c) => String(c.url).includes("/practice/stream"));
+    const body = JSON.parse(post.opts.body);
+    assert.equal(body.mastery, null);
+    // Explicitly present-and-null, not merely absent.
+    assert.ok("mastery" in body);
+  },
   async "sends null, not an empty string, when no level is chosen"() {
     const { root, calls } = await drive([{ type: "token", text: "Q?" }, { type: "done" }]);
     // re-submit with the band cleared

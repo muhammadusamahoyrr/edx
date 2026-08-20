@@ -2058,9 +2058,26 @@ on" rendered as "continueson". Same one-word mistake, same
           "Content-Type": "application/json",
           Authorization: "Bearer " + token.token
         },
-        /* PracticeRequest carries no identity: the JWT scopes it, and the
-         * service picks the source question itself. */
-        body: JSON.stringify({ clo_id: cloId, difficulty_band: band || null })
+        /* PracticeRequest still carries no identity: the JWT scopes it, and
+         * the service picks the source question itself.
+         *
+         * `mastery` is the snapshot this page already holds — the same object
+         * the study-plan request sends, and the one the self-check above
+         * mutates. It is sent for ONE reason: which past-paper question seeds
+         * the generation. The service picked the same seed every time, so a
+         * student practising one outcome repeatedly saw questions clustered
+         * around a single source; their own attempt count now rotates it.
+         *
+         * Ordering only. It cannot name a source, widen an offering, or reach
+         * another student's record, and a snapshot minted for a different
+         * offering is discarded server-side rather than trusted. `null` is
+         * valid and means "no rotation" — the service then behaves exactly as
+         * it did before this was sent. */
+        body: JSON.stringify({
+          clo_id: cloId,
+          difficulty_band: band || null,
+          mastery: mastery
+        })
       }).then(function (response) {
         if (!response.ok || !response.body) { showPrepNotice("unavailable"); return; }
         return readStream(response, function (frame) {
