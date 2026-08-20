@@ -9,7 +9,7 @@ the reasoning, not just the diff.
 
 ## STATE — read this first, then verify it
 
-Last updated 2026-08-19. **Treat every line as stale until checked** — the
+Last updated 2026-08-20. **Treat every line as stale until checked** — the
 commands to check are given. A note that disagrees with the running system is
 wrong; the system wins.
 
@@ -115,7 +115,7 @@ wrong; the system wins.
 |---|---|---|
 | Everything through the sweep | Done, verified live | `git log --oneline` |
 | Plugin migrations | **0001–0004 applied**, incl. 0003 (mastery) + 0004 (difficulty_band), against the live DB with real data | `tools/ops/migrate.sh` |
-| Service image | **`ef8b08430de6`, rebuilt 2026-08-19 from `dc15689`** — carries the generator's source-candidate fallback. Previously `8fb7f3fd` (2026-08-13): planner, tagger, generator, WAL, B1/B2 retrieval, the C1 ceiling, the C2 cache, plus the audit work: contract-version guard, real readiness, metrics. 18 API routes live | `docker exec tutor_local-coursemate-1 python -c "import urllib.request,json;print(len(json.load(urllib.request.urlopen('http://127.0.0.1:8000/openapi.json'))['paths']))"` |
+| Service image | **`b85322f06759`, rebuilt 2026-08-20 from `8f85daf`** — carries the generator's source-candidate fallback, the semantic duplicate check (live) and seed rotation (dormant until `tutor.js` sends the mastery snapshot). Previously `ef8b08430de6` (2026-08-19, the fallback alone) and `8fb7f3fd` (2026-08-13): planner, tagger, generator, WAL, B1/B2 retrieval, the C1 ceiling, the C2 cache, plus the audit work: contract-version guard, real readiness, metrics. 18 API routes live | `docker exec tutor_local-coursemate-1 python -c "import urllib.request,json;print(len(json.load(urllib.request.urlopen('http://127.0.0.1:8000/openapi.json'))['paths']))"` |
 | openedx image | **`30fb683978d8`, rebuilt 2026-08-19 from `7afc011`**, all 5 containers adopted it. Carries the citation-chip URL handling, the mastery-badge repaint and the study-plan marks UI. Previously `834436d9` (2026-08-13), which carried the study-plan UI, the D1 mark replay, the D2 self-assessment UI and the platform half of the contract lock | `tools/ops/adopt_new_image.sh` |
 | Conversational retrieval (B1/B2) | **LIVE and browser-verified.** multi-turn r@3 0.333 → 0.917 | BENCHMARKS §3.8 |
 | Daily spend ceiling (C1) | **LIVE.** 100k tokens/student/course/UTC day. Provider reports no usage here, so it charges an estimate | BENCHMARKS §3.9, LIMITATIONS §4.1 |
@@ -125,7 +125,7 @@ wrong; the system wins.
 | `/health/ready` | **Real check now.** Returns 503 when the index cannot be opened; Redis reported, never gating. An empty index is still *ready* (that is `preparing`) | `curl .../coursemate/health/ready` |
 | Metrics | **LIVE**, service-credential only, absent from the published spec. Six counters; verified moving under real traffic (`chat_requests_total` 0→1) | `curl -H "Authorization: Bearer $CRED" .../coursemate/metrics` |
 | Feature B end to end | **VERIFIED IN A REAL BROWSER** — tab, 100-mark plan, generated question, abstention, as enrolled `cm_student` | BENCHMARKS §3.7 |
-| OEX101 exam pack | **Loaded live** — 5 questions, 3 CLOs, 35 marks, **all 5 tagged**. CLO-3 corrected 2026-08-19 and carries `confirmed_by: null` | `/examprep/status` |
+| OEX101 exam pack | **Loaded live** — 5 questions, 3 CLOs, 35 marks, **all 5 tagged**. CLO-3's text corrected 2026-08-19, and since 2026-08-20 **all three outcomes carry `confirmed_by: null`** — no instructor confirmed any of them, and §7.3 shows the student that. `/examprep/status` returns `confirmed: false` for all three | `/examprep/status` |
 | Package in all 4 containers | From the IMAGE now, not container layers | `tools/ops/check_install.sh` |
 | Celery tasks registered | Yes, in both workers | `tools/ops/check_tasks.sh` |
 | Beat dispatches the sweep | **VERIFIED** — both from a derived image and the real container | `tools/verification/beat_container_probe.sh` |
@@ -190,8 +190,7 @@ deployment, and the rollback tags for both are preserved
    rendered as an `<a>`; `safeHref(undefined)` is `"#"`, which scrolls the unit
    page to the top and pushes a history entry. Chips without a usable URL now
    render as an inert `<span>`; lesson citations with real URLs are unchanged.
-   **Verified in the image and by the browser-harness suites, not yet in a real
-   browser** — the DOM behaviour is not confirmed against a live page.
+   **Browser-verified 2026-08-20** — see below.
 3. **OEX101 CLO-3 was mis-specified, and is corrected.** It named Tutor
    configuration and troubleshooting, which this course does not teach — it points
    the reader at a different course for that. The corrected outcome is carried in
@@ -199,6 +198,34 @@ deployment, and the rollback tags for both are preserved
    truth for the offering's exam data. `confirmed_by` is **null**: the text was
    derived from the course material, not confirmed by an instructor, and §7.3
    shows the student that difference.
+
+**Done 2026-08-20: the three UI fixes are browser-verified.** Real Chrome
+against the deployed image `30fb683978d8`, as enrolled `cm_student`, with real
+clicks — not harness doubles, and not inferred from unit tests. This closes a gap
+that three documents had been carrying since 2026-08-19.
+
+* **Citation chips.** The paper chip is `tagName: SPAN`, `hasAttribute("href")`
+  false; the lesson chip is `A` with a real `jump_to` href. Clicked the paper
+  chip from `scrollY 626`: scroll unchanged, no `#` appended, `history.length`
+  unchanged at 3 — the exact defect, gone. Clicked the lesson chip: landed on
+  vertical `48708246…`, and the modulestore confirms that vertical ("Named
+  Releases") is the parent of the cited block. Both chips keep `cm-chip-link`,
+  so the span is styled identically.
+* **Mastery badge.** `5/12 self-marked` → `6/13` after one self-check, with a
+  `window` sentinel surviving unchanged, one navigation entry, and `scrollY`
+  static — so the repaint happened **without a reload**. CLO-2's badge stayed
+  `9/19`, which also proves the `data-clo` exact-match fix.
+* **Study-plan shortfall.** A 70-mark request rendered
+  `Study plan — 35 of 70 marks` in `.cm-plan-heading`, with
+  `35 marks could not be filled …` in `.cm-plan-unspent`. Read from the DOM, not
+  from the API response.
+
+**Two of my own checks were wrong before the fixes were.** A `sha1sum` of an
+unexpanded variable returned `da39a3ee5e6b` — the hash of empty input — and read
+as "feature absent". And looking for a child block id inside an iframe `src`
+returned false, because that URL names the *vertical*, never its children. Both
+looked like failures and were bad instruments. Check what the number is made of
+before believing it.
 
 **Known and still open** (evidence in the 2026-08-13 review):
 

@@ -178,11 +178,18 @@ What caught all of them was the same discipline:
 
 ## What this document does not claim
 
-* **No browser or DOM verification is claimed for the citation-chip fix**
-  (`7afc011`). It is verified in the built image and by the browser-harness
-  suites. Its behaviour on a live page is **not** confirmed. This matters
-  because this project has previously been bitten by harness doubles disagreeing
-  with a real DOM.
+* **The citation-chip fix (`7afc011`) is now browser-verified** — corrected
+  2026-08-20. This bullet previously said the opposite, and said it for a day
+  after the verification became possible. Real Chrome, real clicks, deployed
+  image: the paper chip is a `SPAN` with no `href` and clicking it moves neither
+  scroll nor history, while the lesson chip navigates to the vertical the
+  modulestore confirms owns the cited block. The mastery badge and the
+  study-plan shortfall were verified in the same pass.
+
+  The caution behind the original wording still stands, and is the reason the
+  check was worth doing: harness doubles have disagreed with a real DOM in this
+  project before, and the chip bug itself survived because a test counted chips
+  without ever reading their `href`.
 * **The agent's tool-selection accuracy of 0.78** is a single measured run,
   reproduced twice, on one model against one gold set. It is a measurement, not
   a rate.

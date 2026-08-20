@@ -278,6 +278,7 @@ not production-deployed.**
 |---|---|
 | Verified working | Ingestion on publish, bootstrap, nightly sweep, video transcripts, retrieval, citations, abstention, enrollment re-derivation, block-level access, claim marking, two-course isolation |
 | Verified in a real browser (2026-08-12) | Exam-prep tab, budgeted study plan, generated practice question with provenance, abstention — as an enrolled non-staff student on the live stack |
+| Verified in a real browser (2026-08-20) | Source chips (a paper renders as an inert `span`, a lesson as a working link into the courseware), mastery badge repainting without a reload, and a 70-mark plan rendering "35 of 70 marks" with its shortfall line — asserted against the live DOM and real clicks, not a test harness |
 | Test suite (2026-08-19) | 6 contracts kept / 0 broken · OpenAPI current, 18 paths · **1262 backend passed + 3 xfailed** · **297 browser passed across 9 suites**, 0 failed |
 | Runs on | Tutor 21.0.8 / Open edX Ulmo, single node |
 | Not tried on | Other releases, Kubernetes, Learning Core, multiple replicas |
