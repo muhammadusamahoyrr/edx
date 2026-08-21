@@ -123,6 +123,104 @@ and was applied successfully on the next two deployments.
 
 ---
 
+---
+
+## A second kind of failure — the AI describing the system
+
+The three above are the AI *building*. This one is the AI *explaining*, and it
+turned out to be no more reliable.
+
+On 2026-08-20 the model produced a slide-content document about this project:
+15 slides, ~8,000 words, every figure supposedly checked. Two audit passes
+found **13 errors in it**. All were first-hand; none is reconstructed.
+
+### 4. A defect that did not exist
+
+**AI reasoning:** a slide listing future work claimed *"one ordering-dependent
+test failure remains"*.
+
+**Evidence:** it could not be reproduced. The named test passes alone, passes in
+its own file, and passes in the full suite. Nothing in the repository documents
+such a failure. `make check` exits 0.
+
+**What was actually true:** the claim was carried forward from an earlier
+session's summary and never checked. It made the project look **worse** than it
+is, on no evidence — which is the same failure as an unfounded success claim,
+pointing the other way. It was removed rather than softened.
+
+### 5. A false alarm produced by a broken command
+
+While checking (4), running `pytest packages/coursemate-service/tests` reported
+**8 failures**, which looked like confirmation.
+
+**Evidence:** the Makefile runs `pytest $(TESTS) -q --asyncio-mode=auto`. The
+flag had been omitted, so every async test errored. With it: **1020 passed, 3
+xfailed, 0 failed.**
+
+**What was actually true:** the tool was broken, not the code. This is the
+`sha1sum` failure from the same project repeating in a new costume — a command
+that fails in a way that *looks like a result*. The near-miss is the lesson: a
+wrong invocation had almost been reported as a repository defect, and it was
+only caught by asking why the Makefile's command differed from the one typed.
+
+### 6. A quotation that was plausible and wrong
+
+A slide about the **chat** confidence gate quoted the abstention message as
+*"There isn't enough in this course's material to plan that reliably."*
+
+**Evidence:** `tutor.js` holds **three** distinct abstention strings — one for
+chat, one for the study planner, one for practice generation. The quoted line is
+the planner's. The chat gate says *"That doesn't appear to be covered in this
+course."*
+
+**What was actually true:** the wording was recalled rather than read. It was
+fluent, it was in the right register, and it belonged to a different feature —
+which is precisely the shape of the confident-wrong-lesson answer the tutor
+itself is built to prevent. The AI made, about its own system, the class of
+error that system exists to catch.
+
+### 7. An invented number
+
+A speaker note read *"Thirty students asking questions would have taken the LMS
+down."* No such measurement exists. The repository measures three concurrent
+generations, and argues the mechanism — worker pools empty by occupancy — without
+naming a breaking point. "Thirty" was fabricated to make the sentence land.
+
+Deleted. The mechanism is the claim; a number that sounds specific and has no
+run behind it is worse than no number.
+
+### 8. Markup that was not markup, twice
+
+`**bold**` and `*italic*` written into `python-docx` render as literal asterisks.
+Found once, fixed, and then **found again** — because the first check searched
+for the single string `*or*` rather than for the pattern. The second pass used a
+regex and found `*plus*` on another slide.
+
+**The lesson is about the check, not the bug.** A verification narrower than the
+class of defect it is meant to catch will report success while instances remain.
+
+---
+
+### What this session adds to the pattern
+
+The three 2026-08-19 failures were about **doing**. These five are about
+**describing**, and they rhyme:
+
+* A claim carried forward from a summary and never re-derived (4)
+* A tool failure read as a result (5)
+* A recalled string preferred over a read one (6)
+* A specific-sounding number with no run behind it (7)
+* A check narrower than the defect class (8)
+
+**The useful finding is the ratio.** One document, written carefully, with the
+repository open: 13 errors. The first audit found 8; the second found 5 more,
+including one the first had already looked for. Two of the 13 would have been
+visible to a panellist within seconds — the wrong quotation, and a claimed test
+failure that does not reproduce.
+
+Prose about a system gets no compiler, no test suite and no type checker. It is
+the least verified artifact in the project and it is the one people read first.
+
 ## What measurement found that review did not
 
 These predate the session above and are the strongest argument for how this
@@ -173,6 +271,12 @@ What caught all of them was the same discipline:
   **0.78** was believed.
 * **Prefer evidence a user would recognise.** Container counts and HTTP status
   codes over "the deployment script exited 0".
+* **Check the class, not the instance.** Searching for the one bad string
+  found one of two; searching for the pattern found both. A check narrower
+  than the defect will pass while the defect remains.
+* **Read the string, do not recall it.** Every quoted message, threshold and
+  filename in a document is a claim, and the cost of opening the file is
+  seconds.
 
 ---
 
