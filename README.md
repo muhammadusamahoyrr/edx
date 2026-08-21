@@ -52,11 +52,37 @@ Browser ──1── XBlock.mint()  →  JWT          (0.115 ms; LMS released)
 
 ## Screenshots
 
-*Real Open edX lesson, real course content, `qwen2.5:7b` via Ollama. No mock.*
+*Real Open edX lesson, real course content, real enrolled student. No mock.*
+
+**The tutor inside a real lesson** — an XBlock an instructor dropped into a unit,
+not a separate app the student has to leave the course for
+
+![CourseMate rendered inside an OEX101 lesson page](docs/screenshots/04-tutor-in-real-lesson.png)
+
+**Exam prep — the whole of Feature B in one view**
+
+![Practice question and marks-budgeted study plan](docs/screenshots/05-exam-prep-practice-and-plan.png)
+
+Five things worth looking at in that one screenshot:
+
+- The practice question carries an **AI-GENERATED** badge and a *Derived from*
+  line citing the past paper **and** the three lessons it drew on
+- The study plan is budgeted in **marks**, not question counts
+- **"80 marks could not be filled"** — the bank ran short and the plan says so
+  rather than padding
+- Mastery shows as **`not practised yet`** and **`2/4 correct`**, self-marked,
+  never a grade
+- The footer states the line the feature is built around: *"Every question above
+  is a real past-paper question. Nothing here is AI-generated."*
 
 **Grounded answer with citations back to the source lessons** — these persist across a page reload
 
-![Grounded answer citing the Cohorts lesson](docs/screenshots/02-grounded-answer-with-citation.jpg)
+![Grounded answer citing the Transcripts lesson](docs/screenshots/02-grounded-answer-with-citation.jpg)
+
+> This capture predates two changes and is kept only because it is the clearest
+> shot of citations: the answer body shows raw `**markdown**`, since fixed and
+> covered by 45 renderer tests, and the surrounding UI has been redesigned — see
+> the two screenshots above for how it looks now.
 
 **Abstention — the behaviour that matters most**
 
