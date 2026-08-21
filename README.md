@@ -8,7 +8,27 @@ when the course doesn't cover the question rather than improvising from a model'
 general knowledge.
 
 Built and verified against a real Open edX **Ulmo** instance — two courses,
-282 indexed chunks, a live Celery worker and a nightly sweep container.
+286 indexed chunks, a live Celery worker and a nightly sweep container.
+
+---
+
+## About
+
+| | |
+|---|---|
+| **What it is** | An Open edX plugin — an XBlock plus a separate FastAPI service. No fork, no core changes |
+| **Two features** | **A** — a grounded, cited chat tutor that abstains. **B** — exam prep: past-paper extraction, marks-budgeted study plans, generated practice questions |
+| **The idea it is built on** | Retrieve, rank, then *gate*. The confidence check runs **before** the model, so refusing costs 3 ms and no spend |
+| **Stack** | FastAPI · Pydantic · LiteLLM · SQLite FTS5/BM25 · Redis · Django/XBlock · Celery · Docker/Tutor |
+| **Models** | `llama-3.3-70b` hosted for answers, `qwen2.5:7b` local for offline tagging, `nomic-embed-text` for duplicate detection |
+| **Verified** | 1283 backend tests · 299 browser tests · 6/6 architecture contracts in CI · browser-verified as an enrolled student |
+| **Status** | Running, measured, and **not production-ready** — the remaining gaps are operational and named in [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) |
+
+**Where to start reading.** [`docs/FEATURE_A_HOW_IT_WORKS.md`](docs/FEATURE_A_HOW_IT_WORKS.md)
+and [`docs/FEATURE_B_HOW_IT_WORKS.md`](docs/FEATURE_B_HOW_IT_WORKS.md) are
+plain-English walkthroughs. [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) is every
+number and how it was produced. [`docs/REFLECTION.md`](docs/REFLECTION.md) is what
+went wrong, including what the AI that helped build this got confidently wrong.
 
 ---
 
@@ -75,18 +95,14 @@ Five things worth looking at in that one screenshot:
 - The footer states the line the feature is built around: *"Every question above
   is a real past-paper question. Nothing here is AI-generated."*
 
-**Grounded answer with citations back to the source lessons** — these persist across a page reload
-
-![Grounded answer citing the Transcripts lesson](docs/screenshots/02-grounded-answer-with-citation.jpg)
-
-> This capture predates two changes and is kept only because it is the clearest
-> shot of citations: the answer body shows raw `**markdown**`, since fixed and
-> covered by 45 renderer tests, and the surrounding UI has been redesigned — see
-> the two screenshots above for how it looks now.
 
 **Abstention — the behaviour that matters most**
 
 ![Tutor declining an off-topic question](docs/screenshots/03-abstention.jpg)
+
+> Captured 2026-07-31, before the UI redesign. Kept because the behaviour it
+> shows is unchanged and it is the only capture of a refusal. The wording in it
+> is still the wording `tutor.js` sends today.
 
 Asked *"What were the main causes of the French Revolution?"*, the tutor replies
 **"That doesn't appear to be covered in this course."** — instantly, with no model
