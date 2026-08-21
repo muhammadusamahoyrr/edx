@@ -55,6 +55,20 @@ authorization correctness all have reproducible benchmarks. See
 `docs/BENCHMARKS.md`, and `docs/LIMITATIONS.md` for what the numbers do **not**
 yet establish.
 
+## Feature B — exam preparation — is now built
+
+This section previously listed exam preparation as *"contracts only — no
+extraction, no outcome tagging, no interface"*. That stopped being true on
+2026-08-12 and the line is removed rather than left to mislead.
+
+What runs today: a past-paper PDF is extracted, CLO-tagged offline, and loaded;
+a student gets a marks-budgeted study plan built only from real past-paper
+questions, plus generated practice questions that are labelled AI-generated and
+cited to the paper and lessons they derive from. Verified end to end in a real
+browser by an enrolled student — see BENCHMARKS §3.6 and §3.7.
+
+---
+
 ## What CourseMate deliberately does not solve
 
 Stated here rather than discovered later. Each is designed and scoped; none is
@@ -64,13 +78,13 @@ built.
   Aggregating sticking points across a cohort and surfacing them in time to
   intervene is a separate product with its own privacy design. The proposal
   queue schema exists and is dormant.
-- **Exam preparation.** Linking scattered PDFs and past papers back to a course's
-  learning outcomes, so a learner can tell what they have mastered, is Feature B.
-  Contracts only — no extraction, no outcome tagging, no interface.
 - **Personalisation.** CourseMate scales *answering* to any number of learners,
-  which is a real result of the architecture. It does not model an individual
-  learner: nothing reads completion, grades, or mastery, and memory is the
-  conversation within a block.
+  which is a real result of the architecture. It still does not model an
+  individual learner: nothing reads completion or grades, and chat memory is the
+  conversation within a block. **Mastery is the one exception, and it is narrow**
+  — the student's own self-marked practice counts order their study plan and
+  rotate which past-paper question seeds their next practice question. Counters,
+  never a score, and never a grade.
 - **Learning outcomes.** A Socratic mode exists and preserves grounding — the
   guiding question is itself derived from retrieved content — and instructors can
   enable it per block. But nothing here measures whether it improves

@@ -225,5 +225,5 @@ design it was defending. Contract 2 stays transitive, because an indirect import
 still drags an AI library into the LMS image.
 
 ```bash
-make check     # 6 contracts + OpenAPI check + 838 backend + 93 browser tests
+make check     # 6 contracts + OpenAPI check + 1283 backend + 299 browser tests
 ```

@@ -584,7 +584,7 @@ Measured at n=4, which demonstrates the pipeline rather than establishing a rate
 **The agent — implemented and tested offline only:** the tool registry (identity
 refused rather than overridden, strict schemas, three outcomes not two), the loop's
 failure rules, the per-tool confidence gate, the mastery memory layer with
-idempotent writes, and the local stdio MCP server. 838 backend + 93 browser tests,
+idempotent writes, and the local stdio MCP server. 1283 backend + 299 browser tests,
 6 contracts.
 
 **`agent_enabled` defaults to `False`**, so a default install routes exam prep to
@@ -902,7 +902,8 @@ Every claim in the benchmark report is backed by an executable run.
 
 **Three things that sound like results and are not.** The real-PDF evaluation is
 n=4. `band_plausibility` is not measured on extracted packs at all. Tool-selection
-accuracy for the agent is still unmeasured, and the one attempt against a local
+accuracy was measured at **0.78 on 2026-08-19** — nine scored cases, one gold set,
+one model, reproduced twice, so a measurement and not a rate. The earlier attempt against a local
 model measured its timeouts. Each is stated wherever the neighbouring numbers
 appear, rather than only here.
 
